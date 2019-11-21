@@ -1,5 +1,5 @@
 #include <windows.h>
-#define ITSFAKE 0x1000
+#define ITSFAKE 0xF0000000
 
 class Key {
 public:

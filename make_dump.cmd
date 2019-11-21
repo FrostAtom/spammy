@@ -1,1 +1,0 @@
-clang++ dump.cpp -o spammy_dump.exe -O3 -std=c++17 -MJ compile_commands.json

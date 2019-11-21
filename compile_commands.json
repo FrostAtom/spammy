@@ -1,1 +1,0 @@
-{ "directory": "E:\\Workspace\\test", "file": "main.cpp", "output": "C:\\Users\\FROSTA~1\\AppData\\Local\\Temp\\main-30225c.o", "arguments": ["E:\\Programs\\msys64\\mingw32\\bin\\clang++.exe", "-xc++", "main.cpp", "--driver-mode=g++", "-o", "spammy.exe", "-std=c++17", "-O3", "-mwindows", "--target=i686-w64-windows-gnu"]},
