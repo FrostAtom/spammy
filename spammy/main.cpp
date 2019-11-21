@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <fstream>
 #include <string>
+#include <regex>
 #include "key.hpp"
 #define INTERVAL_MS 20
 #define PROGRAMNAME "spammy"
@@ -57,10 +58,13 @@ bool FillKeysMapFromConfigFile(const char* name)
     std::fstream file(path.c_str(), std::ios::in);
     if (file.is_open()){
         DWORD vkCode = NULL;
+        const std::regex pattern("(0[xX][0-9a-fA-F]+)");
+        std::smatch match_result;
+
         EnterCriticalSection(&criticalSection);
         for(std::string line; getline(file, line);) {
-            if (!line.empty()){
-                vkCode = std::strtoul(line.c_str(), NULL, 16); // use here regular expression
+            if (!line.empty() && std::regex_search(line, match_result, pattern) && !match_result.empty()){
+                vkCode = std::strtoul(match_result.str(1).c_str(), NULL, 16);
                 if (vkCode)
                     keysData[vkCode] = new Key(vkCode);
             }
