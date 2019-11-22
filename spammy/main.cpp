@@ -78,10 +78,11 @@ bool FillKeysMapFromConfigFile(const char* name)
     return false;
 }
 
-void CheckWindow(HWND hWndForeground)
+void CheckForegroundWindow()
 {
     static HWND hWndCurrent = NULL;
 
+    HWND hWndForeground = GetForegroundWindow();
     if (hWndForeground != hWndCurrent){
         hWndCurrent = hWndForeground;
 
@@ -100,7 +101,7 @@ void CheckWindow(HWND hWndForeground)
 VOID CALLBACK WinEventProcCallback(HWINEVENTHOOK, DWORD dwEvent, HWND hwnd, LONG, LONG, DWORD, DWORD)
 {
     if (dwEvent == EVENT_SYSTEM_FOREGROUND)
-        CheckWindow(hwnd ? hwnd : GetForegroundWindow());
+        CheckForegroundWindow();
 }
 
 void HandlePress(LPKBDLLHOOKSTRUCT kbdStruct, bool pressed)
@@ -198,7 +199,7 @@ int main()
 
         CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)& SecondThread, NULL, 0, NULL);
 
-        CheckWindow(GetForegroundWindow());
+        CheckForegroundWindow();
         for (MSG msg; GetMessage(&msg, NULL, 0, 0) > 0;);
     }
     catch (const char* e){
