@@ -86,15 +86,13 @@ void CheckForegroundWindow()
     if (hWndForeground != hWndCurrent){
         hWndCurrent = hWndForeground;
 
-        char* buffer = new char[MAX_PATH];
-        if (GetWindowTextA(hWndForeground, buffer, MAX_PATH) > 0){
+        std::array<char, MAX_PATH> buffer;
+        if (GetWindowTextA(hWndForeground, buffer.data(), MAX_PATH) > 0){
             ResetKeysMap(true);
-            validWindow = FillKeysMapFromConfigFile(buffer);
+            validWindow = FillKeysMapFromConfigFile(buffer.data());
         }
         else
             validWindow = false;
-
-        delete[] buffer;
     }
 }
 
