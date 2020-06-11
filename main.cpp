@@ -186,7 +186,6 @@ int main(int argc, char* argv[])
 {
     try {
         event = new Event;
-
         auto errCode = event->Initialize("Local\\" PROGRAM_NAME "_event");
         if (errCode) {
             if (errCode == ERROR_ALREADY_EXISTS)
