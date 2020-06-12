@@ -1,5 +1,6 @@
 #pragma once
 #include <Windows.h>
+#include <cstdio>
 
 
 class Event {
@@ -23,12 +24,14 @@ public:
 	{
 		if (isLocked) return;
 		ResetEvent(hEvent);
+		isLocked = true;
 	}
 
 	void Unlock()
 	{
 		if (!isLocked) return;
 		SetEvent(hEvent);
+		isLocked = false;
 	}
 
 	bool Wait()

@@ -14,7 +14,7 @@
 HHOOK hhook;
 HANDLE hThread_LoopThread;
 HWINEVENTHOOK hWinEventHook;
-bool currentStatement = false;
+bool currentStatement = false, pause = false;
 std::map<DWORD,Key*> keys;
 Event* event;
 
@@ -43,11 +43,13 @@ void HandleKeyEvent(LPKBDLLHOOKSTRUCT lpkbdStruct, bool isPress)
         if (iter->second->isPressed != isPress) {
             iter->second->isPressed = isPress;
 
-            if (isPress)
-                event->Unlock();
-            else {
-                if (!AnyoneKeyIsPressed())
-                    event->Lock();
+            if (!pause) {
+                if (isPress)
+                    event->Unlock();
+                else {
+                    if (!AnyoneKeyIsPressed())
+                        event->Lock();
+                }
             }
         }
     }
@@ -68,8 +70,11 @@ LRESULT __stdcall KeyboardHookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 break;
             case WM_KEYUP:
             case WM_SYSKEYUP:
-                if (lpkbdStruct->vkCode == VK_PAUSE)
-                    ToggleHooks(!currentStatement);
+                if (lpkbdStruct->vkCode == VK_PAUSE) {
+                    pause = !pause;
+                    if (pause)
+                        event->Lock();
+                }
                 else
                     HandleKeyEvent(lpkbdStruct,false);
 
@@ -81,7 +86,7 @@ LRESULT __stdcall KeyboardHookCallback(int nCode, WPARAM wParam, LPARAM lParam)
     return CallNextHookEx(hhook, nCode, wParam, lParam);
 }
 
-void __stdcall LoopThread()
+void __stdcall LoopThreadControl()
 {
     while (true) {
         if (event->Wait()) {
@@ -108,7 +113,7 @@ void ToggleHooks(bool newStatement)
         if (!(hhook = SetWindowsHookExA(WH_KEYBOARD_LL, KeyboardHookCallback, NULL, 0)))
             Error("SetWindowsHookEx(): fail");
 
-        if (!(hThread_LoopThread = CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)& LoopThread, NULL, 0, NULL)))
+        if (!(hThread_LoopThread = CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)& LoopThreadControl, NULL, 0, NULL)))
             Error("CreateThread(): fail");
     }
     else {
@@ -157,6 +162,7 @@ void ForegroundWindowUpdate()
         return;
 
 
+    event->Lock();
     FlushKeys();
 
     char* windowName = new char[MAX_PATH];

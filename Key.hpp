@@ -5,7 +5,7 @@ class Key {
 public:
     Key(DWORD vkCode) : isPressed(false)
     {
-        ZeroMemory(&input,sizeof(input));
+        memset(&input,0,sizeof(input));
         input.type = INPUT_KEYBOARD;
         input.ki.dwExtraInfo = ITSFAKE;
         input.ki.wVk = vkCode;
