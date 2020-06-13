@@ -11,12 +11,10 @@ public:
 
 		hEvent = CreateEventA(NULL, TRUE, FALSE, name);
 		auto errCode = GetLastError();
-
-		if (errCode == ERROR_ALREADY_EXISTS || !hEvent)
+		if (errCode)
 			return errCode;
 
 		isLocked = true;
-
 		return 0;
 	}
 

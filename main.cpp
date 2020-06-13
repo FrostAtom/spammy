@@ -192,7 +192,7 @@ int main(int argc, char* argv[])
 
         if (!(hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,EVENT_SYSTEM_FOREGROUND,NULL,WinEventProcCallback,0,0,WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)))
             throw "SetWinEventHook(): fail";
-
+        
 
         ForegroundWindowUpdate();
 
