@@ -27,7 +27,7 @@ void Error(const char* err)
     std::exit(EXIT_FAILURE);
 }
 
-bool AnyoneKeyIsPressed()
+bool IsAnyoneKeyPressed()
 {
     for (const auto& key : keys) {
         if (key.second->isPressed)
@@ -47,7 +47,7 @@ void HandleKeyEvent(LPKBDLLHOOKSTRUCT lpkbdStruct, bool isPress)
                 if (isPress)
                     event->Unlock();
                 else {
-                    if (!AnyoneKeyIsPressed())
+                    if (!IsAnyoneKeyPressed())
                         event->Lock();
                 }
             }
@@ -74,6 +74,8 @@ LRESULT __stdcall KeyboardHookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                     pause = !pause;
                     if (pause)
                         event->Lock();
+                    else if (IsAnyoneKeyPressed())
+                        event->Unlock();
                 }
                 else
                     HandleKeyEvent(lpkbdStruct,false);
