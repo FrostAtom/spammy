@@ -5,6 +5,7 @@
 #include <fstream>
 #include <regex>
 #include <map>
+#include <memory>
 #define PROGRAM_NAME "Spammy"
 #define PROGRAM_CONFIG_PATH "config\\"
 #define PROGRAM_CONFIG_EXTENSION ".txt"
@@ -15,7 +16,7 @@ HHOOK hhook;
 HANDLE hThread_LoopThread;
 HWINEVENTHOOK hWinEventHook;
 bool currentStatement = false, pause = false;
-std::map<DWORD,Key*> keys;
+std::map<DWORD,std::unique_ptr<Key>> keys;
 Event *event;
 
 
@@ -121,16 +122,6 @@ void ToggleHooks(bool newStatement)
     currentStatement = newStatement;
 }
 
-void FlushKeys()
-{
-    if (keys.empty()) return;
-    
-    for (const auto& key : keys)
-        delete key.second;
-
-    keys.clear();
-}
-
 void ReadKeysFromFile(std::ifstream& file)
 {    
     const static std::regex pattern("[0[Xx]]?([0-9a-fA-F]{2,4})");
@@ -143,7 +134,7 @@ void ReadKeysFromFile(std::ifstream& file)
             auto matchResult1 = matchResult.str(1);
             if (DWORD vkCode = std::strtoul(matchResult1.c_str(),NULL,16)) {
                 if (auto iter = keys.find(vkCode); iter == keys.end())
-                    keys[vkCode] = new Key(vkCode);
+                    keys[vkCode] = std::unique_ptr<Key>(new Key(vkCode));
             }
         }
     }
@@ -158,7 +149,7 @@ void ForegroundWindowUpdate()
 
 
     event->Lock();
-    FlushKeys();
+    keys.clear();
 
     char* windowName = new char[MAX_PATH];
     if (GetWindowText(hwndCurrent,windowName,MAX_PATH) > 0) {

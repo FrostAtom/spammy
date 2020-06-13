@@ -12,14 +12,11 @@ public:
         input.ki.wScan = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC);
     }
 
-    void Press()
+    void Click()
     {
         input.ki.dwFlags = 0;
         SendInput(1, &input, sizeof(input));
-    }
 
-    void Release()
-    {
         input.ki.dwFlags = KEYEVENTF_KEYUP;
         SendInput(1, &input, sizeof(input));
     }
