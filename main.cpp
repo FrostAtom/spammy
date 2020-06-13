@@ -16,7 +16,7 @@ HANDLE hThread_LoopThread;
 HWINEVENTHOOK hWinEventHook;
 bool currentStatement = false, pause = false;
 std::map<DWORD,Key*> keys;
-Event* event;
+Event *event;
 
 
 void ToggleHooks(bool);
@@ -46,10 +46,8 @@ void HandleKeyEvent(LPKBDLLHOOKSTRUCT lpkbdStruct, bool isPress)
             if (!pause) {
                 if (isPress)
                     event->Unlock();
-                else {
-                    if (!IsAnyoneKeyPressed())
-                        event->Lock();
-                }
+                else if (!IsAnyoneKeyPressed())
+                    event->Lock();
             }
         }
     }
@@ -58,7 +56,6 @@ void HandleKeyEvent(LPKBDLLHOOKSTRUCT lpkbdStruct, bool isPress)
 
 LRESULT __stdcall KeyboardHookCallback(int nCode, WPARAM wParam, LPARAM lParam)
 {
-    static LPKBDLLHOOKSTRUCT lpkbdStruct;
     if (nCode == HC_ACTION){
         auto lpkbdStruct = (LPKBDLLHOOKSTRUCT)lParam;
         if (!(lpkbdStruct->dwExtraInfo & ITSFAKE)){
@@ -90,26 +87,21 @@ LRESULT __stdcall KeyboardHookCallback(int nCode, WPARAM wParam, LPARAM lParam)
 
 void __stdcall LoopThreadControl()
 {
-    while (true) {
-        if (event->Wait()) {
-            for (const auto& key : keys) {
-                if (key.second->isPressed) {
-                    key.second->Press();
-                    key.second->Release();
-                }
-            }
+    while (event->Wait()) {
+        for (const auto& key : keys) {
+            if (key.second->isPressed) 
+                key.second->Click();
+        }
 
-            Sleep(SPAM_INTERVAL_MS);
-        } 
-        else 
-            Error("WaitForSingleObject(): fail");
+        Sleep(SPAM_INTERVAL_MS);
     }
+
+    Error("WaitForSingleObject(): fail");
 }
 
 void ToggleHooks(bool newStatement)
 {
-    if (currentStatement == newStatement)
-        return;
+    if (currentStatement == newStatement) return;
 
     if (newStatement) {
         if (!(hhook = SetWindowsHookExA(WH_KEYBOARD_LL, KeyboardHookCallback, NULL, 0)))
@@ -131,8 +123,7 @@ void ToggleHooks(bool newStatement)
 
 void FlushKeys()
 {
-    if (keys.empty())
-        return;
+    if (keys.empty()) return;
     
     for (const auto& key : keys)
         delete key.second;
@@ -142,14 +133,16 @@ void FlushKeys()
 
 void ReadKeysFromFile(std::ifstream& file)
 {    
-    const std::regex pattern("[0[Xx]]?([0-9a-fA-F]{2,4})");
+    const static std::regex pattern("[0[Xx]]?([0-9a-fA-F]{2,4})");
     std::smatch matchResult;
 
     for (std::string line; std::getline(file,line);) {
-        if (!line.empty()) {
-            if (std::regex_search(line, matchResult, pattern) &&  !matchResult.empty()) {
-                DWORD vkCode = std::strtoul(matchResult.str(1).c_str(),NULL,16);
-                if (vkCode)
+        if (line.empty()) continue;
+
+        if (std::regex_search(line, matchResult, pattern) && !matchResult.empty()) {
+            auto matchResult1 = matchResult.str(1);
+            if (DWORD vkCode = std::strtoul(matchResult1.c_str(),NULL,16)) {
+                if (auto iter = keys.find(vkCode); iter == keys.end())
                     keys[vkCode] = new Key(vkCode);
             }
         }
@@ -160,15 +153,15 @@ void ForegroundWindowUpdate()
 {
     static HWND hwndLast;
     HWND hwndCurrent = GetForegroundWindow();
-    if (hwndCurrent == hwndLast)
-        return;
+    if (hwndCurrent == hwndLast) return;
+    hwndLast = hwndCurrent;
 
 
     event->Lock();
     FlushKeys();
 
     char* windowName = new char[MAX_PATH];
-    if (GetWindowText(hwndCurrent,windowName,MAX_PATH) > 0){
+    if (GetWindowText(hwndCurrent,windowName,MAX_PATH) > 0) {
         char* cfgFileName = new char[MAX_PATH];
         sprintf(cfgFileName,"%s%s%s",PROGRAM_CONFIG_PATH,windowName,PROGRAM_CONFIG_EXTENSION);
 
@@ -195,21 +188,24 @@ int main(int argc, char* argv[])
     try {
         event = new Event;
         auto errCode = event->Initialize("Local\\" PROGRAM_NAME "_event");
-        if (errCode) {
-            if (errCode == ERROR_ALREADY_EXISTS)
-                throw "Alredy launched";
-            else
-                throw "CreateEventA(): fail";
+        switch(errCode) {
+        case 0:
+            break;
+        case ERROR_ALREADY_EXISTS:
+            throw "Alredy launched";
+            break;
+        default:
+            throw "CreateEventA(): fail";
+            break;
         }
 
-        if (!(hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, NULL, WinEventProcCallback, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)))
+        if (!(hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,EVENT_SYSTEM_FOREGROUND,NULL,WinEventProcCallback,0,0,WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)))
             throw "SetWinEventHook(): fail";
 
 
         ForegroundWindowUpdate();
 
-        MSG msg;
-        while(GetMessage(&msg, NULL, 0, 0) > 0);
+        for (MSG msg; GetMessage(&msg, NULL, 0, 0) > 0; );
     }
     catch (const char* err){
         Error(err);
