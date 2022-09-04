@@ -1,3 +1,4 @@
+#pragma once
 #include <Windows.h>
 
 enum KIT { KIT_Spacing, KIT_NewLine, KIT_Key };
@@ -8,7 +9,7 @@ struct KeyboardItem {
     float width;
 };
 
-KeyboardItem KeyboardLayout[] = {
+inline KeyboardItem KeyboardLayout[] = {
     { KIT_Key, "Esc", VK_ESCAPE, 1.f },
     { KIT_Spacing, NULL, 0, .6f },
     { KIT_Key, "F1", VK_F1, 1.f },

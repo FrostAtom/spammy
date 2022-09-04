@@ -1,13 +1,8 @@
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
 #include <nlohmann/json.hpp>
-#include "resources/resources.h"
-#include "Window/Window.h"
-#include "ImGui.h"
+#include "MainWindow.h"
 #include "Win32/Keyboard.h"
 #include "Win32/Mouse.h"
 #include "Win32/WinEvent.h"
-#include "KeyboardLayout.h"
 #include "Profile.h"
 #include "Utils.h"
 #include <filesystem>
@@ -18,15 +13,11 @@
 #define sApp App::instance()
 
 class App {
-    static const char* _buildTime;
     static App* _self;
-    std::filesystem::path _appFilePath;
+    MainWindow* _mainWindow;
     bool _isRunning;
-    Window* _window;
-    bool _enabled;
-    Action _selectedAction;
     bool _autoStartEnabled;
-    bool _editPause;
+    bool _enabled;
     DWORD _lastUpdate;
     HWND _activeHwnd;
 
@@ -40,29 +31,30 @@ public:
     static App& instance();
     int run();
 
-private:
-    void initUIStyle();
-
-    bool loadConfig();
-    void saveConfig();
+    void enable(bool state = true);
+    bool isEnabled();
 
     bool isAutoStartEnabled();
     bool enableAutoStart(bool state);
 
-    void onFocusChanged();
-    void onTrayClick();
-    void onTrayMenu(TrayIconMenu& menu);
-    void onWindowUpdate();
-    bool onKeyPress(UINT vkCode, bool repeat);
-    bool onKeyRelease(UINT vkCode, bool repeat);
-
+    const std::list<Profile>& getProfiles();
     Profile* findProfile(const char* name);
     bool isProfileExists(const char* name);
     void createProfile(const char* name);
-    void editProfile(const char* name);
+    void editingProfile(const char* name);
+    Profile* editingProfile();
     void deleteProfile(const char* profile);
     Profile* findProfileByApp(const char* app);
     bool isProfileBinded(const char* name, const char* app);
     void bindProfile(const char* name, const char* app);
     void unbindProfile(const char* name, const char* app);
+
+private:
+    bool loadConfig();
+    void saveConfig();
+
+    void onFocusChanged();
+    void onWindowUpdate();
+    bool onKeyPress(UINT vkCode, bool repeat);
+    bool onKeyRelease(UINT vkCode, bool repeat);
 };

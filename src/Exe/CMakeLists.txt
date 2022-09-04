@@ -1,10 +1,17 @@
 project( Spammy )
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
 
 add_executable(
 	${PROJECT_NAME} WIN32
 		resources/resources.h
 		resources/resources.rc
+		Win32/Keyboard.cpp
+		Win32/Keyboard.h
+		Win32/Mouse.cpp
+		Win32/Mouse.h
+		Win32/WinEvent.cpp
+		Win32/WinEvent.h
 		Window/Renderer/Renderer.h
 		Window/Renderer/D3d11.cpp
 		Window/Renderer/D3d11.h
@@ -18,19 +25,15 @@ add_executable(
 		Window/Window.h
 		App.cpp
 		App.h
-		"Win32/Keyboard.cpp"
-		"Win32/Keyboard.h"
-		"Win32/Mouse.cpp"
-		"Win32/Mouse.h"
-		"Win32/WinEvent.cpp"
-		"Win32/WinEvent.h"
+		ImGui.cpp
+		ImGui.h
 		KeyboardLayout.h
-		
-		
-		
-		"Utils.cpp"
-		"Utils.h"
-  "ImGui.h" "ImGui.cpp"         "Profile.h"   "LuaApi.cpp")
+		MainWindow.cpp
+		MainWindow.h
+		Profile.h
+		Utils.cpp
+		Utils.h
+)
 
 target_compile_definitions(
 	${PROJECT_NAME} PRIVATE
@@ -40,7 +43,6 @@ target_compile_definitions(
 target_link_libraries(
 	${PROJECT_NAME} PRIVATE
 		imgui
-		lua
 )
 
 target_include_directories(

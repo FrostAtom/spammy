@@ -15,9 +15,6 @@
 #include "Renderer/D3d9.h"
 #include "Renderer/D3d11.h"
 #include "TrayIcon.h"
-#ifndef WM_USER_FOCUS
-#define WM_USER_FOCUS (WM_APP + 0x20)
-#endif
 
 class Window {
 public:
@@ -37,136 +34,104 @@ public:
 		T x, y;
 	};
 
-	enum Status {
-		Status_Running, // Normal
-		Status_Quit, // Quit requested
-		Status_Close, // Window closed, loop must be breaked
-		Status_Fail,
-	};
-
-	enum State {
-		State_Normal,
-		State_Hide,
-		State_Minimize,
-		State_Maximize,
-	};
-
 	using RenderCallback_t = std::function<void()>;
-	using PendingTask_t = std::function<void(Status& status)>;
+	using PendingTask_t = std::function<void()>;
 private:
 	wchar_t _wndName[64], _className[64];
 	char _u8wndName[64];
-	DWORD _imWndFlags;
-	bool _sizable;
-	bool _movable, _moving;
-	Vec2D<size_t> _movePos;
-	Vec2D<size_t> _sizeMin, _sizeMax, _size;
-	Vec2D<size_t> _position;
-	HICON _hicon;
+	HICON _icon;
 	ATOM _atom;
 	HWND _hwnd;
-	bool _quitRequested;
-	std::vector<PendingTask_t> _pendingTasks;
+	ImGuiContext* _imCtx;
+	bool _wantQuit, _mustQuit;
+
+	DWORD _imWndFlags;
+	int _showState;
+	bool _sizable, _movable;
+	Vec2D<size_t> _sizeMin, _sizeMax, _size;
+	Vec2D<size_t> _position;
+
+	bool _moving;
+	Vec2D<size_t> _movePos;
 
 	WindowRenderer* _renderBackend;
 	TrayIcon* _trayIcon;
-	RenderCallback_t _renderer;
 	static const char* ErrorCodeNames[];
 public:
 	Window(const wchar_t* className, const wchar_t* wndName = NULL);
-	~Window();
+	virtual ~Window();
 
+	ErrorCode initialize();
 	void setRenderBackend(WindowRenderer* renderer);
-
 	void setTrayIcon(TrayIcon* icon);
-	TrayIcon* getTrayIcon();
+	HWND native();
+	void update();
 
-	// initializing window
-	ErrorCode create(State state = State_Normal);
-
-	// inside this function u must draw your UI
-	void setOnUpdate(RenderCallback_t&& func);
-
-	// sends exit signal to poll(), can be ignored
 	void quit();
-
-	// cleanups window interfaces
-	void cleanup();
-
-	// destroys window
 	void close();
+	void cleanup();
+	bool mustQuit();
+	bool wantQuit();
 
-	// fires update cycle
-	// returns false once when quit() called or WM_QUIT received, can be ignored
-	Status poll();
+	void minimize();
+	bool isMinimized();
+	void maximize();
+	bool isMaximized();
+	void normalize();
+	bool isNormalized();
+	void show();
+	void hide();
+	bool isShown();
+	void focus();
+	bool isFocused();
 
-	// render image
-	void render();
-
-	void enableMenuBar(bool state);
+	void enableMenuBar(bool v = true);
 	bool isEnabledMenuBar();
 
-	void enableScroll(bool state);
+	void enableScroll(bool v = true);
 	bool isEnabledScroll();
 
-	// returns native HWND
-	HWND native();
+	void enableSizing(bool v = true);
+	bool isEnabledSizing();
+
+	void enableMoving(bool v = true);
+	bool isEnabledMoving();
 
 	void setIcon(HICON icon);
 	void setIcon(unsigned id);
-
 	HICON getIcon();
-
-	State getState();
-
-	void setState(State state);
-	// window is focused
-	bool isFocused();
-	// focus window
-	void focus();
 
 	void setName(const wchar_t* name);
 	const wchar_t* getName();
 
-	void enableSizing(bool state);
-	bool isEnabledSizing();
-
-	void setSizeMin(const Vec2D<size_t>& min);
+	void setSizeMin(const Vec2D<size_t>& v);
 	Vec2D<size_t> getSizeMin();
-
-	void setSizeMax(const Vec2D<size_t>& max);
+	void setSizeMax(const Vec2D<size_t>& v);
 	Vec2D<size_t> getSizeMax();
-
-	// schedule window resize, will be applied after next poll
-	void setSize(const Vec2D<size_t>& size);
+	void setSizeMinMax(const Vec2D<size_t>& min, const Vec2D<size_t>& max);
+	void setSize(const Vec2D<size_t>& v);
 	Vec2D<size_t> getSize();
-
-	// schedule window move, will be applied after next poll
 	void setPosition(const Vec2D<size_t>& pos);
 	Vec2D<size_t> getPosition();
-	void setPositionCenter();
+	void resetPosition();
 
 	static Vec2D<size_t> getScreenSize();
-
-	void enableMoving(bool state);
-	bool isEnabledMoving();
-	bool isMoving();
-
 	static const char* formatError(ErrorCode code);
 
-	// looks for a copy of the window with the same name and class
-	// useful if your app should only be run once
-	bool focusTwin();
-private:
-	bool beginFrame();
-	void endFrame();
+protected:
+	bool isReady();
+	virtual void draw() = 0;
+	virtual bool beginFrame();
+	virtual void endFrame();
 
-	bool createWindow(State state);
+	bool createWindow();
 	void cleanupWindow();
 
-	void beginDrag();
-	void endDrag();
-	void updateDrag();
+	void startMove();
+	void stopMove();
+	void updateMove();
+
+	virtual bool handleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result);
 
 	static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 };
