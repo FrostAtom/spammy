@@ -1,10 +1,15 @@
 #include "MainWindow.h"
 #include "App.h"
 
+MainWindow* MainWindow::_self = NULL;
+MainWindow& MainWindow::instance() { return *_self; }
+
 MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName)
 	: Window(className, wndName), _selectedAction(Action_Spammy),
 		_editPause(false)
 {
+	_self = this;
+
 	wchar_t path[MAX_PATH] = { 0 };
 	GetModuleFileNameW(NULL, path, std::size(path));
 	_appFilePath = path;
@@ -133,7 +138,7 @@ void MainWindow::draw()
 				ImGui::PushItemWidth(120.f);
 				bool enter = ImGui::InputTextWithHint("##test", "Enter name", bufName, std::size(bufName), ImGuiInputTextFlags_EnterReturnsTrue);
 				ImGui::PopItemWidth();
-				bool validName = strlen(bufName) > 4 && !sApp.isProfileExists(bufName);
+				bool validName = strlen(bufName) >= 3 && !sApp.isProfileExists(bufName);
 				if (!validName) ImGui::BeginDisabled();
 				if ((ImGui::MenuItem("Save") || enter)) {
 					sApp.createProfile(bufName);
@@ -165,7 +170,10 @@ void MainWindow::draw()
 					}
 					if (activate) sApp.editingProfile(item.name.c_str());
 				}
-				if (pendingDelete) sApp.deleteProfile(pendingDelete);
+				if (pendingDelete) {
+					sApp.deleteProfile(pendingDelete);
+					editingProfile = NULL;
+				}
 			}
 			else {
 				ImGui::BeginDisabled();
@@ -358,8 +366,7 @@ void MainWindow::draw()
 				if (pressed) {
 					color = ImColor(ImGui::GetColorU32(ImGuiCol_ButtonActive));
 					hasColor = true;
-				}
-				else if (cfg) {
+				} else if (cfg) {
 					if (cfg->action != Action_None) {
 						color = ButtonMode[cfg->action];
 						hasColor = true;
@@ -384,40 +391,42 @@ void MainWindow::draw()
 				if (hasColor) ImGui::PopStyleColor();
 				if (disabled) ImGui::EndDisabled();
 
-				snprintf(buf, std::size(buf), "##popup%02x", i);
-				if (ImGui::BeginPopupContextItem(buf)) {
-					static DWORD mods;
-					if (ImGui::IsWindowAppearing()) mods = sKeyboard.testModifiers();
-					ImGui::MenuItem(s_keyMods[mods], NULL, false, false);
+				if (editingProfile) {
+					snprintf(buf, std::size(buf), "##popup%02x", i);
+					if (ImGui::BeginPopupContextItem(buf)) {
+						static DWORD mods;
+						if (ImGui::IsWindowAppearing()) mods = sKeyboard.testModifiers();
+						ImGui::MenuItem(s_keyMods[mods], NULL, false, false);
 
-					KeyConfig& cfg = editingProfile->keys[key.vkCode][mods];
-					if (cfg.action != Action_Disabled) {
-						if (ImGui::BeginMenu("Mode")) {
-							static const char* s_modes[] = {
-								NULL,
-								NULL,
-								"Spammy",
-								"Speedy",
-							};
-							for (int i = 2; i < std::size(s_modes); i++) {
-								bool selected = false;
-								if (ImGui::MenuItem(s_modes[i], NULL, &selected))
-									cfg.action = (Action)i;
+						KeyConfig& cfg = editingProfile->keys[key.vkCode][mods];
+						if (cfg.action != Action_Disabled) {
+							if (ImGui::BeginMenu("Mode")) {
+								static const char* s_modes[] = {
+									NULL,
+									NULL,
+									"Spammy",
+									"Speedy",
+								};
+								for (int i = 2; i < std::size(s_modes); i++) {
+									bool selected = false;
+									if (ImGui::MenuItem(s_modes[i], NULL, &selected))
+										cfg.action = (Action)i;
+								}
+								ImGui::EndMenu();
 							}
-							ImGui::EndMenu();
-						}
 
-						if (mods != KeyMod_None) {
-							if (ImGui::MenuItem("Disable"))
-								cfg.action = Action_Disabled;
+							if (mods != KeyMod_None) {
+								if (ImGui::MenuItem("Disable"))
+									cfg.action = Action_Disabled;
+							}
 						}
+						else {
+							if (ImGui::MenuItem("Enable##Disable"))
+								cfg.action = Action_None;
+						}
+						ImGui::MenuItem("Close");
+						ImGui::EndPopup();
 					}
-					else {
-						if (ImGui::MenuItem("Enable##Disable"))
-							cfg.action = Action_None;
-					}
-					ImGui::MenuItem("Close");
-					ImGui::EndPopup();
 				}
 				break;
 			}

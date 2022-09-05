@@ -7,8 +7,10 @@
 #include "Utils.h"
 #include "Profile.h"
 #define WM_USER_FOCUS (WM_APP + 0x20)
+#define sMainWindow MainWindow::instance()
 
 class MainWindow : public Window {
+    static MainWindow* _self;
     std::filesystem::path _appFilePath;
     Action _selectedAction;
     bool _editPause;
@@ -16,6 +18,7 @@ class MainWindow : public Window {
 public:
     MainWindow(const wchar_t* className, const wchar_t* wndName = NULL);
     ~MainWindow();
+    static MainWindow& instance();
     bool initialize();
 
     bool handleKeyPress(unsigned short vkCode, bool repeat);

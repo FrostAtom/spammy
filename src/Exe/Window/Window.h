@@ -46,7 +46,6 @@ private:
 	bool _wantQuit, _mustQuit;
 
 	DWORD _imWndFlags;
-	int _showState;
 	bool _sizable, _movable;
 	Vec2D<size_t> _sizeMin, _sizeMax, _size;
 	Vec2D<size_t> _position;

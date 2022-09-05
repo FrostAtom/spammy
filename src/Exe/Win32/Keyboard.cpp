@@ -33,11 +33,6 @@ void Keyboard::detach()
 	if (_hhook) { UnhookWindowsHookEx(_hhook); _hhook = NULL; }
 }
 
-size_t Keyboard::count()
-{
-	return KeysMax;
-}
-
 bool Keyboard::testModifiers(unsigned mods)
 {
 	DWORD _mods = testModifiers();
@@ -101,7 +96,7 @@ const char* Keyboard::geyKeyName(unsigned short vkCode)
 
 LRESULT CALLBACK Keyboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
-	Keyboard& app = Keyboard::instance();
+	Keyboard& self = Keyboard::instance();
 	if (nCode == HC_ACTION) {
 		LPKBDLLHOOKSTRUCT data = (LPKBDLLHOOKSTRUCT)lParam;
 		bool isEmulated = (data->dwExtraInfo & INPUT_EXTRA_FLAGS_EMULATED) != 0;
@@ -109,20 +104,20 @@ LRESULT CALLBACK Keyboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM
 			switch (wParam) {
 			case WM_KEYDOWN:
 			case WM_SYSKEYDOWN: {
-				if (app.handleDown(data->vkCode))
+				if (self.handleDown(data->vkCode))
 					return 1;
 				break;
 			}
 			case WM_KEYUP:
 			case WM_SYSKEYUP: {
-				if (app.handleUp(data->vkCode))
+				if (self.handleUp(data->vkCode))
 					return 1;
 				break;
 			}
 			}
 		}
 	}
-	return CallNextHookEx(app._hhook, nCode, wParam, lParam);
+	return CallNextHookEx(self._hhook, nCode, wParam, lParam);
 }
 
 bool Keyboard::handleDown(unsigned short vkCode)

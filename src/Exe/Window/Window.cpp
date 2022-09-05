@@ -21,7 +21,7 @@ static const DWORD ImGuiWindowMenuBarMask = ImGuiWindowFlags_MenuBar;
 Window::Window(const wchar_t* className, const wchar_t* wndName)
 	: _icon(NULL), _atom(NULL), _hwnd(NULL), _imCtx(NULL), _wantQuit(false), _mustQuit(false),
 		_imWndFlags(ImGuiWindowDisableScrollMask), _sizable(false), _movable(false), _moving(false), _renderBackend(NULL), _trayIcon(NULL),
-		_position(CW_USEDEFAULT, CW_USEDEFAULT), _size(512, 512), _sizeMin(512, 512), _sizeMax(512, 512), _showState(SW_RESTORE)
+		_position(CW_USEDEFAULT, CW_USEDEFAULT), _size(512, 512), _sizeMin(512, 512), _sizeMax(512, 512)
 {
 	if (!wndName) wndName = className;
 	wcsncpy_s(_className, className, std::size(_className));
@@ -143,51 +143,52 @@ void Window::focus()
 	if (_hwnd) SetForegroundWindow(_hwnd);
 }
 
+static int GetShowCmd(HWND hwnd)
+{
+	WINDOWPLACEMENT wPos = { sizeof(wPos) };
+	GetWindowPlacement(hwnd, &wPos);
+	return wPos.showCmd;
+}
+
 void Window::minimize()
 {
-	_showState = SW_MINIMIZE;
-	if (_hwnd) ShowWindow(_hwnd, _showState);
+	if (_hwnd) ShowWindow(_hwnd, SW_MINIMIZE);
 }
 
 bool Window::isMinimized()
 {
 	if (!_hwnd) return false;
-	WINDOWPLACEMENT wPos = { sizeof(wPos) };
-	GetWindowPlacement(_hwnd, &wPos);
-	return wPos.showCmd == SW_SHOWMINIMIZED;
+	int cmd = GetShowCmd(_hwnd);
+	return cmd == SW_MINIMIZE || cmd == SW_SHOWMINIMIZED;
 }
 
 void Window::maximize()
 {
-	_showState = SW_SHOWMAXIMIZED;
-	if (_hwnd) ShowWindow(_hwnd, _showState);
+	if (_hwnd) ShowWindow(_hwnd, SW_SHOWMAXIMIZED);
 }
 
 bool Window::isMaximized()
 {
 	if (!_hwnd) return false;
-	WINDOWPLACEMENT wPos = { sizeof(wPos) };
-	GetWindowPlacement(_hwnd, &wPos);
-	return wPos.showCmd == SW_SHOWMAXIMIZED;
+	int cmd = GetShowCmd(_hwnd);
+	return cmd == SW_MAXIMIZE;
 }
 
 void Window::normalize()
 {
-	_showState = SW_NORMAL;
-	if (_hwnd) ShowWindow(_hwnd, _showState);
+	if (_hwnd) ShowWindow(_hwnd, SW_NORMAL);
 }
 
 bool Window::isNormalized()
 {
 	if (!_hwnd) return false;
-	WINDOWPLACEMENT wPos = { sizeof(wPos) };
-	GetWindowPlacement(_hwnd, &wPos);
-	return wPos.showCmd == SW_NORMAL;
+	int cmd = GetShowCmd(_hwnd);
+	return cmd == SW_NORMAL;
 }
 
 void Window::show()
 {
-	if (_hwnd) ShowWindow(_hwnd, _showState);
+	if (_hwnd) ShowWindow(_hwnd, SW_NORMAL);
 }
 
 void Window::hide()
@@ -198,7 +199,7 @@ void Window::hide()
 bool Window::isShown()
 {
 	if (!_hwnd) return false;
-	return ((GetWindowStyle(_hwnd) & WS_VISIBLE) != 0);
+	return (bool)(GetWindowStyle(_hwnd) & WS_VISIBLE);
 }
 
 void Window::setName(const wchar_t* name)

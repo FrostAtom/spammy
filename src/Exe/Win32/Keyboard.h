@@ -19,9 +19,8 @@ public:
     using Callback_t = std::function<bool(UINT vkCode, bool repeat)>;
 
 private:
-    inline static constexpr size_t KeysMax = KEYBOARD_KEYS_COUNT;
     HHOOK _hhook;
-    std::array<DWORD, KeysMax> _state;
+    std::array<DWORD, KEYBOARD_KEYS_COUNT> _state;
     Callback_t _onPress, _onRelease;
 
     Keyboard();
@@ -33,7 +32,7 @@ public:
     void detach();
 
     // key total number
-    size_t count();
+    static constexpr size_t count() { return KEYBOARD_KEYS_COUNT; }
     // check for all mods is pressed
     bool testModifiers(unsigned mods);
     // get pressed mods mask

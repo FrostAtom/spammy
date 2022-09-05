@@ -251,6 +251,7 @@ void App::deleteProfile(const char* name)
 	auto it = std::find_if(_profiles.begin(), _profiles.end(), [name](const Profile& item) {
 		return item.name == name;
 	});
+	if (it == _profiles.end()) return;
 	if (&(*it) == _activeProfile) _activeProfile = NULL;
 	if (&(*it) == _editingProfile) _editingProfile = NULL;
 	_profiles.erase(it);
