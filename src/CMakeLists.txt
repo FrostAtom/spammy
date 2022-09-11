@@ -1,1 +1,1 @@
-add_subdirectory( Exe )
+add_subdirectory( Spammy )

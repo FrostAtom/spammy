@@ -25,7 +25,7 @@ class App {
     Profile* _activeProfile, *_editingProfile;
 
 public:
-    App(int argc, wchar_t* argv[]);
+    App(int argc, char** argv);
     ~App();
 
     static App& instance();
@@ -54,7 +54,6 @@ private:
     void saveConfig();
 
     void onFocusChanged();
-    void onWindowUpdate();
     bool onKeyPress(UINT vkCode, bool repeat);
     bool onKeyRelease(UINT vkCode, bool repeat);
 };

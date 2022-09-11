@@ -2,11 +2,16 @@
 
 App* App::_self = NULL;
 
-App::App(int argc, wchar_t* argv[])
+App::App(int argc, char** argv)
 	: _isRunning(false), _enabled(false), _mainWindow(NULL), _autoStartEnabled(false),
 		_lastUpdate(0), _activeHwnd(NULL), _activeProfile(NULL), _editingProfile(NULL)
 {
 	_self = this;
+
+	wchar_t buf[MAX_PATH];
+	GetCurrentDirectoryW(std::size(buf), buf);
+	GetModuleFileNameW(NULL, buf, std::size(buf));
+	SetCurrentDirectoryW(std::filesystem::path(buf).parent_path().wstring().c_str());
 
 	if (!loadConfig()) {
 		int action = MessageBoxW(NULL, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
@@ -16,6 +21,9 @@ App::App(int argc, wchar_t* argv[])
 
 	_mainWindow = new MainWindow(L"" APP_NAME);
 	if (!_mainWindow->initialize()) return;
+
+	if (argc > 1 && strcmp(argv[1], "autolaunch") == 0)
+		_mainWindow->hide();
 
 	sKeyboard.atttach();
 	sKeyboard.onPress(std::bind_front(&App::onKeyPress, this));
@@ -296,7 +304,7 @@ void App::onFocusChanged()
 		_activeProfile = findProfileByApp((const char*)path.filename().u8string().c_str());
 }
 
-auto main(int argc, wchar_t* argv[]) -> int
+int main(int argc, char** argv)
 {
 	std::unique_ptr<App> app(new App(argc, argv));
 	return app->run();

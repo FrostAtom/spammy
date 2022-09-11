@@ -188,7 +188,7 @@ bool Window::isNormalized()
 
 void Window::show()
 {
-	if (_hwnd) ShowWindow(_hwnd, SW_NORMAL);
+	if (_hwnd) ShowWindow(_hwnd, SW_SHOWNORMAL);
 }
 
 void Window::hide()
