@@ -446,17 +446,17 @@ void MainWindow::draw()
 		ImGui::TableNextRow();
 		ImGui::TableNextColumn();
 
-		ImGui::ColorButton("Disabled", ButtonMode[Action_Disabled], ImGuiColorEditFlags_NoTooltip);
+		ImGui::ColorButton("Disabled", ButtonMode[Action_Disabled], ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop);
 		ImGui::SameLine();
 		ImGui::TextUnformatted("Disabled");
 
 		ImGui::SameLine();
-		ImGui::ColorButton("Spammy", ButtonMode[Action_Spammy], ImGuiColorEditFlags_NoTooltip);
+		ImGui::ColorButton("Spammy", ButtonMode[Action_Spammy], ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop);
 		ImGui::SameLine();
 		ImGui::TextUnformatted("Spammy");
 
 		ImGui::SameLine();
-		ImGui::ColorButton("Speedy", ButtonMode[Action_Speedy], ImGuiColorEditFlags_NoTooltip);
+		ImGui::ColorButton("Speedy", ButtonMode[Action_Speedy], ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop);
 		ImGui::SameLine();
 		ImGui::TextUnformatted("Speedy");
 
