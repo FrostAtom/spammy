@@ -1,11 +1,5 @@
 #pragma once
-#include <Windows.h>
-#include <Shlwapi.h>
-#include <shellapi.h>
-#include <psapi.h>
-#include <functional>
-#include <filesystem>
-#include <chrono>
+#include "Headers.h"
 
 void LaunchUrl(const wchar_t* url);
 

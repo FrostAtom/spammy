@@ -1,13 +1,13 @@
 ﻿#include "App.h"
 
-App* App::_self = NULL;
-
-App::App(int argc, char** argv)
-	: _isRunning(false), _enabled(false), _mainWindow(NULL), _autoStartEnabled(false),
-		_lastUpdate(0), _activeHwnd(NULL), _activeProfile(NULL), _editingProfile(NULL)
+App& App::instance()
 {
-	_self = this;
+	static App s_app;
+	return s_app;
+}
 
+bool App::init(int argc, char** argv)
+{
 	wchar_t buf[MAX_PATH];
 	GetCurrentDirectoryW(std::size(buf), buf);
 	GetModuleFileNameW(NULL, buf, std::size(buf));
@@ -15,12 +15,12 @@ App::App(int argc, char** argv)
 
 	if (!loadConfig()) {
 		int action = MessageBoxW(NULL, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
-		if (action != IDOK) return;
+		if (action != IDOK) return false;
 	}
 	_autoStartEnabled = isAutoStartEnabled();
 
 	_mainWindow = new MainWindow(L"" APP_NAME);
-	if (!_mainWindow->initialize()) return;
+	if (!_mainWindow->initialize()) return false;
 
 	if (argc > 1 && strcmp(argv[1], "autolaunch") == 0)
 		_mainWindow->hide();
@@ -28,22 +28,19 @@ App::App(int argc, char** argv)
 	sKeyboard.atttach();
 	sKeyboard.onPress(std::bind_front(&App::onKeyPress, this));
 	sKeyboard.onRelease(std::bind_front(&App::onKeyRelease, this));
-	sWinEvent.on(EVENT_SYSTEM_FOREGROUND, std::bind_front(&App::onFocusChanged, this));
 
 	_isRunning = true;
+	return true;
 }
 
-App::~App()
+void App::uninit()
 {
-	sWinEvent.reset();
 	sKeyboard.detach();
 	saveConfig();
 	if (_mainWindow) { delete _mainWindow; _mainWindow = NULL; }
 }
 
-App& App::instance() { return *_self; }
-
-int App::run()
+bool App::run()
 {
 	if (!_isRunning) return EXIT_SUCCESS;
 
@@ -57,7 +54,9 @@ int App::run()
 		if (_mainWindow->isNormalized())
 			_mainWindow->update();
 
-		Profile* profile = _activeProfile;
+		checkIsFocusChanged();
+
+		std::shared_ptr<Profile> profile = _activeProfile;
 		if (_enabled && profile) {
 			DWORD ticks = GetTickCount();
 			if (ticks - _lastUpdate >= profile->speed) {
@@ -85,7 +84,7 @@ int App::run()
 	}
 	_mainWindow->cleanup();
 
-	return EXIT_SUCCESS;
+	return true;
 }
 
 void App::enable(bool state)
@@ -108,7 +107,7 @@ bool App::loadConfig()
 		if (auto enabled = json["enabled"]; enabled.is_boolean())
 			_enabled = enabled.get<bool>();
 		if (auto profiles = json["profiles"]; profiles.is_array())
-			_profiles = json["profiles"].get<std::list<Profile>>();
+			_profiles = json["profiles"].get<std::list<std::shared_ptr<Profile>>>();
 		if (auto editingProfile = json["editingProfile"]; editingProfile.is_string())
 			_editingProfile = findProfile(editingProfile.get_ref<const std::string&>().c_str());
 	} catch(nlohmann::json::exception&) {
@@ -219,17 +218,17 @@ bool App::onKeyRelease(UINT vkCode, bool repeat)
 	return false;
 }
 
-const std::list<Profile>& App::getProfiles()
+const std::list<std::shared_ptr<Profile>>& App::getProfiles()
 {
 	return _profiles;
 }
 
-Profile* App::findProfile(const char* name)
+std::shared_ptr<Profile> App::findProfile(const char* name)
 {
-	auto it = std::find_if(_profiles.begin(), _profiles.end(), [=](const Profile& item) {
-		return item.name == name;
+	auto it = std::find_if(_profiles.begin(), _profiles.end(), [=](const std::shared_ptr<Profile>& item) {
+		return item->name == name;
 	});
-	return it != _profiles.end() ? &(*it) : NULL;
+	return it != _profiles.end() ? *it : NULL;
 }
 
 bool App::isProfileExists(const char* name)
@@ -239,9 +238,11 @@ bool App::isProfileExists(const char* name)
 
 void App::createProfile(const char* name)
 {
-	Profile& profile = _profiles.emplace_back();
-	profile.name = name;
-	_editingProfile = &profile;
+	std::shared_ptr<Profile> profile = std::make_shared<Profile>();
+	profile->name = name;
+
+	_profiles.emplace_back(profile);
+	_editingProfile = profile;
 }
 
 void App::editingProfile(const char* name)
@@ -249,49 +250,60 @@ void App::editingProfile(const char* name)
 	_editingProfile = findProfile(name);
 }
 
-Profile* App::editingProfile()
+std::shared_ptr<Profile> App::editingProfile()
 {
 	return _editingProfile;
 }
 
 void App::deleteProfile(const char* name)
 {
-	auto it = std::find_if(_profiles.begin(), _profiles.end(), [name](const Profile& item) {
-		return item.name == name;
+	auto it = std::find_if(_profiles.begin(), _profiles.end(), [name](const std::shared_ptr<Profile>& item) {
+		return item->name == name;
 	});
 	if (it == _profiles.end()) return;
-	if (&(*it) == _activeProfile) _activeProfile = NULL;
-	if (&(*it) == _editingProfile) _editingProfile = NULL;
+	if (*it == _activeProfile) _activeProfile = NULL;
+	if (*it == _editingProfile) _editingProfile = NULL;
 	_profiles.erase(it);
 }
 
-Profile* App::findProfileByApp(const char* app)
+std::shared_ptr<Profile> App::findProfileByApp(const char* app)
 {
-	auto it = std::find_if(_profiles.begin(), _profiles.end(), [app](const Profile& item) {
-		return std::find(item.apps.begin(), item.apps.end(), app) != item.apps.end();
+	auto it = std::find_if(_profiles.begin(), _profiles.end(), [app](const std::shared_ptr<Profile>& item) {
+		return std::find(item->apps.begin(), item->apps.end(), app) != item->apps.end();
 	});
-	return it != _profiles.end() ? &(*it) : NULL;
+	return it != _profiles.end() ? *it : NULL;
 }
 
 bool App::isProfileBinded(const char* name, const char* app)
 {
-	if (Profile* profile = findProfile(name))
+	if (std::shared_ptr<Profile> profile = findProfile(name))
 		return std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end();
 	return false;
 }
 
 void App::bindProfile(const char* name, const char* app)
 {
-	if (Profile* profile = findProfile(name); profile && (std::find(profile->apps.begin(), profile->apps.end(), app) == profile->apps.end())) {
-		profile->apps.emplace_back(app);
-		LexicographicalSort(profile->apps);
-	}
+	std::shared_ptr<Profile> profile = findProfile(name);
+	if (!profile || std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) return;
+	profile->apps.emplace_back(app);
+	LexicographicalSort(profile->apps);
 }
 
 void App::unbindProfile(const char* name, const char* app)
 {
-	if (Profile* profile = findProfile(name))
-		profile->apps.erase(std::remove(profile->apps.begin(), profile->apps.end(), app), profile->apps.end());
+	std::shared_ptr<Profile> profile = findProfile(name);
+	if (!profile) return;
+	profile->apps.erase(std::remove(profile->apps.begin(), profile->apps.end(), app), profile->apps.end());
+}
+
+void App::checkIsFocusChanged()
+{
+	static HWND s_prevFocus = NULL;
+	HWND focus = GetForegroundWindow();
+	if (s_prevFocus != focus) {
+		onFocusChanged();
+		s_prevFocus = focus;
+	}
 }
 
 void App::onFocusChanged()
@@ -306,6 +318,7 @@ void App::onFocusChanged()
 
 int main(int argc, char** argv)
 {
-	std::unique_ptr<App> app(new App(argc, argv));
-	return app->run();
+	bool ret = sApp.init(argc, argv) && sApp.run();
+	sApp.uninit();
+	return ret ? EXIT_SUCCESS : EXIT_FAILURE;
 }

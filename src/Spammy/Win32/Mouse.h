@@ -1,4 +1,5 @@
 #pragma once
+#include "../Headers.h"
 #include "Keyboard.h"
 #define MOUSE_KEYS_COUNT 5
 #define sMouse Mouse::instance()

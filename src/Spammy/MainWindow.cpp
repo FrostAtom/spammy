@@ -61,7 +61,7 @@ bool MainWindow::handleKeyPress(unsigned short vkCode, bool)
 bool MainWindow::handleKeyRelease(unsigned short vkCode, bool)
 {
 	if (_editPause) {
-		if (Profile* profile = sApp.editingProfile())
+		if (auto profile = sApp.editingProfile())
 			profile->vkPause = MAKE_KEY_BUNDLE(vkCode, sKeyboard.testModifiers());
 		_editPause = false;
 		return true;
@@ -126,7 +126,7 @@ static const char* s_keyMods[] = {
 
 void MainWindow::draw()
 {
-	Profile* editingProfile = sApp.editingProfile();
+	auto editingProfile = sApp.editingProfile();
 	if (ImGui::BeginMenuBar()) {
 		char bufProfilesName[96] = { 0 };
 		snprintf(bufProfilesName, std::size(bufProfilesName), "%s##Profiles",
@@ -151,15 +151,15 @@ void MainWindow::draw()
 			const auto& profiles = sApp.getProfiles();
 			if (!profiles.empty()) {
 				const char* pendingDelete = NULL;
-				for (const Profile& item : profiles) {
+				for (const std::shared_ptr<Profile>& item : profiles) {
 					bool activate = false;
-					if (ImGui::BeginMenu(item.name.c_str())) {
+					if (ImGui::BeginMenu(item->name.c_str())) {
 						if (ImGui::MenuItem("Select"))
 							activate = true;
 						if (ImGui::BeginMenu("Delete")) {
 							ImGui::MenuItem("No");
 							if (ImGui::MenuItem("Yes"))
-								pendingDelete = item.name.c_str();
+								pendingDelete = item->name.c_str();
 							ImGui::EndMenu();
 						}
 						ImGui::EndMenu();
@@ -168,7 +168,7 @@ void MainWindow::draw()
 						activate = true;
 						ImGui::CloseCurrentPopup();
 					}
-					if (activate) sApp.editingProfile(item.name.c_str());
+					if (activate) sApp.editingProfile(item->name.c_str());
 				}
 				if (pendingDelete) {
 					sApp.deleteProfile(pendingDelete);
@@ -297,7 +297,7 @@ void MainWindow::draw()
 					if (unbindApp) sApp.unbindProfile(editingProfile->name.c_str(), unbindApp);
 
 					for (const std::string& app : appList) {
-						Profile* appProfile = sApp.findProfileByApp(app.c_str());
+						auto appProfile = sApp.findProfileByApp(app.c_str());
 						bool enabledNotForThis = appProfile && editingProfile != appProfile;
 						if (enabledNotForThis) ImGui::BeginDisabled();
 						if (ImGui::Selectable(app.c_str()))

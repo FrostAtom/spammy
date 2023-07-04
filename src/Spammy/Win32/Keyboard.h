@@ -1,7 +1,5 @@
 #pragma once
-#include <Windows.h>
-#include <array>
-#include <functional>
+#include "../Headers.h"
 #define sKeyboard Keyboard::instance()
 #define INPUT_EXTRA_FLAGS_EMULATED 0x80000000
 #define KEYBOARD_KEYS_COUNT (255)

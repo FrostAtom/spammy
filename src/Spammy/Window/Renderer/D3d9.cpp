@@ -1,5 +1,4 @@
 #include "D3d9.h"
-#pragma comment(lib, "d3d9")
 
 WindowRenderer_D3d9::WindowRenderer_D3d9()
 	: _hwnd(NULL), _lib(NULL), _dev(NULL)

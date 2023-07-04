@@ -1,19 +1,7 @@
 #pragma once
-#include <Windows.h>
-#include <shellapi.h>
-#include <codecvt>
-#include <type_traits>
-#include <functional>
-#include <string>
-#include <unordered_map>
-#include <map>
-#include <imgui/imgui.h>
-#include <imgui/imgui_impl_win32.h>
-#define IMGUI_DEFINE_MATH_OPERATORS
-#include <imgui/imgui_internal.h>
+#include "../Headers.h"
 #include "Renderer/Renderer.h"
 #include "Renderer/D3d9.h"
-#include "Renderer/D3d11.h"
 #include "TrayIcon.h"
 
 class Window {

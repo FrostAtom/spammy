@@ -1,7 +1,5 @@
 #pragma once
-#include <string>
-#include <map>
-#include <nlohmann/json.hpp>
+#include "Headers.h"
 #include "Win32/Keyboard.h"
 #define GET_KEY_MODIFIER(bundle) ((bundle >> 16) & 0xFFFF)
 #define GET_KEY_VKCODE(bundle) (bundle & 0xFFFF)
@@ -99,6 +97,19 @@ inline void from_json(const nlohmann::json& json, Profile& value)
             }
         }
     }
+}
+
+template<class T>
+inline void to_json(nlohmann::json& json, const std::shared_ptr<T>& value)
+{
+    return to_json(json, *value);
+}
+
+template<class T>
+inline void from_json(const nlohmann::json& json, std::shared_ptr<T>& value)
+{
+    value = std::make_shared<T>();
+    return from_json(json, *value);
 }
 
 #undef JSON_READ_FIELD

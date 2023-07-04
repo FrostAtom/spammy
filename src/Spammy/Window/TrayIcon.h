@@ -1,10 +1,5 @@
 #pragma once
-#include <Windows.h>
-#include <Windowsx.h>
-#include <shellapi.h>
-#include <functional>
-#include <string>
-#include <vector>
+#include "../Headers.h"
 #ifndef WM_TRAYCMD
 #define WM_TRAYCMD (WM_APP + 0x10)
 #endif

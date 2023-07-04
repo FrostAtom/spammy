@@ -1,7 +1,6 @@
 #pragma once
+#include "../../Headers.h"
 #include "Renderer.h"
-#include <d3d9.h>
-#include <imgui/imgui_impl_dx9.h>
 
 class WindowRenderer_D3d9 : public WindowRenderer {
     HWND _hwnd;

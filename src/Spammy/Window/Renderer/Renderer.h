@@ -1,6 +1,5 @@
 #pragma once
-#include <Windows.h>
-#include <imgui/imgui.h>
+#include "../../Headers.h"
 
 class WindowRenderer {
 public:

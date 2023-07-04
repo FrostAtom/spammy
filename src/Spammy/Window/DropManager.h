@@ -1,9 +1,5 @@
 #pragma once
-#include <oleidl.h>
-#include <Shellapi.h>
-#include <filesystem>
-#include <functional>
-#include <vector>
+#include "../Headers.h"
 
 class DropManager : public IDropTarget {
 	friend class Window;
