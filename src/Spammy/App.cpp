@@ -9,7 +9,6 @@ App& App::instance()
 bool App::init(int argc, char** argv)
 {
 	wchar_t buf[MAX_PATH];
-	GetCurrentDirectoryW(std::size(buf), buf);
 	GetModuleFileNameW(NULL, buf, std::size(buf));
 	SetCurrentDirectoryW(std::filesystem::path(buf).parent_path().wstring().c_str());
 
@@ -41,7 +40,7 @@ void App::uninit()
 
 bool App::run()
 {
-	if (!_isRunning) return EXIT_SUCCESS;
+	if (!_isRunning) return true;
 
 	while (!_mainWindow->mustQuit()) {
 		MSG msg;
@@ -55,7 +54,13 @@ bool App::run()
 
 		checkIsFocusChanged();
 
-		std::shared_ptr<Profile> profile = _activeProfile;
+		std::shared_ptr<Profile> profile;
+		HWND activeHwnd;
+		{
+			std::lock_guard lock(_callbackMutex);
+			profile = _activeProfile;
+			activeHwnd = _activeHwnd;
+		}
 		if (_enabled && profile) {
 			DWORD ticks = GetTickCount();
 			if (ticks - _lastUpdate >= profile->speed) {
@@ -64,15 +69,15 @@ bool App::run()
 					if (sKeyboard.isPressed(i)) {
 						bool spammy = false;
 						if (mods != KeyMod_None) {
-							if (_activeProfile->keys[i][mods].action == Action_None)
-								if (_activeProfile->keys[i][KeyMod_None].action == Action_Spammy)
+							if (profile->keys[i][mods].action == Action_None)
+								if (profile->keys[i][KeyMod_None].action == Action_Spammy)
 									spammy = true;
 						}
 						else {
-							if (_activeProfile->keys[i][KeyMod_None].action == Action_Spammy)
+							if (profile->keys[i][KeyMod_None].action == Action_Spammy)
 								spammy = true;
 						}
-						if (spammy) sKeyboard.press(_activeHwnd, i);
+						if (spammy) sKeyboard.press(activeHwnd, i);
 					}
 				}
 				_lastUpdate = ticks;
@@ -264,7 +269,10 @@ void App::deleteProfile(const char* name)
 		return item->name == name;
 	});
 	if (it == _profiles.end()) return;
-	if (*it == _activeProfile) _activeProfile = NULL;
+	if (*it == _activeProfile) {
+		std::lock_guard lock(_callbackMutex);
+		_activeProfile = NULL;
+	}
 	if (*it == _editingProfile) _editingProfile = NULL;
 	_profiles.erase(it);
 }
