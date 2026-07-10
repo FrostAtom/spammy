@@ -11,7 +11,7 @@ class WindowRenderer_D3d9 : public WindowRenderer {
 public:
     WindowRenderer_D3d9();
     ~WindowRenderer_D3d9();
-    
+
     bool create(HWND hwnd);
     void cleanup();
     void reset();

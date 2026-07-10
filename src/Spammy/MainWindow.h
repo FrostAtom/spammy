@@ -1,10 +1,10 @@
 #pragma once
-#include "Window/Window.h"
-#include "resources/resources.h"
 #include "ImGui.h"
 #include "KeyboardLayout.h"
-#include "Utils.h"
 #include "Profile.h"
+#include "Utils.h"
+#include "Window/Window.h"
+#include "resources/resources.h"
 #define WM_USER_FOCUS (WM_APP + 0x20)
 #define sMainWindow MainWindow::instance()
 
@@ -22,6 +22,7 @@ public:
 
     bool handleKeyPress(unsigned short vkCode, bool repeat);
     bool handleKeyRelease(unsigned short vkCode, bool repeat);
+
 protected:
     void onTrayClick();
     void onTrayMenu(TrayIconMenu& menu);

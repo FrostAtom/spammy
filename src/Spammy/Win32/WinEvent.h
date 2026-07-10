@@ -23,5 +23,6 @@ public:
     void reset();
 
 private:
-    static VOID CALLBACK HandleWinEvent(HWINEVENTHOOK hEvent, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime);
+    static VOID CALLBACK HandleWinEvent(HWINEVENTHOOK hEvent, DWORD event, HWND hwnd, LONG idObject, LONG idChild,
+                                        DWORD idEventThread, DWORD dwmsEventTime);
 };

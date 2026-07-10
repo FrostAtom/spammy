@@ -1,6 +1,9 @@
 #include "WinEvent.h"
 
-WinEvent::~WinEvent() { reset(); }
+WinEvent::~WinEvent()
+{
+    reset();
+}
 
 WinEvent& WinEvent::instance()
 {
@@ -11,7 +14,8 @@ WinEvent& WinEvent::instance()
 bool WinEvent::on(DWORD event, Callback_t&& func)
 {
     if (_events.contains(event)) return false;
-    HWINEVENTHOOK hEvent = SetWinEventHook(event, event, NULL, &WinEvent::HandleWinEvent, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    HWINEVENTHOOK hEvent = SetWinEventHook(event, event, NULL, &WinEvent::HandleWinEvent, 0, 0,
+                                           WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
     if (!hEvent) return false;
     _events.emplace(event, std::tuple<HWINEVENTHOOK, Callback_t>(hEvent, std::forward<Callback_t>(func)));
     return true;
@@ -42,7 +46,8 @@ void WinEvent::reset()
     _events.clear();
 }
 
-VOID CALLBACK WinEvent::HandleWinEvent(HWINEVENTHOOK hEvent, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime)
+VOID CALLBACK WinEvent::HandleWinEvent(HWINEVENTHOOK hEvent, DWORD event, HWND hwnd, LONG idObject, LONG idChild,
+                                       DWORD idEventThread, DWORD dwmsEventTime)
 {
     auto& self = sWinEvent;
     auto it = self._events.find(event);

@@ -1,7 +1,6 @@
 #include "Mouse.h"
 
-Mouse::Mouse()
-    : _hhook(NULL)
+Mouse::Mouse() : _hhook(NULL)
 {
     memset(&_state, NULL, sizeof(_state));
 }
@@ -13,7 +12,7 @@ Mouse::~Mouse()
 
 Mouse& Mouse::instance()
 {
-    static std::unique_ptr<Mouse>keyboard(new Mouse());
+    static std::unique_ptr<Mouse> keyboard(new Mouse());
     return *keyboard;
 }
 
@@ -30,7 +29,10 @@ bool Mouse::attach()
 
 void Mouse::detach()
 {
-    if (_hhook) { UnhookWindowsHookEx(_hhook); _hhook = NULL; }
+    if (_hhook) {
+        UnhookWindowsHookEx(_hhook);
+        _hhook = NULL;
+    }
 }
 
 DWORD Mouse::isPressed(unsigned short vkCode)
@@ -47,9 +49,18 @@ void Mouse::press(unsigned short vkCode)
 {
     DWORD down = 0, up = 0;
     switch (vkCode) {
-    case VK_LBUTTON: down = MOUSEEVENTF_LEFTDOWN;   up = MOUSEEVENTF_LEFTUP;   break;
-    case VK_RBUTTON: down = MOUSEEVENTF_RIGHTDOWN;  up = MOUSEEVENTF_RIGHTUP;  break;
-    case VK_MBUTTON: down = MOUSEEVENTF_MIDDLEDOWN; up = MOUSEEVENTF_MIDDLEUP; break;
+    case VK_LBUTTON:
+        down = MOUSEEVENTF_LEFTDOWN;
+        up = MOUSEEVENTF_LEFTUP;
+        break;
+    case VK_RBUTTON:
+        down = MOUSEEVENTF_RIGHTDOWN;
+        up = MOUSEEVENTF_RIGHTUP;
+        break;
+    case VK_MBUTTON:
+        down = MOUSEEVENTF_MIDDLEDOWN;
+        up = MOUSEEVENTF_MIDDLEUP;
+        break;
     default: return;
     }
     mouse_event(down, 0, 0, 0, INPUT_EXTRA_FLAGS_EMULATED);
@@ -86,12 +97,12 @@ const char* Mouse::getKeyName(unsigned short vkCode)
 static unsigned short MouseEvent2VKCode(WPARAM wParam)
 {
     switch (wParam) {
-    case WM_LBUTTONDOWN: case WM_LBUTTONUP:
-        return VK_LBUTTON;
-    case WM_RBUTTONDOWN: case WM_RBUTTONUP:
-        return VK_RBUTTON;
-    case WM_MBUTTONDOWN: case WM_MBUTTONUP:
-        return VK_MBUTTON;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP: return VK_LBUTTON;
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP: return VK_RBUTTON;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP: return VK_MBUTTON;
     }
     return 0;
 }
@@ -104,17 +115,19 @@ LRESULT CALLBACK Mouse::LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
         bool isEmulated = (data->dwExtraInfo & INPUT_EXTRA_FLAGS_EMULATED) != 0;
         if (!isEmulated) {
             switch (wParam) {
-            case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
-                if (self.handleDown(MouseEvent2VKCode(wParam)))
-                    return 1;
+            case WM_LBUTTONDOWN:
+            case WM_RBUTTONDOWN:
+            case WM_MBUTTONDOWN:
+                if (self.handleDown(MouseEvent2VKCode(wParam))) return 1;
                 break;
-            case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP:
-                if (self.handleUp(MouseEvent2VKCode(wParam)))
-                    return 1;
+            case WM_LBUTTONUP:
+            case WM_RBUTTONUP:
+            case WM_MBUTTONUP:
+                if (self.handleUp(MouseEvent2VKCode(wParam))) return 1;
                 break;
-            case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
-                if (self.handleWheel((short)HIWORD(data->mouseData) / (float)WHEEL_DELTA))
-                    return 1;
+            case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL:
+                if (self.handleWheel((short)HIWORD(data->mouseData) / (float)WHEEL_DELTA)) return 1;
                 break;
             }
         }

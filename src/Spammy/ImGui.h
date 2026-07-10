@@ -13,5 +13,8 @@ ImVec4 FlashColor(float r, float g, float b, float f = 8.f, float min = 0.f, flo
 
 void PushStyleColorTriplet(ImGuiCol idx, ImVec4 col);
 
-inline void PopStyleColorTriplet() { ImGui::PopStyleColor(3); }
+inline void PopStyleColorTriplet()
+{
+    ImGui::PopStyleColor(3);
 }
+} // namespace ImGui

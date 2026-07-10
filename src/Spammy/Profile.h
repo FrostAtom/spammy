@@ -30,9 +30,7 @@ struct Profile {
     bool disableWin;
 };
 
-#define JSON_READ_FIELD(field)\
-    value.field = json.at(_CRT_STRINGIZE(field)).get<decltype(value.field)>()
-
+#define JSON_READ_FIELD(field) value.field = json.at(_CRT_STRINGIZE(field)).get<decltype(value.field)>()
 
 //NLOHMANN_JSON_SERIALIZE_ENUM(Action, {
 //    { Action_None, nullptr },
@@ -69,8 +67,8 @@ inline void to_json(nlohmann::json& json, const Profile& value)
         for (int m = 0; m < KEYBOARD_KEYMOD_COUNT; m++) {
             if (value.keys[k][m].action != Action_None) {
                 keys.push_back({
-                    { "key", (unsigned)MAKE_KEY_BUNDLE(k, m)},
-                    { "action", (unsigned)value.keys[k][m].action },
+                    {"key", (unsigned)MAKE_KEY_BUNDLE(k, m)},
+                    {"action", (unsigned)value.keys[k][m].action},
                 });
             }
         }
@@ -92,20 +90,21 @@ inline void from_json(const nlohmann::json& json, Profile& value)
             if (auto key = item.at("key"); key.is_number_unsigned()) {
                 if (auto action = item.at("action"); action.is_number_unsigned()) {
                     unsigned bundle = key.get<unsigned>();
-                    value.keys[GET_KEY_VKCODE(bundle)][GET_KEY_MODIFIER(bundle)].action = (Action)action.get<unsigned>();
+                    value.keys[GET_KEY_VKCODE(bundle)][GET_KEY_MODIFIER(bundle)].action =
+                        (Action)action.get<unsigned>();
                 }
             }
         }
     }
 }
 
-template<class T>
+template <class T>
 inline void to_json(nlohmann::json& json, const std::shared_ptr<T>& value)
 {
     return to_json(json, *value);
 }
 
-template<class T>
+template <class T>
 inline void from_json(const nlohmann::json& json, std::shared_ptr<T>& value)
 {
     value = std::make_shared<T>();

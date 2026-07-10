@@ -2,351 +2,346 @@
 
 App& App::instance()
 {
-	static App s_app;
-	return s_app;
+    static App s_app;
+    return s_app;
 }
 
 bool App::init(int argc, char** argv)
 {
-	wchar_t buf[MAX_PATH];
-	GetModuleFileNameW(NULL, buf, std::size(buf));
-	SetCurrentDirectoryW(std::filesystem::path(buf).parent_path().wstring().c_str());
+    wchar_t buf[MAX_PATH];
+    GetModuleFileNameW(NULL, buf, std::size(buf));
+    SetCurrentDirectoryW(std::filesystem::path(buf).parent_path().wstring().c_str());
 
-	if (!loadConfig()) {
-		int action = MessageBoxW(NULL, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
-		if (action != IDOK) return false;
-	}
-	_autoStartEnabled = isAutoStartEnabled();
+    if (!loadConfig()) {
+        int action =
+            MessageBoxW(NULL, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
+        if (action != IDOK) return false;
+    }
+    _autoStartEnabled = isAutoStartEnabled();
 
-	_mainWindow = new MainWindow(L"" APP_NAME);
-	if (!_mainWindow->initialize()) return false;
+    _mainWindow = new MainWindow(L"" APP_NAME);
+    if (!_mainWindow->initialize()) return false;
 
-	if (argc > 1 && strcmp(argv[1], "autolaunch") == 0)
-		_mainWindow->hide();
+    if (argc > 1 && strcmp(argv[1], "autolaunch") == 0) _mainWindow->hide();
 
-	sKeyboard.onPress(std::bind_front(&App::onKeyPress, this));
-	sKeyboard.onRelease(std::bind_front(&App::onKeyRelease, this));
+    sKeyboard.onPress(std::bind_front(&App::onKeyPress, this));
+    sKeyboard.onRelease(std::bind_front(&App::onKeyRelease, this));
 
-	_isRunning = true;
-	return true;
+    _isRunning = true;
+    return true;
 }
 
 void App::uninit()
 {
-	sKeyboard.detach();
-	saveConfig();
-	if (_mainWindow) { delete _mainWindow; _mainWindow = NULL; }
+    sKeyboard.detach();
+    saveConfig();
+    if (_mainWindow) {
+        delete _mainWindow;
+        _mainWindow = NULL;
+    }
 }
 
 bool App::run()
 {
-	if (!_isRunning) return true;
+    if (!_isRunning) return true;
 
-	while (!_mainWindow->mustQuit()) {
-		MSG msg;
-		while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
-			TranslateMessage(&msg);
-			DispatchMessageW(&msg);
-		}
-		if (_mainWindow->wantQuit()) _mainWindow->hide();
-		if (_mainWindow->isNormalized())
-			_mainWindow->update();
+    while (!_mainWindow->mustQuit()) {
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if (_mainWindow->wantQuit()) _mainWindow->hide();
+        if (_mainWindow->isNormalized()) _mainWindow->update();
 
-		checkIsFocusChanged();
+        checkIsFocusChanged();
 
-		std::shared_ptr<Profile> profile;
-		HWND activeHwnd;
-		{
-			std::lock_guard lock(_callbackMutex);
-			profile = _activeProfile;
-			activeHwnd = _activeHwnd;
-		}
-		if (_enabled && profile) {
-			DWORD ticks = GetTickCount();
-			if (ticks - _lastUpdate >= profile->speed) {
-				DWORD mods = sKeyboard.testModifiers();
-				for (size_t i = 0; i < sKeyboard.count(); i++) {
-					if (sKeyboard.isPressed(i)) {
-						bool spammy = false;
-						if (mods != KeyMod_None) {
-							if (profile->keys[i][mods].action == Action_None)
-								if (profile->keys[i][KeyMod_None].action == Action_Spammy)
-									spammy = true;
-						}
-						else {
-							if (profile->keys[i][KeyMod_None].action == Action_Spammy)
-								spammy = true;
-						}
-						if (spammy) sKeyboard.press(activeHwnd, i);
-					}
-				}
-				_lastUpdate = ticks;
-			}
-		}
+        std::shared_ptr<Profile> profile;
+        HWND activeHwnd;
+        {
+            std::lock_guard lock(_callbackMutex);
+            profile = _activeProfile;
+            activeHwnd = _activeHwnd;
+        }
+        if (_enabled && profile) {
+            DWORD ticks = GetTickCount();
+            if (ticks - _lastUpdate >= profile->speed) {
+                DWORD mods = sKeyboard.testModifiers();
+                for (size_t i = 0; i < sKeyboard.count(); i++) {
+                    if (sKeyboard.isPressed(i)) {
+                        bool spammy = false;
+                        if (mods != KeyMod_None) {
+                            if (profile->keys[i][mods].action == Action_None)
+                                if (profile->keys[i][KeyMod_None].action == Action_Spammy) spammy = true;
+                        } else {
+                            if (profile->keys[i][KeyMod_None].action == Action_Spammy) spammy = true;
+                        }
+                        if (spammy) sKeyboard.press(activeHwnd, i);
+                    }
+                }
+                _lastUpdate = ticks;
+            }
+        }
 
-		Sleep(10); // don't abuse cpu X_x
-	}
-	_mainWindow->cleanup();
+        Sleep(10); // don't abuse cpu X_x
+    }
+    _mainWindow->cleanup();
 
-	return true;
+    return true;
 }
 
 void App::enable(bool state)
 {
-	_enabled = state;
+    _enabled = state;
 }
 
 bool App::isEnabled()
 {
-	return _enabled;
+    return _enabled;
 }
 
 bool App::loadConfig()
 {
-	if (!std::filesystem::is_regular_file(CONFIG_FILE)) return true;
-	std::ifstream file(CONFIG_FILE);
-	if (!file) return false;
-	try {
-		nlohmann::json json = nlohmann::json::parse(file);
-		if (auto enabled = json["enabled"]; enabled.is_boolean())
-			_enabled = enabled.get<bool>();
-		if (auto profiles = json["profiles"]; profiles.is_array())
-			_profiles = json["profiles"].get<std::list<std::shared_ptr<Profile>>>();
-		if (auto editingProfile = json["editingProfile"]; editingProfile.is_string())
-			_editingProfile = findProfile(editingProfile.get_ref<const std::string&>().c_str());
-	} catch(nlohmann::json::exception&) {
-		return false;
-	}
-	return true;
+    if (!std::filesystem::is_regular_file(CONFIG_FILE)) return true;
+    std::ifstream file(CONFIG_FILE);
+    if (!file) return false;
+    try {
+        nlohmann::json json = nlohmann::json::parse(file);
+        if (auto enabled = json["enabled"]; enabled.is_boolean()) _enabled = enabled.get<bool>();
+        if (auto profiles = json["profiles"]; profiles.is_array())
+            _profiles = json["profiles"].get<std::list<std::shared_ptr<Profile>>>();
+        if (auto editingProfile = json["editingProfile"]; editingProfile.is_string())
+            _editingProfile = findProfile(editingProfile.get_ref<const std::string&>().c_str());
+    } catch (nlohmann::json::exception&) {
+        return false;
+    }
+    return true;
 }
 
 void App::saveConfig()
 {
-	std::ofstream file(CONFIG_FILE);
-	if (!file) return;
+    std::ofstream file(CONFIG_FILE);
+    if (!file) return;
 
-	nlohmann::json json = nlohmann::json::object();
-	if (_enabled) json["enabled"] = true;
-	if (_editingProfile) json["editingProfile"] = _editingProfile->name;
-	if (!_profiles.empty()) json["profiles"] = _profiles;
+    nlohmann::json json = nlohmann::json::object();
+    if (_enabled) json["enabled"] = true;
+    if (_editingProfile) json["editingProfile"] = _editingProfile->name;
+    if (!_profiles.empty()) json["profiles"] = _profiles;
 
-	file << json.dump(2, ' ');
+    file << json.dump(2, ' ');
 }
 
 static const wchar_t* getAutoStartCommand()
 {
-	static wchar_t command[512] = { 0 };
-	if (!command[0]) {
-		wchar_t buf[MAX_PATH];
-		GetModuleFileNameW(NULL, buf, std::size(buf));
-		_snwprintf_s(command, std::size(command), L"\"%s\" autolaunch", buf);
-	}
-	return command;
+    static wchar_t command[512] = {0};
+    if (!command[0]) {
+        wchar_t buf[MAX_PATH];
+        GetModuleFileNameW(NULL, buf, std::size(buf));
+        _snwprintf_s(command, std::size(command), L"\"%s\" autolaunch", buf);
+    }
+    return command;
 }
 
 bool App::isAutoStartEnabled()
 {
-	HKEY hKey = NULL;
-	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_READ, &hKey);
-	if (status != ERROR_SUCCESS) return false;
-	const wchar_t* command = getAutoStartCommand();
-	bool result = false;
+    HKEY hKey = NULL;
+    LSTATUS status =
+        RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_READ, &hKey);
+    if (status != ERROR_SUCCESS) return false;
+    const wchar_t* command = getAutoStartCommand();
+    bool result = false;
 
-	DWORD regType = REG_SZ;
-	wchar_t regPath[MAX_PATH] = { 0 };
-	DWORD regReaded = sizeof(regPath);
-	status = RegGetValueW(hKey, NULL, L"Spammy", RRF_RT_REG_SZ, &regType, (PVOID)regPath, &regReaded);
-	if (status == ERROR_SUCCESS && wcscmp(regPath, command) == 0)
-		result = true;
-	RegCloseKey(hKey);
-	return result;
+    DWORD regType = REG_SZ;
+    wchar_t regPath[MAX_PATH] = {0};
+    DWORD regReaded = sizeof(regPath);
+    status = RegGetValueW(hKey, NULL, L"Spammy", RRF_RT_REG_SZ, &regType, (PVOID)regPath, &regReaded);
+    if (status == ERROR_SUCCESS && wcscmp(regPath, command) == 0) result = true;
+    RegCloseKey(hKey);
+    return result;
 }
 
 bool App::enableAutoStart(bool state)
 {
-	HKEY hKey = NULL;
-	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_WRITE, &hKey);
-	if (status != ERROR_SUCCESS) return false;
+    HKEY hKey = NULL;
+    LSTATUS status =
+        RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_WRITE, &hKey);
+    if (status != ERROR_SUCCESS) return false;
 
-	if (state) {
-		const wchar_t* command = getAutoStartCommand();
-		status = RegSetValueExW(hKey, L"Spammy", NULL, REG_SZ, (const BYTE*)command, (lstrlenW(command) + 1) * 2);
-	} else {
-		status = RegDeleteValueW(hKey, L"Spammy");
-	}
-	return status == ERROR_SUCCESS;
+    if (state) {
+        const wchar_t* command = getAutoStartCommand();
+        status = RegSetValueExW(hKey, L"Spammy", NULL, REG_SZ, (const BYTE*)command, (lstrlenW(command) + 1) * 2);
+    } else {
+        status = RegDeleteValueW(hKey, L"Spammy");
+    }
+    return status == ERROR_SUCCESS;
 }
 
 bool App::onKeyPress(UINT vkCode, bool repeat)
 {
-	if (_mainWindow && _mainWindow->handleKeyPress(vkCode, repeat)) return true;
+    if (_mainWindow && _mainWindow->handleKeyPress(vkCode, repeat)) return true;
 
-	std::lock_guard lock(_callbackMutex);
-	unsigned mods = sKeyboard.testModifiers();
-	if (_activeProfile) {
-		if (_activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) return true;
-		if (_activeProfile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-		if (_activeProfile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.testModifiers(KeyMod_Alt))) return true;
-		if (_enabled) {
-			KeyConfig& cfg = _activeProfile->keys[vkCode][mods];
-			switch (cfg.action) {
-			case Action_Spammy:
-			case Action_Speedy:
-				if (!repeat) sKeyboard.press(_activeHwnd, vkCode);
-				return true;
-			}
-		}
-	}
-	return false;
+    std::lock_guard lock(_callbackMutex);
+    unsigned mods = sKeyboard.testModifiers();
+    if (_activeProfile) {
+        if (_activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) return true;
+        if (_activeProfile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
+        if (_activeProfile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.testModifiers(KeyMod_Alt))) return true;
+        if (_enabled) {
+            KeyConfig& cfg = _activeProfile->keys[vkCode][mods];
+            switch (cfg.action) {
+            case Action_Spammy:
+            case Action_Speedy:
+                if (!repeat) sKeyboard.press(_activeHwnd, vkCode);
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool App::onKeyRelease(UINT vkCode, bool repeat)
 {
-	if (_mainWindow && _mainWindow->handleKeyRelease(vkCode, repeat)) return true;
+    if (_mainWindow && _mainWindow->handleKeyRelease(vkCode, repeat)) return true;
 
-	std::lock_guard lock(_callbackMutex);
-	unsigned mods = sKeyboard.testModifiers();
-	if (_activeProfile && _activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
-		_enabled = !_enabled;
-		return true;
-	}
+    std::lock_guard lock(_callbackMutex);
+    unsigned mods = sKeyboard.testModifiers();
+    if (_activeProfile && _activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
+        _enabled = !_enabled;
+        return true;
+    }
 
-	if (_activeProfile) {
-		if (_activeProfile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-		if (_activeProfile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.testModifiers(KeyMod_Alt))) return true;
-		if (_enabled) {
-			KeyConfig& cfg = _activeProfile->keys[vkCode][mods];
-			switch (cfg.action) {
-			case Action_Spammy:
-			case Action_Speedy:
-				return true;
-			}
-		}
-	}
-	return false;
+    if (_activeProfile) {
+        if (_activeProfile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
+        if (_activeProfile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.testModifiers(KeyMod_Alt))) return true;
+        if (_enabled) {
+            KeyConfig& cfg = _activeProfile->keys[vkCode][mods];
+            switch (cfg.action) {
+            case Action_Spammy:
+            case Action_Speedy: return true;
+            }
+        }
+    }
+    return false;
 }
 
 const std::list<std::shared_ptr<Profile>>& App::getProfiles()
 {
-	return _profiles;
+    return _profiles;
 }
 
 std::shared_ptr<Profile> App::findProfile(const char* name)
 {
-	auto it = std::find_if(_profiles.begin(), _profiles.end(), [=](const std::shared_ptr<Profile>& item) {
-		return item->name == name;
-	});
-	return it != _profiles.end() ? *it : NULL;
+    auto it = std::find_if(_profiles.begin(), _profiles.end(),
+                           [=](const std::shared_ptr<Profile>& item) { return item->name == name; });
+    return it != _profiles.end() ? *it : NULL;
 }
 
 bool App::isProfileExists(const char* name)
 {
-	return (bool)findProfile(name);
+    return (bool)findProfile(name);
 }
 
 void App::createProfile(const char* name)
 {
-	std::shared_ptr<Profile> profile = std::make_shared<Profile>();
-	profile->name = name;
+    std::shared_ptr<Profile> profile = std::make_shared<Profile>();
+    profile->name = name;
 
-	_profiles.emplace_back(profile);
-	_editingProfile = profile;
+    _profiles.emplace_back(profile);
+    _editingProfile = profile;
 }
 
 void App::editingProfile(const char* name)
 {
-	_editingProfile = findProfile(name);
+    _editingProfile = findProfile(name);
 }
 
 std::shared_ptr<Profile> App::editingProfile()
 {
-	return _editingProfile;
+    return _editingProfile;
 }
 
 void App::deleteProfile(const char* name)
 {
-	auto it = std::find_if(_profiles.begin(), _profiles.end(), [name](const std::shared_ptr<Profile>& item) {
-		return item->name == name;
-	});
-	if (it == _profiles.end()) return;
-	if (*it == _activeProfile) {
-		std::lock_guard lock(_callbackMutex);
-		_activeProfile = NULL;
-	}
-	if (*it == _editingProfile) _editingProfile = NULL;
-	_profiles.erase(it);
+    auto it = std::find_if(_profiles.begin(), _profiles.end(),
+                           [name](const std::shared_ptr<Profile>& item) { return item->name == name; });
+    if (it == _profiles.end()) return;
+    if (*it == _activeProfile) {
+        std::lock_guard lock(_callbackMutex);
+        _activeProfile = NULL;
+    }
+    if (*it == _editingProfile) _editingProfile = NULL;
+    _profiles.erase(it);
 }
 
 std::shared_ptr<Profile> App::findProfileByApp(const char* app)
 {
-	auto it = std::find_if(_profiles.begin(), _profiles.end(), [app](const std::shared_ptr<Profile>& item) {
-		return std::find(item->apps.begin(), item->apps.end(), app) != item->apps.end();
-	});
-	return it != _profiles.end() ? *it : NULL;
+    auto it = std::find_if(_profiles.begin(), _profiles.end(), [app](const std::shared_ptr<Profile>& item) {
+        return std::find(item->apps.begin(), item->apps.end(), app) != item->apps.end();
+    });
+    return it != _profiles.end() ? *it : NULL;
 }
 
 bool App::isProfileBinded(const char* name, const char* app)
 {
-	if (std::shared_ptr<Profile> profile = findProfile(name))
-		return std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end();
-	return false;
+    if (std::shared_ptr<Profile> profile = findProfile(name))
+        return std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end();
+    return false;
 }
 
 void App::bindProfile(const char* name, const char* app)
 {
-	std::shared_ptr<Profile> profile = findProfile(name);
-	if (!profile || std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) return;
-	profile->apps.emplace_back(app);
-	LexicographicalSort(profile->apps);
+    std::shared_ptr<Profile> profile = findProfile(name);
+    if (!profile || std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) return;
+    profile->apps.emplace_back(app);
+    LexicographicalSort(profile->apps);
 }
 
 void App::unbindProfile(const char* name, const char* app)
 {
-	std::shared_ptr<Profile> profile = findProfile(name);
-	if (!profile) return;
-	profile->apps.erase(std::remove(profile->apps.begin(), profile->apps.end(), app), profile->apps.end());
+    std::shared_ptr<Profile> profile = findProfile(name);
+    if (!profile) return;
+    profile->apps.erase(std::remove(profile->apps.begin(), profile->apps.end(), app), profile->apps.end());
 }
 
 void App::checkIsFocusChanged()
 {
-	static HWND s_prevFocus = NULL;
-	HWND focus = GetForegroundWindow();
-	if (s_prevFocus != focus) {
-		onFocusChanged();
-		s_prevFocus = focus;
-	}
+    static HWND s_prevFocus = NULL;
+    HWND focus = GetForegroundWindow();
+    if (s_prevFocus != focus) {
+        onFocusChanged();
+        s_prevFocus = focus;
+    }
 }
 
 void App::onFocusChanged()
 {
-	HWND newHwnd = GetForegroundWindow();
-	if (newHwnd == _activeHwnd)
-		return;
+    HWND newHwnd = GetForegroundWindow();
+    if (newHwnd == _activeHwnd) return;
 
-	std::shared_ptr<Profile> newProfile;
-	if (std::filesystem::path path; newHwnd && (path = GetProcessPath(newHwnd)).has_filename())
-		newProfile = findProfileByApp((const char*)path.filename().u8string().c_str());
+    std::shared_ptr<Profile> newProfile;
+    if (std::filesystem::path path; newHwnd && (path = GetProcessPath(newHwnd)).has_filename())
+        newProfile = findProfileByApp((const char*)path.filename().u8string().c_str());
 
-	const bool changed = (newProfile != _activeProfile);
-	{
-		std::lock_guard lock(_callbackMutex);
-		_activeProfile = newProfile;
-		_activeHwnd = newHwnd;
-	}
+    const bool changed = (newProfile != _activeProfile);
+    {
+        std::lock_guard lock(_callbackMutex);
+        _activeProfile = newProfile;
+        _activeHwnd = newHwnd;
+    }
 
-	// attach/detach outside the lock: detach() joins the hook thread, which may be
-	// blocked on _callbackMutex inside a running callback -> deadlock if held here
-	if (changed) {
-		if (newProfile)
-			sKeyboard.atttach();
-		else
-			sKeyboard.detach();
-	}
+    // attach/detach outside the lock: detach() joins the hook thread, which may be
+    // blocked on _callbackMutex inside a running callback -> deadlock if held here
+    if (changed) {
+        if (newProfile)
+            sKeyboard.atttach();
+        else
+            sKeyboard.detach();
+    }
 }
 
 int main(int argc, char** argv)
 {
-	bool ret = sApp.init(argc, argv) && sApp.run();
-	sApp.uninit();
-	return ret ? EXIT_SUCCESS : EXIT_FAILURE;
+    bool ret = sApp.init(argc, argv) && sApp.run();
+    sApp.uninit();
+    return ret ? EXIT_SUCCESS : EXIT_FAILURE;
 }

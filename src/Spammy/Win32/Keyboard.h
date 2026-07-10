@@ -24,6 +24,7 @@ private:
     Callback_t _onPress, _onRelease;
 
     Keyboard();
+
 public:
     ~Keyboard();
     static Keyboard& instance();

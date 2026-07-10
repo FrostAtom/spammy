@@ -1,10 +1,10 @@
 #pragma once
 #include "Headers.h"
 #include "MainWindow.h"
-#include "Win32/Keyboard.h"
-#include "Win32/Mouse.h"
 #include "Profile.h"
 #include "Utils.h"
+#include "Win32/Keyboard.h"
+#include "Win32/Mouse.h"
 #define CONFIG_FILE "Spammy.json"
 #define sApp App::instance()
 

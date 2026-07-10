@@ -6,8 +6,10 @@
 
 class TrayIconMenu {
     friend class TrayIcon;
+
 public:
     using Callback_t = std::function<void()>;
+
 private:
     HWND _hwnd;
     HMENU _menu;
@@ -34,6 +36,7 @@ private:
 class Window;
 class TrayIcon {
     friend Window;
+
 public:
     using MenuCallback_t = std::function<void(TrayIconMenu&)>;
     using ClickCallback_t = std::function<void()>;
@@ -46,12 +49,11 @@ private:
     TrayIconMenu _menu;
 
 public:
-
     TrayIcon();
     ~TrayIcon();
     void setTip(const wchar_t* tip);
     const wchar_t* getTip();
-    
+
     void setOnClick(ClickCallback_t&& func);
     void setMenu(MenuCallback_t&& func);
     void showMenu(int x, int y);

@@ -14,6 +14,7 @@ private:
     Callback_t _onPress, _onRelease, _onWheel;
 
     Mouse();
+
 public:
     ~Mouse();
     static Mouse& instance();

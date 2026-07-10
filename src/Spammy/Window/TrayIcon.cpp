@@ -1,8 +1,10 @@
 #include "TrayIcon.h"
 
-
 TrayIconMenu::TrayIconMenu() : _hwnd(NULL), _menu(NULL), _count(0) {}
-TrayIconMenu::~TrayIconMenu() { if (_hwnd) cleanup(); }
+TrayIconMenu::~TrayIconMenu()
+{
+    if (_hwnd) cleanup();
+}
 
 bool TrayIconMenu::create(HWND hwnd)
 {
@@ -64,12 +66,17 @@ void TrayIconMenu::disabled(const wchar_t* text)
     append(MF_STRING | MF_GRAYED, text);
 }
 
-
 UINT TrayIcon::s_idCounter = 0;
 
-TrayIcon::TrayIcon() { reset(); }
+TrayIcon::TrayIcon()
+{
+    reset();
+}
 
-TrayIcon::~TrayIcon() { if (_data.uID) cleanup(); }
+TrayIcon::~TrayIcon()
+{
+    if (_data.uID) cleanup();
+}
 
 void TrayIcon::setTip(const wchar_t* tip)
 {
@@ -121,8 +128,7 @@ bool TrayIcon::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         if (hi != _data.uID) return false;
         switch (lo) {
         case NIN_SELECT: {
-            if (_clickFunc)
-                _clickFunc();
+            if (_clickFunc) _clickFunc();
             return true;
         }
         case WM_CONTEXTMENU: {

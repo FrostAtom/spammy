@@ -1,11 +1,12 @@
 #include "D3d11.h"
 #pragma comment(lib, "D3D11")
 
-WindowRenderer_D3d11::WindowRenderer_D3d11()
-    : _hwnd(NULL), _dev(NULL), _ctx(NULL), _chain(NULL), _view(NULL)
-{}
+WindowRenderer_D3d11::WindowRenderer_D3d11() : _hwnd(NULL), _dev(NULL), _ctx(NULL), _chain(NULL), _view(NULL) {}
 
-WindowRenderer_D3d11::~WindowRenderer_D3d11() { cleanup(); }
+WindowRenderer_D3d11::~WindowRenderer_D3d11()
+{
+    cleanup();
+}
 
 bool WindowRenderer_D3d11::create(HWND hwnd)
 {
@@ -26,10 +27,13 @@ bool WindowRenderer_D3d11::create(HWND hwnd)
     sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
     D3D_FEATURE_LEVEL featureLevel;
-    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
-    HRESULT hRes = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &_chain, &_dev, &featureLevel, &_ctx);
-    if (hRes != S_OK)
-        return false;
+    const D3D_FEATURE_LEVEL featureLevelArray[2] = {
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_0,
+    };
+    HRESULT hRes = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, featureLevelArray, 2,
+                                                 D3D11_SDK_VERSION, &sd, &_chain, &_dev, &featureLevel, &_ctx);
+    if (hRes != S_OK) return false;
 
     createTarget();
     ImGui_ImplDX11_Init(_dev, _ctx);
@@ -49,14 +53,26 @@ void WindowRenderer_D3d11::cleanup()
 {
     if (ImGui::GetIO().BackendRendererUserData) ImGui_ImplDX11_Shutdown();
     cleanupTarget();
-    if (_chain) { _chain->Release(); _chain = NULL; }
-    if (_ctx) { _ctx->Release(); _ctx = NULL; }
-    if (_dev) { _dev->Release(); _dev = NULL; }
+    if (_chain) {
+        _chain->Release();
+        _chain = NULL;
+    }
+    if (_ctx) {
+        _ctx->Release();
+        _ctx = NULL;
+    }
+    if (_dev) {
+        _dev->Release();
+        _dev = NULL;
+    }
 }
 
 void WindowRenderer_D3d11::cleanupTarget()
 {
-    if (_view) { _view->Release(); _view = NULL; }
+    if (_view) {
+        _view->Release();
+        _view = NULL;
+    }
 }
 
 void WindowRenderer_D3d11::reset() {}
@@ -69,7 +85,7 @@ void WindowRenderer_D3d11::beginFrame()
 void WindowRenderer_D3d11::render()
 {
     ImGui::Render();
-    const float clear_color_with_alpha[4] = { 0.45f, 0.55f, 0.60f, 1.00f };
+    const float clear_color_with_alpha[4] = {0.45f, 0.55f, 0.60f, 1.00f};
     _ctx->OMSetRenderTargets(1, &_view, NULL);
     _ctx->ClearRenderTargetView(_view, clear_color_with_alpha);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
