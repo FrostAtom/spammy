@@ -1,43 +1,39 @@
 project(Spammy LANGUAGES C CXX)
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO")
 
 add_executable(
 	${PROJECT_NAME} WIN32
-		resources/resources.h
-		resources/resources.rc
+		include/Spammy/App.h
+		include/Spammy/Headers.h
+		include/Spammy/ImGui.h
+		include/Spammy/KeyboardLayout.h
+		include/Spammy/MainWindow.h
+		include/Spammy/Profile.h
+		include/Spammy/Utils.h
+		include/Spammy/Win32/Keyboard.h
+		include/Spammy/Window/Detail/ImFont_ComicSans.h
+		include/Spammy/Window/Renderer/D3d9.h
+		include/Spammy/Window/Renderer/Renderer.h
+		include/Spammy/Window/TrayIcon.h
+		include/Spammy/Window/Window.h
 
-		Win32/Keyboard.cpp
-		Win32/Keyboard.h
-		Win32/Mouse.cpp
-		Win32/Mouse.h
-		
-		Window/Renderer/Renderer.h
-		Window/Renderer/D3d9.cpp
-		Window/Renderer/D3d9.h
-		Window/DropManager.cpp
-		Window/DropManager.h
-		Window/TrayIcon.cpp
-		Window/TrayIcon.h
-		Window/Window.cpp
-		Window/Window.h
+		source/App.cpp
+		source/ImGui.cpp
+		source/MainWindow.cpp
+		source/Utils.cpp
+		source/Win32/Keyboard.cpp
+		source/Window/Renderer/D3d9.cpp
+		source/Window/TrayIcon.cpp
+		source/Window/Window.cpp
 
-		App.cpp
-		App.h
-		Headers.h
-		ImGui.cpp
-		ImGui.h
-		KeyboardLayout.h
-		MainWindow.cpp
-		MainWindow.h
-		Profile.h
-		Utils.cpp
-		Utils.h
+		source/manifest.rc
+		source/resources/resources.h
+		source/resources/resources.rc
 )
- 
+
 target_precompile_headers(
 	${PROJECT_NAME} PRIVATE
-		Headers.h
+		include/Spammy/Headers.h
 )
 
 target_compile_definitions(
@@ -52,5 +48,6 @@ target_link_libraries(
 
 target_include_directories(
 	${PROJECT_NAME} PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/include
 		${CMAKE_SOURCE_DIR}/deps/
 )
