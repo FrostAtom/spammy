@@ -9,8 +9,11 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE}
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE}/)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE}/)
 # static CRT (/MT, /MTd) via CMP0091 abstraction — keeps the exe standalone.
-# Setting it through the manual flags below is overridden by CMake's default /MD, so it must go here.
+# Setting it through the manual flags below is overridden by CMake's default /MD, so it must go here,
+# before project() — the runtime library is picked during compiler/language init.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+project(Spammy LANGUAGES C CXX)
 
 # x86-only: the window-proc userdata and other Win32 code target a 32-bit process
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
