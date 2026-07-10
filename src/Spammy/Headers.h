@@ -13,6 +13,11 @@
 #include <codecvt>
 #include <fstream>
 #include <regex>
+#include <thread>
+#include <future>
+#include <stop_token>
+#include <mutex>
+#include <atomic>
 
 #define _USE_MATH_DEFINES
 #include <cmath>

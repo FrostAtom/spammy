@@ -25,7 +25,6 @@ bool App::init(int argc, char** argv)
 	if (argc > 1 && strcmp(argv[1], "autolaunch") == 0)
 		_mainWindow->hide();
 
-	sKeyboard.atttach();
 	sKeyboard.onPress(std::bind_front(&App::onKeyPress, this));
 	sKeyboard.onRelease(std::bind_front(&App::onKeyRelease, this));
 
@@ -176,6 +175,8 @@ bool App::enableAutoStart(bool state)
 bool App::onKeyPress(UINT vkCode, bool repeat)
 {
 	if (_mainWindow && _mainWindow->handleKeyPress(vkCode, repeat)) return true;
+
+	std::lock_guard lock(_callbackMutex);
 	unsigned mods = sKeyboard.testModifiers();
 	if (_activeProfile) {
 		if (_activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) return true;
@@ -197,6 +198,8 @@ bool App::onKeyPress(UINT vkCode, bool repeat)
 bool App::onKeyRelease(UINT vkCode, bool repeat)
 {
 	if (_mainWindow && _mainWindow->handleKeyRelease(vkCode, repeat)) return true;
+
+	std::lock_guard lock(_callbackMutex);
 	unsigned mods = sKeyboard.testModifiers();
 	if (_activeProfile && _activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
 		_enabled = !_enabled;
@@ -308,12 +311,29 @@ void App::checkIsFocusChanged()
 
 void App::onFocusChanged()
 {
-	_activeProfile = NULL;
-	_activeHwnd = GetForegroundWindow();
+	HWND newHwnd = GetForegroundWindow();
+	if (newHwnd == _activeHwnd)
+		return;
 
-	std::filesystem::path path = GetProcessPath(_activeHwnd);
-	if (path.has_filename())
-		_activeProfile = findProfileByApp((const char*)path.filename().u8string().c_str());
+	std::shared_ptr<Profile> newProfile;
+	if (std::filesystem::path path; newHwnd && (path = GetProcessPath(newHwnd)).has_filename())
+		newProfile = findProfileByApp((const char*)path.filename().u8string().c_str());
+
+	const bool changed = (newProfile != _activeProfile);
+	{
+		std::lock_guard lock(_callbackMutex);
+		_activeProfile = newProfile;
+		_activeHwnd = newHwnd;
+	}
+
+	// attach/detach outside the lock: detach() joins the hook thread, which may be
+	// blocked on _callbackMutex inside a running callback -> deadlock if held here
+	if (changed) {
+		if (newProfile)
+			sKeyboard.atttach();
+		else
+			sKeyboard.detach();
+	}
 }
 
 int main(int argc, char** argv)

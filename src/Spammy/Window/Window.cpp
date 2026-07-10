@@ -530,7 +530,7 @@ LRESULT __stdcall Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 		SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)self);
 		return 0;
 	} else {
-		self = (Window*)GetWindowLongW(hwnd, GWLP_USERDATA);
+		self = (Window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
 	}
 
 	LRESULT result;

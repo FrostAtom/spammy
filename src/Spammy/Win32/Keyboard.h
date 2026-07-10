@@ -18,6 +18,8 @@ public:
 
 private:
     HHOOK _hhook;
+    std::jthread _thread;
+    DWORD _threadId;
     std::array<DWORD, KEYBOARD_KEYS_COUNT> _state;
     Callback_t _onPress, _onRelease;
 
@@ -50,6 +52,7 @@ public:
 
 private:
     static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
+    void threadProc(std::stop_token stop, std::promise<bool>& ready);
     bool handleDown(unsigned short vkCode);
     bool handleUp(unsigned short vkCode);
 };

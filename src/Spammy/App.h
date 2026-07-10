@@ -48,10 +48,12 @@ private:
     MainWindow* _mainWindow = NULL;
     bool _isRunning = false;
     bool _autoStartEnabled = false;
-    bool _enabled = false;
+    std::atomic<bool> _enabled = false;
     DWORD _lastUpdate = 0;
     HWND _activeHwnd = NULL;
 
     std::list<std::shared_ptr<Profile>> _profiles;
     std::shared_ptr<Profile> _activeProfile, _editingProfile;
+    // guards _activeProfile/_activeHwnd between the keyboard-hook thread (callbacks) and the main thread (onFocusChanged)
+    std::mutex _callbackMutex;
 };

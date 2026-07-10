@@ -11,7 +11,7 @@ WinEvent& WinEvent::instance()
 bool WinEvent::on(DWORD event, Callback_t&& func)
 {
     if (_events.contains(event)) return false;
-    HWINEVENTHOOK hEvent = SetWinEventHook(event, EVENT_SYSTEM_FOREGROUND, NULL, &WinEvent::HandleWinEvent, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    HWINEVENTHOOK hEvent = SetWinEventHook(event, event, NULL, &WinEvent::HandleWinEvent, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
     if (!hEvent) return false;
     _events.emplace(event, std::tuple<HWINEVENTHOOK, Callback_t>(hEvent, std::forward<Callback_t>(func)));
     return true;

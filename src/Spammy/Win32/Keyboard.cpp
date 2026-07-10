@@ -1,7 +1,7 @@
 #include "Keyboard.h"
 
 Keyboard::Keyboard()
-	: _hhook(NULL)
+	: _hhook(NULL), _threadId(0)
 {
 	memset(&_state, NULL, sizeof(_state));
 }
@@ -19,18 +19,47 @@ Keyboard& Keyboard::instance()
 
 bool Keyboard::isAttached()
 {
-	return _hhook;
+	return _thread.joinable();
 }
 
 bool Keyboard::atttach()
 {
-	_hhook = SetWindowsHookExW(WH_KEYBOARD_LL, &LowLevelKeyboardProc, NULL, 0);
-	return _hhook;
+	if (_thread.joinable()) return _hhook != NULL;
+	std::promise<bool> ready;
+	std::future<bool> result = ready.get_future();
+	_thread = std::jthread([this, &ready](std::stop_token stop) { threadProc(stop, ready); });
+	return result.get();
 }
 
 void Keyboard::detach()
 {
-	if (_hhook) { UnhookWindowsHookEx(_hhook); _hhook = NULL; }
+	if (!_thread.joinable()) return;
+	_thread.request_stop();
+	_thread.join();
+	_threadId = 0;
+}
+
+void Keyboard::threadProc(std::stop_token stop, std::promise<bool>& ready)
+{
+	_threadId = GetCurrentThreadId();
+	// force message-queue creation so detach's WM_QUIT can never race ahead of it
+	MSG msg;
+	PeekMessageW(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
+
+	_hhook = SetWindowsHookExW(WH_KEYBOARD_LL, &LowLevelKeyboardProc, NULL, 0);
+	ready.set_value(_hhook != NULL);
+	if (!_hhook) return;
+
+	// wakes the blocking GetMessage the instant detach() requests a stop
+	std::stop_callback onStop(stop, [id = _threadId]() { PostThreadMessageW(id, WM_QUIT, 0, 0); });
+
+	while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+		TranslateMessage(&msg);
+		DispatchMessageW(&msg);
+	}
+
+	UnhookWindowsHookEx(_hhook);
+	_hhook = NULL;
 }
 
 bool Keyboard::testModifiers(unsigned mods)
