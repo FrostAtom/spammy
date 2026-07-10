@@ -1,0 +1,78 @@
+# Requires clang-format >= 19. Spellings are deliberately kept 19-compatible (bool forms of
+# ReflowComments/BinPackParameters) so that Visual Studio 2022's bundled clang-format (19.1.x,
+# used automatically for Format Document / format-on-save) and standalone LLVM 22 both accept
+# this file. Tested with 19.1.5 (VS) and 22.1.8 (C:\Program Files\LLVM\bin).
+---
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: Latest # clang-format has no "c++23" value; Latest == newest supported standard
+LineEnding: CRLF # keep in sync with .editorconfig and .gitattributes
+ColumnLimit: 120
+
+# indentation: spaces, width 4
+UseTab: Never
+IndentWidth: 4
+TabWidth: 4
+AccessModifierOffset: -4
+IndentCaseLabels: false
+NamespaceIndentation: None
+IndentPPDirectives: None
+
+# braces: new line after functions only (Stroustrup-like), "} else {"
+# with BreakBeforeBraces: Custom, unlisted BraceWrapping flags inherit LLVM defaults
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: Never
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+
+# keep short things on one line
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortLambdasOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortEnumsOnASingleLine: false
+AllowShortCompoundRequirementOnASingleLine: true
+
+# pointers/references stick to the type
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+
+# constructor initializers
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: NextLine
+
+# templates, concepts, requires (C++20)
+BreakTemplateDeclarations: Yes
+BreakBeforeConceptDeclarations: Always
+RequiresClausePosition: OwnLine
+IndentRequiresClause: true
+RequiresExpressionIndentation: OuterScope
+
+# includes: sorted only within blank-line-separated blocks —
+# keep windows.h (and other order-sensitive headers) in their own block
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+
+# misc
+FixNamespaceComments: true
+ReflowComments: false # bool spelling for v19 compat (== Never in 20+); don't rewrap comment text
+AlignTrailingComments:
+  Kind: Never # trailing-comment alignment creates diff noise
+AlignAfterOpenBracket: Align
+BinPackArguments: true
+BinPackParameters: true # bool spelling for v19 compat (== BinPack in 20+)
+SpaceBeforeParens: ControlStatements
+SpacesInParens: Never
+SpaceAfterCStyleCast: false
+Cpp11BracedListStyle: true
+KeepEmptyLines:
+  AtStartOfBlock: false
+  AtStartOfFile: false
+  AtEndOfFile: false
+MaxEmptyLinesToKeep: 1
+InsertNewlineAtEOF: true

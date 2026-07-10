@@ -1,0 +1,5 @@
+# generated files (UTF-16 LE, clang-format cannot process it anyway)
+src/Spammy/Window/Detail/ImFont_ComicSans.h
+
+# vendored dependencies (also covered by deps/.clang-format with DisableFormat)
+deps/*

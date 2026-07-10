@@ -1,0 +1,64 @@
+# Compatible with clang-tidy 19 (Visual Studio 2022 bundled binary, used for background
+# code analysis in the IDE) through 22 (standalone LLVM, used by the CMake integration).
+# Curated set: whole check groups enabled, individual checks disabled with a reason.
+# cert-*/hicpp-*/google-* etc. are not enabled — they are mostly aliases of the groups below,
+# and alias checks fire (and must be disabled) separately.
+---
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-type-vararg,
+  misc-*,
+  -misc-const-correctness,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  modernize-*,
+  -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
+  -modernize-use-trailing-return-type,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-braces-around-statements,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-magic-numbers
+
+# Reasons for the disables above:
+#   bugprone-easily-swappable-parameters      — low signal/noise ratio, no reasonable fix in most cases
+#   *-avoid-c-arrays                          — fixed-size TCHAR/byte buffers are idiomatic Win32
+#   *-magic-numbers                           — GUI/Win32 code is full of coordinates, sizes, timeouts
+#   *-avoid-non-const-global-variables        — Win32 message-loop apps legitimately keep app-level state
+#   *-non-private-member-variables-in-classes — plain aggregates with helpers are fine
+#   cppcoreguidelines-owning-memory           — requires adopting GSL; smart pointers already enforced by other checks
+#   cppcoreguidelines-pro-bounds-*            — fires on virtually every Win32 API call taking buffers/strings
+#   cppcoreguidelines-pro-type-reinterpret-cast — LPARAM/WPARAM/handle casts are idiomatic Win32
+#   cppcoreguidelines-pro-type-union-access   — INPUT/VARIANT and friends are unions by design
+#   cppcoreguidelines-pro-type-vararg         — Win32/CRT printf-style APIs
+#   misc-const-correctness                    — very high churn; enable once the codebase is clean
+#   misc-include-cleaner                      — incompatible with the windows.h umbrella-header model
+#   modernize-use-nodiscard                   — high churn; enable deliberately, not by default
+#   modernize-use-trailing-return-type        — pure style preference, contested
+#   readability-braces-around-statements      — conflicts with .clang-format short-if style
+#   readability-function-cognitive-complexity — arbitrary threshold, noisy on Win32 message handlers
+#   readability-identifier-length             — i/j/x/y are fine
+WarningsAsErrors: '' # in CI consider at least 'bugprone-*,clang-analyzer-*,concurrency-*'
+HeaderFilterRegex: '.*[/\\]src[/\\].*' # diagnose project headers only; deps/ never matches
+FormatStyle: file # apply fixes formatted per .clang-format
+CheckOptions:
+  # Win32: BOOL/HANDLE/DWORD in conditions are idiomatic
+  readability-implicit-bool-conversion.AllowIntegerConditions: true
+  readability-implicit-bool-conversion.AllowPointerConditions: true
