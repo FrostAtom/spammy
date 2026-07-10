@@ -46,4 +46,19 @@ set(OUT_DIR "" CACHE PATH "Dist dir")
 
 # sources
 add_subdirectory( deps )
+
+# static analysis: opt-in (use the *-tidy presets) because it slows compilation down noticeably.
+# Set after deps so vendored code is never analyzed; config comes from the repo-root .clang-tidy.
+# CMake passes --driver-mode=cl automatically when the compiler is MSVC.
+option(ENABLE_CLANG_TIDY "Run clang-tidy on project sources during compilation" OFF)
+if(ENABLE_CLANG_TIDY)
+	find_program(CLANG_TIDY_EXE NAMES clang-tidy HINTS "$ENV{ProgramFiles}/LLVM/bin")
+	if(NOT CLANG_TIDY_EXE)
+		message(FATAL_ERROR "ENABLE_CLANG_TIDY is ON but clang-tidy was not found (install LLVM or add clang-tidy to PATH)")
+	endif()
+	# /Y- makes clang-tidy ignore the MSVC-format PCH (/Yu /Fp), which clang cannot read;
+	# the headers are still parsed normally through CMake's /FI force-include of cmake_pch.hxx
+	set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}" "--extra-arg=/Y-")
+endif()
+
 add_subdirectory( src )
