@@ -42,15 +42,6 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
-        },
-        {
-            "name": "debug-tidy",
-            "displayName": "Debug + clang-tidy",
-            "description": "Debug build with clang-tidy running on every project source file",
-            "inherits": "debug",
-            "cacheVariables": {
-                "ENABLE_CLANG_TIDY": "ON"
-            }
         }
     ],
     "buildPresets": [
@@ -63,11 +54,6 @@
             "name": "release",
             "configurePreset": "release",
             "configuration": "Release"
-        },
-        {
-            "name": "debug-tidy",
-            "configurePreset": "debug-tidy",
-            "configuration": "Debug"
         }
     ]
 }
