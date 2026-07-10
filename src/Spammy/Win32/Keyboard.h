@@ -53,6 +53,7 @@ public:
 private:
     static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
     void threadProc(std::stop_token stop, std::promise<bool>& ready);
+    void syncState();
     bool handleDown(unsigned short vkCode);
     bool handleUp(unsigned short vkCode);
 };

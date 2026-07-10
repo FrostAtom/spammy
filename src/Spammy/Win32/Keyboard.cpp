@@ -37,6 +37,14 @@ void Keyboard::detach()
 	_thread.request_stop();
 	_thread.join();
 	_threadId = 0;
+	_state.fill(0);
+}
+
+void Keyboard::syncState()
+{
+	DWORD now = GetTickCount();
+	for (unsigned short vkCode = 1; vkCode < _state.size(); ++vkCode)
+		_state[vkCode] = (GetAsyncKeyState(vkCode) & 0x8000) ? now : 0;
 }
 
 void Keyboard::threadProc(std::stop_token stop, std::promise<bool>& ready)
@@ -47,6 +55,7 @@ void Keyboard::threadProc(std::stop_token stop, std::promise<bool>& ready)
 	PeekMessageW(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
 
 	_hhook = SetWindowsHookExW(WH_KEYBOARD_LL, &LowLevelKeyboardProc, NULL, 0);
+	if (_hhook) syncState();
 	ready.set_value(_hhook != NULL);
 	if (!_hhook) return;
 
