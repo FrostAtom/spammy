@@ -145,7 +145,8 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         ImU32 flash = ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
         dl->AddText(UiFonts::Semi, 20.f, ImVec2(o.x + 44.f, o.y + 85.f), flash, "NOT SET");
     }
-    AddChevronDown(dl, ImVec2(o.x + 222.f, o.y + 89.f), UiCol::Sub);
+    float chevT = UiAnim(ImGui::GetID("##profiles.chev"), ImGui::IsPopupOpen("##profiles") ? 1.f : 0.f, 16.f);
+    AddChevronDown(dl, ImVec2(o.x + 222.f, o.y + 89.f), UiMixColor(UiCol::Sub, UiCol::Text, chevT), chevT);
     DrawProfilesPopup(o);
 
     if (profile) {
@@ -164,18 +165,20 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         if (UiChipFrame("##winkey", ImVec2(o.x + 700.f, o.y + 66.f), ImVec2(110.f, 46.f)))
             profile->disableWin = !profile->disableWin;
         UiChipLabel(ImVec2(o.x + 716.f, o.y + 73.f), "WIN KEY");
-        AddStatusDot(dl, ImVec2(o.x + 722.f, o.y + 96.f), 3.5f, profile->disableWin ? UiCol::Spam : UiCol::Mute,
+        float winT = UiAnim(ImGui::GetID("##winkey.t"), profile->disableWin ? 1.f : 0.f, 14.f);
+        AddStatusDot(dl, ImVec2(o.x + 722.f, o.y + 96.f), 3.5f, UiMixColor(UiCol::Mute, UiCol::Spam, winT),
                      profile->disableWin);
-        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 732.f, o.y + 86.f),
-                    profile->disableWin ? UiCol::Text : UiCol::Sub, profile->disableWin ? "LOCKED" : "FREE");
+        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 732.f, o.y + 86.f), UiMixColor(UiCol::Sub, UiCol::Text, winT),
+                    profile->disableWin ? "LOCKED" : "FREE");
 
         if (UiChipFrame("##altf4", ImVec2(o.x + 824.f, o.y + 66.f), ImVec2(120.f, 46.f)))
             profile->disableAltF4 = !profile->disableAltF4;
         UiChipLabel(ImVec2(o.x + 840.f, o.y + 73.f), "ALT + F4");
-        AddStatusDot(dl, ImVec2(o.x + 846.f, o.y + 96.f), 3.5f, profile->disableAltF4 ? UiCol::Spam : UiCol::Mute,
+        float altT = UiAnim(ImGui::GetID("##altf4.t"), profile->disableAltF4 ? 1.f : 0.f, 14.f);
+        AddStatusDot(dl, ImVec2(o.x + 846.f, o.y + 96.f), 3.5f, UiMixColor(UiCol::Mute, UiCol::Spam, altT),
                      profile->disableAltF4);
-        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 856.f, o.y + 86.f),
-                    profile->disableAltF4 ? UiCol::Text : UiCol::Sub, profile->disableAltF4 ? "LOCKED" : "FREE");
+        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 856.f, o.y + 86.f), UiMixColor(UiCol::Sub, UiCol::Text, altT),
+                    profile->disableAltF4 ? "LOCKED" : "FREE");
 
         if (UiChipFrame("##pause", ImVec2(o.x + 958.f, o.y + 66.f), ImVec2(150.f, 46.f))) {
             if (_editPause) {
@@ -205,6 +208,11 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
             keycapCol = UiCol::Mute;
         }
         AddKeycap(dl, ImVec2(o.x + 974.f, o.y + 85.f), ImVec2(o.x + 1052.f, o.y + 103.f), keycap, keycapCol);
+        if (_editPause) {
+            float p = 0.5f + 0.5f * sinf((float)ImGui::GetTime() * 4.f);
+            AddGlow(dl, ImVec2(o.x + 958.f, o.y + 66.f), ImVec2(o.x + 1108.f, o.y + 112.f), UiCol::Spam, 10.f, 6,
+                    0.08f + 0.14f * p);
+        }
     }
 
     if (UiEnablePill("##enable", ImVec2(o.x + 1122.f, o.y + 66.f), ImVec2(132.f, 46.f), sApp.IsEnabled()))
@@ -388,7 +396,7 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
 {
     ImGui::SetNextWindowPos(ImVec2(o.x + 28.f, o.y + 116.f));
     ImGui::SetNextWindowSize(ImVec2(260.f, 0.f));
-    if (!ImGui::BeginPopup("##profiles")) return;
+    if (!ImGui::UiBeginPopup("##profiles")) return;
 
     static char s_newName[64] = {0};
     static bool s_creating = false;
@@ -423,7 +431,9 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
             else
                 s_armedDelete = item->name;
         }
-        if (armed) dl->AddRect(ImVec2(p.x + 208.f, p.y), ImVec2(p.x + 232.f, p.y + 24.f), UiCol::Danger, 6.f);
+        if (armed)
+            dl->AddRect(ImVec2(p.x + 208.f, p.y), ImVec2(p.x + 232.f, p.y + 24.f),
+                        ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 1.5f, .5f, 1.f)), 6.f);
         ImGui::PopID();
     }
     if (idx) ImGui::Separator();
@@ -449,14 +459,14 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
     }
 
     if (pendingDelete) sApp.DeleteProfile(pendingDelete);
-    ImGui::EndPopup();
+    ImGui::UiEndPopup();
 }
 
 void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile)
 {
     ImGui::SetNextWindowPos(ImVec2(o.x + 260.f, o.y + 116.f));
     ImGui::SetNextWindowSize(ImVec2(280.f, 0.f));
-    if (!ImGui::BeginPopup("##appsmenu")) return;
+    if (!ImGui::UiBeginPopup("##appsmenu")) return;
 
     static std::vector<std::string> s_appList;
     if (ImGui::IsWindowAppearing()) {
@@ -501,14 +511,14 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     if (!shown) ImGui::TextDisabled("nothing running");
     ImGui::PopFont();
 
-    ImGui::EndPopup();
+    ImGui::UiEndPopup();
 }
 
 void MainWindow::DrawSettingsPopup(const ImVec2& o)
 {
     ImGui::SetNextWindowPos(ImVec2(o.x + 1252.f, o.y + 52.f), ImGuiCond_Always, ImVec2(1.f, 0.f));
     ImGui::SetNextWindowSize(ImVec2(230.f, 0.f));
-    if (!ImGui::BeginPopup("##settings")) return;
+    if (!ImGui::UiBeginPopup("##settings")) return;
 
     static bool s_autoStart = false;
     if (ImGui::IsWindowAppearing()) s_autoStart = sApp.IsAutoStartEnabled();
@@ -527,14 +537,14 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     if (UiMenuRow("DISCORD")) LaunchUrl(L"https://discord.gg/NNnBTK5c8e");
     if (UiMenuRow("AUTHOR")) LaunchUrl(L"https://t.me/boredatom");
 
-    ImGui::EndPopup();
+    ImGui::UiEndPopup();
 }
 
 void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsigned popupMods)
 {
     if (!profile) return;
     ImGui::SetNextWindowSize(ImVec2(210.f, 0.f));
-    if (!ImGui::BeginPopup("##keymenu")) return;
+    if (!ImGui::UiBeginPopup("##keymenu")) return;
 
     ImGui::PushFont(UiFonts::Semi, 14.f);
     ImGui::TextDisabled("%d SELECTED", (int)_selection.size());
@@ -559,7 +569,7 @@ void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsig
     int speed = (int)profile->speed;
     if (ImGui::SliderInt("##rate", &speed, 10, 1000, "%d ms")) profile->speed = (unsigned)speed;
 
-    ImGui::EndPopup();
+    ImGui::UiEndPopup();
 }
 
 bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)

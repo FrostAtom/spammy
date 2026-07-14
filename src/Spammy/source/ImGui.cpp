@@ -37,6 +37,58 @@ static ImU32 WithAlpha(ImU32 col, float alpha)
     return (col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
 }
 
+static ImGuiStorage s_animStorage;
+
+static ImGuiID SubId(ImGuiID id, int n)
+{
+    return ImHashData(&n, sizeof(n), id);
+}
+
+float ImGui::UiAnim(ImGuiID id, float target, float speed, float initial)
+{
+    float* v = s_animStorage.GetFloatRef(id, initial == FLT_MAX ? target : initial);
+    *v += (target - *v) * (1.f - expf(-speed * GImGui->IO.DeltaTime));
+    if (fabsf(target - *v) < 0.001f) *v = target;
+    return *v;
+}
+
+ImU32 ImGui::UiMixColor(ImU32 a, ImU32 b, float t)
+{
+    t = ImClamp(t, 0.f, 1.f);
+    ImU32 out = 0;
+    for (int shift = 0; shift < 32; shift += 8) {
+        float ca = (float)((a >> shift) & 0xFF);
+        float cb = (float)((b >> shift) & 0xFF);
+        out |= (ImU32)(ca + (cb - ca) * t + 0.5f) << shift;
+    }
+    return out;
+}
+
+bool ImGui::UiBeginPopup(const char* str_id)
+{
+    ImGuiID animId = SubId(GetID(str_id), 0x506F5055);
+    if (!IsPopupOpen(str_id)) {
+        s_animStorage.SetFloat(animId, 0.f);
+        return BeginPopup(str_id);
+    }
+    float t = UiAnim(animId, 1.f, 18.f, 0.f);
+    float e = 1.f - (1.f - t) * (1.f - t);
+    ImGuiContext& g = *GImGui;
+    if (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasPos) g.NextWindowData.PosVal.y -= 8.f * (1.f - e);
+    PushStyleVar(ImGuiStyleVar_Alpha, e);
+    if (!BeginPopup(str_id)) {
+        PopStyleVar();
+        return false;
+    }
+    return true;
+}
+
+void ImGui::UiEndPopup()
+{
+    EndPopup();
+    PopStyleVar();
+}
+
 void ImGui::LoadUiFonts()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -169,7 +221,8 @@ void ImGui::AddLogoMark(ImDrawList* dl, const ImVec2& pos, float size)
 {
     const float s = size / 22.f;
     const ImVec2 max = ImVec2(pos.x + size, pos.y + size);
-    AddGlow(dl, pos, max, UiCol::Spam, 5.f * s, (int)(8.f * s), 0.3f);
+    const float breath = 0.85f + 0.15f * sinf((float)GetTime() * 1.6f);
+    AddGlow(dl, pos, max, UiCol::Spam, 5.f * s, (int)(8.f * s), 0.3f * breath);
     dl->AddRectFilled(pos, max, UiCol::Spam, 5.f * s);
     static const float segs[][4] = {
         {6, 4, 10, 2}, {6, 4, 2, 8}, {6, 10, 10, 2}, {14, 10, 2, 8}, {6, 16, 10, 2},
@@ -183,9 +236,10 @@ void ImGui::AddLogoMark(ImDrawList* dl, const ImVec2& pos, float size)
 void ImGui::AddStatusDot(ImDrawList* dl, const ImVec2& center, float radius, ImU32 col, bool glow)
 {
     if (glow) {
+        float breath = 0.7f + 0.3f * sinf((float)GetTime() * 3.f);
         for (int i = 1; i <= 4; i++) {
             float t = 1.f - (float)i / 5.f;
-            dl->AddCircle(center, radius + i, WithAlpha(col, 0.35f * t * t), 0, 1.5f);
+            dl->AddCircle(center, radius + i, WithAlpha(col, 0.35f * t * t * breath), 0, 1.5f);
         }
     }
     dl->AddCircleFilled(center, radius, col);
@@ -212,10 +266,11 @@ void ImGui::AddPanel(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float
     dl->AddRect(min, max, UiCol::StrokeSoft, rounding);
 }
 
-void ImGui::AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col)
+void ImGui::AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col, float flip)
 {
-    dl->AddLine(ImVec2(center.x - 4.f, center.y - 2.f), ImVec2(center.x, center.y + 2.f), col, 1.8f);
-    dl->AddLine(ImVec2(center.x, center.y + 2.f), ImVec2(center.x + 4.f, center.y - 2.f), col, 1.8f);
+    const float f = 2.f * (1.f - 2.f * flip);
+    dl->AddLine(ImVec2(center.x - 4.f, center.y - f), ImVec2(center.x, center.y + f), col, 1.8f);
+    dl->AddLine(ImVec2(center.x, center.y + f), ImVec2(center.x + 4.f, center.y - f), col, 1.8f);
 }
 
 void ImGui::AddKeycap(ImDrawList* dl, const ImVec2& min, const ImVec2& max, const char* text, ImU32 textCol)
@@ -231,19 +286,18 @@ bool ImGui::UiGhostButton(const char* id, const ImVec2& pos, float size, UiGlyph
 {
     SetCursorScreenPos(pos);
     bool clicked = InvisibleButton(id, ImVec2(size, size));
-    bool hovered = IsItemHovered();
+    ImGuiID wid = GetItemID();
+    float hoverT = UiAnim(SubId(wid, 1), IsItemHovered() ? 1.f : 0.f, 18.f);
+    float pressT = UiAnim(SubId(wid, 2), IsItemActive() ? 1.f : 0.f, 28.f);
 
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 max = ImVec2(pos.x + size, pos.y + size);
     const ImVec2 c = ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f);
-    const float s = size / 30.f;
+    const float s = size / 30.f * (1.f - 0.12f * pressT);
 
-    ImU32 col = UiCol::Sub;
-    if (hovered) {
-        bool danger = glyph == UiGlyph_Close;
-        dl->AddRectFilled(pos, max, danger ? UiCol::DangerFill : UiCol::Bg2, 6.f);
-        col = danger ? UiCol::Danger : UiCol::Text;
-    }
+    bool danger = glyph == UiGlyph_Close;
+    if (hoverT > 0.01f) dl->AddRectFilled(pos, max, WithAlpha(danger ? UiCol::DangerFill : UiCol::Bg2, hoverT), 6.f);
+    ImU32 col = UiMixColor(UiCol::Sub, danger ? UiCol::Danger : UiCol::Text, hoverT);
 
     switch (glyph) {
     case UiGlyph_Gear: {
@@ -271,12 +325,16 @@ bool ImGui::UiChipFrame(const char* id, const ImVec2& pos, const ImVec2& size)
 {
     SetCursorScreenPos(pos);
     bool clicked = InvisibleButton(id, size);
-    bool hovered = IsItemHovered();
+    ImGuiID wid = GetItemID();
+    float hoverT = UiAnim(SubId(wid, 1), IsItemHovered() ? 1.f : 0.f, 16.f);
+    float pressT = UiAnim(SubId(wid, 2), IsItemActive() ? 1.f : 0.f, 28.f);
 
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 max = ImVec2(pos.x + size.x, pos.y + size.y);
-    dl->AddRectFilled(pos, max, hovered ? IM_COL32(0x13, 0x1A, 0x28, 0xFF) : UiCol::Bg1, 10.f);
-    dl->AddRect(pos, max, hovered ? UiCol::HoverStroke : UiCol::Stroke, 10.f);
+    ImU32 fill = UiMixColor(UiCol::Bg1, IM_COL32(0x13, 0x1A, 0x28, 0xFF), hoverT);
+    fill = UiMixColor(fill, UiCol::Bg2, 0.6f * pressT);
+    dl->AddRectFilled(pos, max, fill, 10.f);
+    dl->AddRect(pos, max, UiMixColor(UiCol::Stroke, UiCol::HoverStroke, hoverT), 10.f);
     return clicked;
 }
 
@@ -289,24 +347,31 @@ bool ImGui::UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, 
 {
     SetCursorScreenPos(pos);
     bool clicked = InvisibleButton(id, size);
-    bool hovered = IsItemHovered();
+    ImGuiID wid = GetItemID();
+    float t = UiAnim(SubId(wid, 1), enabled ? 1.f : 0.f, 10.f);
+    float hoverT = UiAnim(SubId(wid, 2), IsItemHovered() ? 1.f : 0.f, 16.f);
 
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 max = ImVec2(pos.x + size.x, pos.y + size.y);
-    const ImU32 accent = enabled ? UiCol::Ok : UiCol::Danger;
-    const ImU32 fill = enabled ? UiCol::OkFill : UiCol::DangerFill;
-    const char* text = enabled ? "ENABLED" : "DISABLED";
+    const ImU32 accent = UiMixColor(UiCol::Danger, UiCol::Ok, t);
+    const ImU32 fill = UiMixColor(UiCol::DangerFill, UiCol::OkFill, t);
+    const bool on = t >= 0.5f;
+    const char* text = on ? "ENABLED" : "DISABLED";
+    const float contentA = fabsf(t * 2.f - 1.f);
 
-    if (enabled) AddGlow(dl, pos, max, accent, 10.f, 8, 0.18f);
+    if (t > 0.01f) {
+        float breath = 0.85f + 0.15f * sinf((float)GetTime() * 2.5f);
+        AddGlow(dl, pos, max, accent, 10.f, 8, 0.18f * t * breath);
+    }
     dl->AddRectFilled(pos, max, fill, 10.f);
-    dl->AddRect(pos, max, WithAlpha(accent, hovered ? 1.f : 0.9f), 10.f, 0, hovered ? 1.5f : 1.f);
+    dl->AddRect(pos, max, WithAlpha(accent, 0.9f + 0.1f * hoverT), 10.f, 0, 1.f + 0.5f * hoverT);
 
     ImVec2 textSize = CalcTrackedTextSize(UiFonts::Bold, 19.f, text, 1.5f);
     const float contentW = 8.f + 10.f + textSize.x;
     const float x = pos.x + (size.x - contentW) * 0.5f;
     const float cy = pos.y + size.y * 0.5f;
-    AddStatusDot(dl, ImVec2(x + 4.f, cy), 4.f, accent, enabled);
-    AddTrackedText(dl, UiFonts::Bold, 19.f, ImVec2(x + 18.f, cy - 9.5f), accent, text, 1.5f);
+    AddStatusDot(dl, ImVec2(x + 4.f, cy), 4.f, WithAlpha(accent, contentA), on && enabled);
+    AddTrackedText(dl, UiFonts::Bold, 19.f, ImVec2(x + 18.f, cy - 9.5f), WithAlpha(accent, contentA), text, 1.5f);
     return clicked;
 }
 
@@ -314,6 +379,7 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
 {
     SetCursorScreenPos(pos);
     bool clicked = InvisibleButton(id, size);
+    ImGuiID wid = GetItemID();
     bool hovered = !desc.locked && IsItemHovered();
 
     ImDrawList* dl = GetWindowDrawList();
@@ -350,23 +416,32 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
     default: break;
     }
 
+    float hoverT = UiAnim(SubId(wid, 1), hovered ? 1.f : 0.f, 18.f);
+    float pressT = UiAnim(SubId(wid, 2), desc.pressed ? 1.f : 0.f, 30.f);
+    float selT = UiAnim(SubId(wid, 3), desc.selected ? 1.f : 0.f, 20.f);
+    int* lastStyle = s_animStorage.GetIntRef(SubId(wid, 4), desc.style);
+    float* pulse = s_animStorage.GetFloatRef(SubId(wid, 5), 0.f);
+    if (*lastStyle != (int)desc.style) {
+        *lastStyle = desc.style;
+        *pulse = accent ? 1.f : 0.f;
+    }
+    *pulse = ImMax(0.f, *pulse - GImGui->IO.DeltaTime * 2.5f);
+
     const float dim = desc.inherited ? 0.55f : 1.f;
     if (accent) {
         stroke = WithAlpha(accent, dim);
         strokeW = 1.5f;
         labelCol = WithAlpha(labelCol, desc.inherited ? 0.7f : 1.f);
-        if (!desc.inherited) AddGlow(dl, pos, max, accent, rounding, 6, 0.12f);
+        if (!desc.inherited) AddGlow(dl, pos, max, accent, rounding, 6, 0.12f + 0.3f * *pulse * *pulse);
+        fill = UiMixColor(fill, fillPressed, 0.35f * hoverT);
+    } else {
+        fill = UiMixColor(fill, UiCol::HoverFill, hoverT);
+        stroke = UiMixColor(UiCol::StrokeSoft, UiCol::Stroke, hoverT);
     }
-
-    if (desc.pressed) {
-        fill = fillPressed;
-        if (!accent) {
-            stroke = UiCol::HoverStroke;
-            labelCol = UiCol::Text;
-        }
-    } else if (hovered && !accent) {
-        fill = UiCol::HoverFill;
-        stroke = UiCol::Stroke;
+    fill = UiMixColor(fill, fillPressed, pressT);
+    if (!accent) {
+        stroke = UiMixColor(stroke, UiCol::HoverStroke, pressT);
+        labelCol = UiMixColor(labelCol, UiCol::Text, pressT);
     }
     if (desc.locked) labelCol = UiCol::Locked;
 
@@ -382,9 +457,11 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
 
     if (accent && !desc.inherited) dl->AddCircleFilled(ImVec2(max.x - 9.f, pos.y + 9.f), 2.5f, accent);
 
-    if (desc.selected)
-        dl->AddRect(ImVec2(pos.x - 2.f, pos.y - 2.f), ImVec2(max.x + 2.f, max.y + 2.f), WithAlpha(UiCol::Text, 0.7f),
-                    rounding + 2.f, 0, 2.f);
+    if (selT > 0.01f) {
+        float off = 2.f + 2.f * (1.f - selT);
+        dl->AddRect(ImVec2(pos.x - off, pos.y - off), ImVec2(max.x + off, max.y + off),
+                    WithAlpha(UiCol::Text, 0.7f * selT), rounding + off, 0, 2.f);
+    }
 
     return clicked && !desc.locked;
 }
@@ -394,18 +471,16 @@ bool ImGui::UiToggle(const char* id, const ImVec2& pos, bool on)
     const ImVec2 size = ImVec2(38.f, 20.f);
     SetCursorScreenPos(pos);
     bool clicked = InvisibleButton(id, size);
+    ImGuiID wid = GetItemID();
+    float t = UiAnim(SubId(wid, 1), on ? 1.f : 0.f, 16.f);
+    float e = t * t * (3.f - 2.f * t);
 
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 max = ImVec2(pos.x + size.x, pos.y + size.y);
-    if (on) {
-        AddGlow(dl, pos, max, UiCol::Spam, 10.f, 5, 0.2f);
-        dl->AddRectFilled(pos, max, UiCol::Spam, 10.f);
-        dl->AddCircleFilled(ImVec2(pos.x + 28.f, pos.y + 10.f), 7.f, UiCol::Bg0);
-    } else {
-        dl->AddRectFilled(pos, max, UiCol::Bg0, 10.f);
-        dl->AddRect(pos, max, UiCol::Stroke, 10.f);
-        dl->AddCircleFilled(ImVec2(pos.x + 10.f, pos.y + 10.f), 7.f, UiCol::Mute);
-    }
+    if (e > 0.01f) AddGlow(dl, pos, max, UiCol::Spam, 10.f, 5, 0.2f * e);
+    dl->AddRectFilled(pos, max, UiMixColor(UiCol::Bg0, UiCol::Spam, e), 10.f);
+    if (e < 0.99f) dl->AddRect(pos, max, WithAlpha(UiCol::Stroke, 1.f - e), 10.f);
+    dl->AddCircleFilled(ImVec2(pos.x + 10.f + 18.f * e, pos.y + 10.f), 7.f, UiMixColor(UiCol::Mute, UiCol::Bg0, e));
     return clicked;
 }
 
@@ -414,15 +489,26 @@ bool ImGui::UiMenuRow(const char* label, ImU32 dotCol, bool disabled, bool keepO
     char id[64];
     snprintf(id, sizeof(id), "##row_%s", label);
     ImVec2 pos = GetCursorScreenPos();
+    PushStyleColorTriplet(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
     if (disabled) BeginDisabled();
     bool clicked = Selectable(id, false, keepOpen ? ImGuiSelectableFlags_NoAutoClosePopups : 0, ImVec2(0.f, 24.f));
     if (disabled) EndDisabled();
+    PopStyleColorTriplet();
+
+    ImGuiID wid = GetItemID();
+    float hoverT = UiAnim(SubId(wid, 1), (!disabled && IsItemHovered()) ? 1.f : 0.f, 18.f);
+    float pressT = UiAnim(SubId(wid, 2), (!disabled && IsItemActive()) ? 1.f : 0.f, 28.f);
 
     ImDrawList* dl = GetWindowDrawList();
-    float x = pos.x + 8.f;
+    if (hoverT > 0.01f)
+        dl->AddRectFilled(GetItemRectMin(), GetItemRectMax(),
+                          WithAlpha(UiMixColor(UiCol::HoverFill, UiCol::PressFill, pressT), hoverT), 6.f);
+
+    float x = pos.x + 8.f + 2.f * hoverT;
     if (dotCol) {
-        AddStatusDot(dl, ImVec2(pos.x + 12.f, pos.y + 12.f), 3.f, disabled ? WithAlpha(dotCol, 0.4f) : dotCol, false);
-        x = pos.x + 24.f;
+        AddStatusDot(dl, ImVec2(pos.x + 12.f + 2.f * hoverT, pos.y + 12.f), 3.f,
+                     disabled ? WithAlpha(dotCol, 0.4f) : dotCol, false);
+        x = pos.x + 24.f + 2.f * hoverT;
     }
     dl->AddText(UiFonts::Semi, 18.f, ImVec2(x, pos.y + 3.f), disabled ? UiCol::Mute : UiCol::Text, label);
     return clicked;

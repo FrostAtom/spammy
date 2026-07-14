@@ -76,6 +76,11 @@ struct UiKeyDesc {
 void LoadUiFonts();
 void LoadUiStyle();
 
+float UiAnim(ImGuiID id, float target, float speed = 14.f, float initial = FLT_MAX);
+ImU32 UiMixColor(ImU32 a, ImU32 b, float t);
+bool UiBeginPopup(const char* str_id);
+void UiEndPopup();
+
 ImVec2 CalcTrackedTextSize(ImFont* font, float size, const char* text, float tracking);
 void AddTrackedText(ImDrawList* dl, ImFont* font, float size, const ImVec2& pos, ImU32 col, const char* text,
                     float tracking);
@@ -84,7 +89,7 @@ void AddLogoMark(ImDrawList* dl, const ImVec2& pos, float size);
 void AddStatusDot(ImDrawList* dl, const ImVec2& center, float radius, ImU32 col, bool glow);
 void AddAccentHairline(ImDrawList* dl, const ImVec2& pos, float width, float height);
 void AddPanel(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float rounding);
-void AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col);
+void AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col, float flip = 0.f);
 void AddKeycap(ImDrawList* dl, const ImVec2& min, const ImVec2& max, const char* text, ImU32 textCol);
 
 bool UiGhostButton(const char* id, const ImVec2& pos, float size, UiGlyph glyph);
