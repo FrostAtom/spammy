@@ -1,6 +1,6 @@
 #pragma once
-#include "Spammy/Headers.h"
-#include "Spammy/Win32/Keyboard.h"
+#include "Headers.h"
+#include "Win32/Keyboard.h"
 #define GET_KEY_MODIFIER(bundle) ((bundle >> 16) & 0xFFFF)
 #define GET_KEY_VKCODE(bundle) (bundle & 0xFFFF)
 #define MAKE_KEY_BUNDLE(vkCode, mods) (vkCode | (mods << 16))

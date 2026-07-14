@@ -1,15 +1,16 @@
-#include "Spammy/MainWindow.h"
-#include "Spammy/App.h"
-#include "resources/resources.h"
+#include "MainWindow.h"
+#include "App.h"
+#include "Resources.h"
+
+using namespace ImGui;
 
 MainWindow* MainWindow::_self = NULL;
-MainWindow& MainWindow::instance()
+MainWindow& MainWindow::Instance()
 {
     return *_self;
 }
 
-MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName)
-    : Window(className, wndName), _selectedAction(Action_Spammy), _editPause(false)
+MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName) : Window(className, wndName), _editPause(false)
 {
     _self = this;
 
@@ -20,7 +21,7 @@ MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName)
 
 MainWindow::~MainWindow() {}
 
-bool MainWindow::initialize()
+bool MainWindow::Initialize()
 {
     HWND hwnd = FindWindowW(L"" APP_NAME, L"" APP_NAME);
     if (hwnd) {
@@ -28,431 +29,531 @@ bool MainWindow::initialize()
         return false;
     }
 
-    ErrorCode ec = Window::initialize();
+    ErrorCode ec = Window::Initialize();
     if (ec != ErrorCode_OK) {
-        MessageBoxA(NULL, formatError(ec), APP_NAME, MB_ICONERROR | MB_OK);
+        MessageBoxA(NULL, FormatError(ec), APP_NAME, MB_ICONERROR | MB_OK);
         return false;
     }
 
-    setRenderBackend(new WindowRenderer_D3d9());
-    setIcon(IDI_ICON1);
-    enableMoving();
-    enableMenuBar();
-    setSize({680, 435});
-    resetPosition();
+    SetIcon(IDI_ICON1);
+    EnableMoving();
+    EnableTitleBar(false);
+    SetSize({1280, 720});
+    ResetPosition();
 
     TrayIcon* trayIcon = new TrayIcon();
-    trayIcon->setTip(L"" APP_NAME);
-    trayIcon->setOnClick(std::bind_front(&MainWindow::onTrayClick, this));
-    trayIcon->setMenu(std::bind_front(&MainWindow::onTrayMenu, this));
-    setTrayIcon(trayIcon);
+    trayIcon->SetTip(L"" APP_NAME);
+    trayIcon->SetOnClick(std::bind_front(&MainWindow::OnTrayClick, this));
+    trayIcon->SetMenu(std::bind_front(&MainWindow::OnTrayMenu, this));
+    SetTrayIcon(trayIcon);
 
-    loadStyle();
+    LoadStyle();
 
     return true;
 }
 
-bool MainWindow::handleKeyPress(unsigned short vkCode, bool)
+bool MainWindow::HandleKeyPress(unsigned short vkCode, bool)
 {
     if (_editPause) return true;
     return false;
 }
 
-bool MainWindow::handleKeyRelease(unsigned short vkCode, bool)
+bool MainWindow::HandleKeyRelease(unsigned short vkCode, bool)
 {
     if (_editPause) {
-        if (auto profile = sApp.editingProfile()) profile->vkPause = MAKE_KEY_BUNDLE(vkCode, sKeyboard.testModifiers());
+        if (auto profile = sApp.EditingProfile()) profile->vkPause = MAKE_KEY_BUNDLE(vkCode, sKeyboard.TestModifiers());
         _editPause = false;
         return true;
     }
     return false;
 }
 
-void MainWindow::onTrayClick()
+void MainWindow::OnTrayClick()
 {
-    if (!isShown()) {
-        show();
-        focus();
+    if (!IsShown()) {
+        Show();
+        Focus();
     } else {
-        hide();
+        Hide();
     }
 }
 
-void MainWindow::onTrayMenu(TrayIconMenu& menu)
+void MainWindow::OnTrayMenu(TrayIconMenu& menu)
 {
-    menu.disabled(L"" APP_NAME);
-    if (!isShown())
-        menu.button(L"Show", std::bind_front(&MainWindow::show, this));
+    menu.Disabled(L"" APP_NAME);
+    if (!IsShown())
+        menu.Button(L"Show", std::bind_front(&MainWindow::Show, this));
     else
-        menu.button(L"Hide", std::bind_front(&MainWindow::hide, this));
-    menu.toggle(L"Enable", sApp.isEnabled(), [] { sApp.enable(!sApp.isEnabled()); });
-    menu.button(L"Exit", std::bind_front(&MainWindow::close, this));
+        menu.Button(L"Hide", std::bind_front(&MainWindow::Hide, this));
+    menu.Toggle(L"Enable", sApp.IsEnabled(), [] { sApp.Enable(!sApp.IsEnabled()); });
+    menu.Button(L"Exit", std::bind_front(&MainWindow::Close, this));
 }
 
-void MainWindow::loadStyle()
+void MainWindow::LoadStyle()
 {
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowTitleAlign = {0.5f, 0.5f};
-    style.WindowPadding = ImVec2(12.00f, 10.00f);
-    style.FramePadding = ImVec2(8.00f, 3.00f);
-    style.CellPadding = ImVec2(6.00f, 6.00f);
-    style.ItemSpacing = ImVec2(8.00f, 5.00f);
-    style.ItemInnerSpacing = ImVec2(6.00f, 6.00f);
-    style.TouchExtraPadding = ImVec2(0.00f, 0.00f);
-    style.IndentSpacing = 25;
-    style.WindowBorderSize = 0;
-    style.ChildBorderSize = 1;
-    style.PopupBorderSize = 1;
-    style.FrameBorderSize = 1;
-    style.TabBorderSize = 1;
-    style.WindowRounding = 0;
-    style.ChildRounding = 4;
-    style.FrameRounding = 3;
-    style.PopupRounding = 4;
-    style.ScrollbarRounding = 9;
-    style.GrabRounding = 3;
-    style.LogSliderDeadzone = 4;
-    style.TabRounding = 4;
-
-    ImGui::StyleColorsLight();
+    ImGui::LoadUiStyle();
 }
 
-static const char* s_keyMods[] = {"None", "Shift",      "Alt",      "Shift+Alt",
-                                  "Ctrl", "Shift+Ctrl", "Alt+Ctrl", "Shift+Alt+Ctrl"};
-
-void MainWindow::draw()
+bool MainWindow::BeginFrame()
 {
-    auto editingProfile = sApp.editingProfile();
-    if (ImGui::BeginMenuBar()) {
-        char bufProfilesName[96] = {0};
-        snprintf(bufProfilesName, std::size(bufProfilesName), "%s##Profiles",
-                 editingProfile ? editingProfile->name.c_str() : "Profiles");
-        if (ImGui::BeginMenu(bufProfilesName)) {
-            if (ImGui::BeginMenu("Create")) {
-                static char bufName[64] = {0};
-                if (ImGui::IsWindowAppearing()) bufName[0] = '\0';
-                ImGui::PushItemWidth(120.f);
-                bool enter = ImGui::InputTextWithHint("##test", "Enter name", bufName, std::size(bufName),
-                                                      ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::PopItemWidth();
-                bool validName = strlen(bufName) >= 3 && !sApp.isProfileExists(bufName);
-                if (!validName) ImGui::BeginDisabled();
-                if ((ImGui::MenuItem("Save") || enter)) {
-                    sApp.createProfile(bufName);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (!validName) ImGui::EndDisabled();
-                ImGui::EndMenu();
-            }
-            ImGui::Separator();
-            const auto& profiles = sApp.getProfiles();
-            if (!profiles.empty()) {
-                const char* pendingDelete = NULL;
-                for (const std::shared_ptr<Profile>& item : profiles) {
-                    bool activate = false;
-                    if (ImGui::BeginMenu(item->name.c_str())) {
-                        if (ImGui::MenuItem("Select")) activate = true;
-                        if (ImGui::BeginMenu("Delete")) {
-                            ImGui::MenuItem("No");
-                            if (ImGui::MenuItem("Yes")) pendingDelete = item->name.c_str();
-                            ImGui::EndMenu();
-                        }
-                        ImGui::EndMenu();
-                    }
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-                        activate = true;
-                        ImGui::CloseCurrentPopup();
-                    }
-                    if (activate) sApp.editingProfile(item->name.c_str());
-                }
-                if (pendingDelete) {
-                    sApp.deleteProfile(pendingDelete);
-                    editingProfile = NULL;
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::MenuItem("Empty");
-                ImGui::EndDisabled();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Settings")) {
-            bool startWithWindows = sApp.isAutoStartEnabled();
-            if (ImGui::MenuItem("Start with windows", NULL, &startWithWindows)) sApp.enableAutoStart(startWithWindows);
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("About")) {
-            if (ImGui::MenuItem("GitHub repo")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
-            if (ImGui::MenuItem("Discord")) LaunchUrl(L"https://discord.gg/NNnBTK5c8e");
-            if (ImGui::MenuItem("Author")) LaunchUrl(L"https://t.me/boredatom");
-            ImGui::EndMenu();
-        }
-        ImGui::BeginMenu(__DATE__, false);
-        ImGui::EndMenuBar();
-    }
-
-    if (ImGui::BeginTable("Header", 3, 0, {0.f, 60.f})) {
-        ImGui::TableSetupColumn("1", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("2", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("3", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        if (editingProfile) {
-            if (_selectedAction == Action_Spammy) {
-                if (ImGui::Button("Mode: Spam##Mode", {75.f, 0})) _selectedAction = Action_Speedy;
-                ImGui::Tip("While the button is pressed, key spamming is simulated");
-            } else {
-                if (ImGui::Button("Mode: Speed##Mode", {75.f, 0})) _selectedAction = Action_Spammy;
-                ImGui::Tip("When the button is pressed, it is immediately released");
-            }
-
-            bool spammyMode = _selectedAction == Action_Spammy;
-            if (!spammyMode) ImGui::BeginDisabled();
-            ImGui::SameLine();
-            ImGui::PushItemWidth(140.f);
-            ImGui::SliderInt("##Frequency", (int*)&editingProfile->speed, 10, 1000, "Frequency: %d");
-            ImGui::PopItemWidth();
-            ImGui::Tip("Delay between spams in miliseconds");
-            if (!spammyMode) ImGui::EndDisabled();
-
-            ImGui::Checkbox("Disable Win", &editingProfile->disableWin);
-            ImGui::Tip("Disables Windows button");
-            ImGui::SameLine();
-            ;
-            ImGui::Checkbox("Disable Alt-F4", &editingProfile->disableAltF4);
-            ImGui::Tip("Disables Alt-F4 combination");
-        }
-        ImGui::TableNextColumn();
-        ImGui::TableNextColumn();
-        {
-            float width = 80.f;
-            if (editingProfile) {
-                if (_editPause) {
-                    if (ImGui::Button("Press any key##pause", {width, 0.f})) _editPause = false;
-                } else {
-                    const char* keyName = (editingProfile && editingProfile->vkPause)
-                                              ? sKeyboard.geyKeyName(GET_KEY_VKCODE(editingProfile->vkPause))
-                                              : "not set";
-                    if (!keyName[0]) keyName = "Unknown";
-                    char buf[32];
-                    snprintf(buf, std::size(buf), "Pause: %s##pause", keyName);
-                    if (ImGui::Button(buf, {width, 0.f})) {
-                        _editPause = true;
-                        editingProfile->vkPause = 0;
-                    }
-                }
-                ImGui::SameLine();
-            }
-            if (sApp.isEnabled()) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.35f, .8f, .35f, 1.f));
-                if (ImGui::Button("Enabled", {width, 0.f})) sApp.enable(false);
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.8f, .35f, .35f, 1.f));
-                if (ImGui::Button("Disabled", {width, 0.f})) sApp.enable(true);
-            }
-            if (editingProfile) {
-                bool colored = false;
-                char bufPreviewEnableFor[64];
-                if (editingProfile->apps.empty()) {
-                    ImGui::PushStyleColorTriplet(ImGuiCol_FrameBg, ImGui::FlashColor(.95f, .35f, .35f, 2.f, .2f, .8f));
-                    colored = true;
-                    strncpy(bufPreviewEnableFor, "Select apps", std::size(bufPreviewEnableFor));
-                } else {
-                    snprintf(bufPreviewEnableFor, std::size(bufPreviewEnableFor), "%d apps selected",
-                             editingProfile->apps.size());
-                }
-                ImGui::PushItemWidth(width + width + ImGui::GetStyle().ItemSpacing.x);
-                if (ImGui::BeginCombo("##enablefor", bufPreviewEnableFor, ImGuiComboFlags_NoArrowButton)) {
-                    static std::vector<std::string> appList;
-                    if (ImGui::IsWindowAppearing()) {
-                        appList.clear();
-                        EnumWindows([this, editingProfile](HWND hwnd) -> BOOL {
-                            std::filesystem::path path = GetProcessPath(hwnd);
-                            if (!path.has_filename() || path == _appFilePath) return TRUE;
-                            std::string fileName = (const char*)path.filename().u8string().c_str();
-                            if (std::find(editingProfile->apps.begin(), editingProfile->apps.end(), fileName) !=
-                                editingProfile->apps.end())
-                                return TRUE; // already added programs
-                            if (std::find(appList.begin(), appList.end(), fileName) != appList.end())
-                                return TRUE; // dublicates
-                            appList.emplace_back(std::move(fileName));
-                            return TRUE;
-                        });
-                        LexicographicalSort(appList);
-                    }
-
-                    const char* unbindApp = NULL;
-                    for (std::string& app : editingProfile->apps) {
-                        if (ImGui::Selectable(app.c_str(), true)) unbindApp = app.c_str();
-                    }
-                    if (unbindApp) sApp.unbindProfile(editingProfile->name.c_str(), unbindApp);
-
-                    for (const std::string& app : appList) {
-                        auto appProfile = sApp.findProfileByApp(app.c_str());
-                        bool enabledNotForThis = appProfile && editingProfile != appProfile;
-                        if (enabledNotForThis) ImGui::BeginDisabled();
-                        if (ImGui::Selectable(app.c_str())) sApp.bindProfile(editingProfile->name.c_str(), app.c_str());
-                        if (enabledNotForThis) ImGui::EndDisabled();
-                    }
-                    ImGui::EndCombo();
-                }
-                ImGui::PopItemWidth();
-                if (colored) ImGui::PopStyleColorTriplet();
-            }
-            ImGui::PopStyleColor();
-        }
-    }
-    ImGui::EndTable();
-
-    static ImVec4 ButtonNormal = {1.f, 1.f, 1.f, 1.f};
-    static ImVec4 ButtonEnabled = {.4f, .4f, 1.f, 1.f};
-    static ImVec4 ButtonMode[] = {
-        {}, {1.f, 0.f, 0.f, 1.f}, {1.f, .5f, 0.f, 1.f}, {1.f, 1.f, 0.f, 1.f}, {0.f, 1.f, 0.f, 1.f},
-    };
-
-    const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, {.5f, .5f, .5f, .35f});
-    if (ImGui::BeginChild("Keyboard", {0.f, -footer_height_to_reserve}, true, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {0.f, 0.f});
-        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, {.2f, .2f});
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.f);
-        ImGui::PushStyleColor(ImGuiCol_Button, ButtonNormal);
-        float KeySize = 38.f;
-        float KeySpacing = KeySize * (1.f / 8.f);
-
-        unsigned mods = sKeyboard.testModifiers();
-        for (size_t i = 0; i < std::size(KeyboardLayout); i++) {
-            KeyboardItem& key = KeyboardLayout[i];
-            if (i > 0) {
-                KeyboardItem& prev = KeyboardLayout[i - 1];
-                if (prev.type == KIT_Key || prev.type == KIT_Spacing) ImGui::SameLine();
-                if (prev.type != KIT_NewLine) {
-                    ImGui::Dummy({KeySpacing, KeySize});
-                    if (key.type != KIT_NewLine) ImGui::SameLine();
-                }
-            }
-            switch (key.type) {
-            case KIT_NewLine: ImGui::Dummy({ImGui::GetContentRegionAvail().x, KeySpacing + KeySize * key.width}); break;
-            case KIT_Spacing: ImGui::Dummy({KeySize * key.width, KeySize}); break;
-            case KIT_Key: {
-                bool disabled = sKeyboard.isModifier(key.vkCode) || (key.vkCode == VK_LWIN || key.vkCode == VK_RWIN);
-                if (disabled) ImGui::BeginDisabled();
-
-                bool hasColor = false;
-                ImVec4 color;
-                KeyConfig* cfg = editingProfile ? &editingProfile->keys[key.vkCode][mods] : NULL;
-
-                bool pressed = sKeyboard.isPressed(key.vkCode);
-                if (pressed) {
-                    color = ImColor(ImGui::GetColorU32(ImGuiCol_ButtonActive));
-                    hasColor = true;
-                } else if (cfg) {
-                    if (cfg->action != Action_None) {
-                        color = ButtonMode[cfg->action];
-                        hasColor = true;
-                    } else if (mods != KeyMod_None) {
-                        KeyConfig& parentCfg = editingProfile->keys[key.vkCode][KeyMod_None];
-                        if (parentCfg.action != Action_None) {
-                            color = ButtonMode[parentCfg.action];
-                            color.w *= .66f;
-                            hasColor = true;
-                        }
-                    }
-                }
-                if (hasColor) ImGui::PushStyleColor(ImGuiCol_Button, color);
-
-                char buf[32];
-                snprintf(buf, std::size(buf), "%s##%02x", key.name, i);
-                if (ImGui::Button(buf, {KeySize * key.width, KeySize}) && cfg) {
-                    cfg->action = cfg->action != _selectedAction ? _selectedAction : Action_None;
-                }
-
-                if (hasColor) ImGui::PopStyleColor();
-                if (disabled) ImGui::EndDisabled();
-
-                if (editingProfile) {
-                    snprintf(buf, std::size(buf), "##popup%02x", i);
-                    if (ImGui::BeginPopupContextItem(buf)) {
-                        static DWORD mods;
-                        if (ImGui::IsWindowAppearing()) mods = sKeyboard.testModifiers();
-                        ImGui::MenuItem(s_keyMods[mods], NULL, false, false);
-
-                        KeyConfig& cfg = editingProfile->keys[key.vkCode][mods];
-                        if (cfg.action != Action_Disabled) {
-                            if (ImGui::BeginMenu("Mode")) {
-                                static const char* s_modes[] = {
-                                    NULL,
-                                    NULL,
-                                    "Spammy",
-                                    "Speedy",
-                                };
-                                for (int i = 2; i < std::size(s_modes); i++) {
-                                    bool selected = false;
-                                    if (ImGui::MenuItem(s_modes[i], NULL, &selected)) cfg.action = (Action)i;
-                                }
-                                ImGui::EndMenu();
-                            }
-
-                            if (mods != KeyMod_None) {
-                                if (ImGui::MenuItem("Disable")) cfg.action = Action_Disabled;
-                            }
-                        } else {
-                            if (ImGui::MenuItem("Enable##Disable")) cfg.action = Action_None;
-                        }
-                        ImGui::MenuItem("Close");
-                        ImGui::EndPopup();
-                    }
-                }
-                break;
-            }
-            }
-        }
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar(3);
-    }
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-
-    if (ImGui::BeginTable("Footer", 3)) {
-        ImGui::TableSetupColumn("1", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("2", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("3", ImGuiTableColumnFlags_WidthFixed);
-
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-
-        ImGui::ColorButton("Disabled", ButtonMode[Action_Disabled],
-                           ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop);
-        ImGui::SameLine();
-        ImGui::TextUnformatted("Disabled");
-
-        ImGui::SameLine();
-        ImGui::ColorButton("Spammy", ButtonMode[Action_Spammy],
-                           ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop);
-        ImGui::SameLine();
-        ImGui::TextUnformatted("Spammy");
-
-        ImGui::SameLine();
-        ImGui::ColorButton("Speedy", ButtonMode[Action_Speedy],
-                           ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop);
-        ImGui::SameLine();
-        ImGui::TextUnformatted("Speedy");
-
-        ImGui::TableNextColumn();
-        ImGui::TableNextColumn();
-        DWORD mods = sKeyboard.testModifiers();
-        if (mods != KeyMod_None) ImGui::TextUnformatted(s_keyMods[mods]);
-    }
-    ImGui::EndTable();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+    bool result = Window::BeginFrame();
+    ImGui::PopStyleVar();
+    return result;
 }
 
-bool MainWindow::handleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
+void MainWindow::Draw()
 {
-    if (Window::handleWndProc(msg, wParam, lParam, result)) return true;
+    auto profile = sApp.EditingProfile();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 o = ImGui::GetWindowPos();
+
+    DrawTitleBar(dl, o);
+    DrawHeader(dl, o, profile);
+    DrawKeyboard(dl, o, profile);
+    DrawFooter(dl, o);
+}
+
+void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
+{
+    AddAccentHairline(dl, o, 1280.f, 2.f);
+    AddLogoMark(dl, ImVec2(o.x + 28.f, o.y + 20.f), 22.f);
+    AddTrackedText(dl, UiFonts::Bold, 19.f, ImVec2(o.x + 60.f, o.y + 22.f), UiCol::Text, "SPAMMY", 4.f);
+    dl->AddText(UiFonts::Mono, 10.f, ImVec2(o.x + 180.f, o.y + 29.f), UiCol::Mute, __DATE__);
+
+    if (UiGhostButton("##gear", ImVec2(o.x + 1152.f, o.y + 17.f), 30.f, UiGlyph_Gear)) ImGui::OpenPopup("##settings");
+    if (UiGhostButton("##min", ImVec2(o.x + 1188.f, o.y + 17.f), 30.f, UiGlyph_Minimize))
+        ShowWindow(Native(), SW_MINIMIZE);
+    if (UiGhostButton("##close", ImVec2(o.x + 1224.f, o.y + 17.f), 30.f, UiGlyph_Close)) Hide();
+
+    DrawSettingsPopup(o);
+}
+
+void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile)
+{
+    if (UiChipFrame("##profile", ImVec2(o.x + 28.f, o.y + 66.f), ImVec2(216.f, 46.f))) ImGui::OpenPopup("##profiles");
+    UiChipLabel(ImVec2(o.x + 44.f, o.y + 73.f), "PROFILE");
+    if (profile) {
+        dl->AddText(UiFonts::Semi, 17.f, ImVec2(o.x + 44.f, o.y + 85.f), UiCol::Text, profile->name.c_str());
+    } else {
+        ImU32 flash = ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
+        dl->AddText(UiFonts::Semi, 17.f, ImVec2(o.x + 44.f, o.y + 85.f), flash, "NOT SET");
+    }
+    AddChevronDown(dl, ImVec2(o.x + 222.f, o.y + 89.f), UiCol::Sub);
+    DrawProfilesPopup(o);
+
+    if (profile) {
+        if (UiChipFrame("##apps", ImVec2(o.x + 260.f, o.y + 66.f), ImVec2(110.f, 46.f))) ImGui::OpenPopup("##appsmenu");
+        UiChipLabel(ImVec2(o.x + 276.f, o.y + 73.f), "APPS");
+        if (profile->apps.empty()) {
+            ImU32 flash = ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
+            dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 276.f, o.y + 86.f), flash, "NONE");
+        } else {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%d bound", (int)profile->apps.size());
+            dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 276.f, o.y + 86.f), UiCol::Text, buf);
+        }
+        DrawAppsPopup(o, profile);
+
+        if (UiChipFrame("##winkey", ImVec2(o.x + 700.f, o.y + 66.f), ImVec2(110.f, 46.f)))
+            profile->disableWin = !profile->disableWin;
+        UiChipLabel(ImVec2(o.x + 716.f, o.y + 73.f), "WIN KEY");
+        AddStatusDot(dl, ImVec2(o.x + 722.f, o.y + 96.f), 3.5f, profile->disableWin ? UiCol::Spam : UiCol::Mute,
+                     profile->disableWin);
+        dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 732.f, o.y + 86.f),
+                    profile->disableWin ? UiCol::Text : UiCol::Sub, profile->disableWin ? "LOCKED" : "FREE");
+
+        if (UiChipFrame("##altf4", ImVec2(o.x + 824.f, o.y + 66.f), ImVec2(120.f, 46.f)))
+            profile->disableAltF4 = !profile->disableAltF4;
+        UiChipLabel(ImVec2(o.x + 840.f, o.y + 73.f), "ALT + F4");
+        AddStatusDot(dl, ImVec2(o.x + 846.f, o.y + 96.f), 3.5f, profile->disableAltF4 ? UiCol::Spam : UiCol::Mute,
+                     profile->disableAltF4);
+        dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 856.f, o.y + 86.f),
+                    profile->disableAltF4 ? UiCol::Text : UiCol::Sub, profile->disableAltF4 ? "LOCKED" : "FREE");
+
+        if (UiChipFrame("##pause", ImVec2(o.x + 958.f, o.y + 66.f), ImVec2(150.f, 46.f))) {
+            if (_editPause) {
+                _editPause = false;
+            } else {
+                _editPause = true;
+                profile->vkPause = 0;
+            }
+        }
+        UiChipLabel(ImVec2(o.x + 974.f, o.y + 73.f), "PAUSE KEY");
+        char keycap[32];
+        ImU32 keycapCol;
+        if (_editPause) {
+            strncpy(keycap, "PRESS KEY", sizeof(keycap));
+            keycapCol = ImGui::GetColorU32(FlashColor(1.f, .55f, .28f, 1.5f, .4f, 1.f));
+        } else if (profile->vkPause) {
+            const char* keyName = sKeyboard.GetKeyName(GET_KEY_VKCODE(profile->vkPause));
+            if (!keyName[0]) keyName = "UNKNOWN";
+            size_t i = 0;
+            for (; keyName[i] && i < sizeof(keycap) - 1; i++)
+                keycap[i] = (keyName[i] >= 'a' && keyName[i] <= 'z') ? keyName[i] - 'a' + 'A' : keyName[i];
+            keycap[i] = '\0';
+            keycapCol = UiCol::Sub;
+        } else {
+            strncpy(keycap, "NOT SET", sizeof(keycap));
+            keycapCol = UiCol::Mute;
+        }
+        AddKeycap(dl, ImVec2(o.x + 974.f, o.y + 85.f), ImVec2(o.x + 1052.f, o.y + 103.f), keycap, keycapCol);
+    }
+
+    if (UiEnablePill("##enable", ImVec2(o.x + 1122.f, o.y + 66.f), ImVec2(132.f, 46.f), sApp.IsEnabled()))
+        sApp.Enable(!sApp.IsEnabled());
+}
+
+void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile)
+{
+    const ImVec2 panelMin = ImVec2(o.x + 20.f, o.y + 134.f);
+    const ImVec2 panelMax = ImVec2(o.x + 1260.f, o.y + 660.f);
+    AddPanel(dl, panelMin, panelMax, 16.f);
+
+    const float gap = 7.f;
+    const ImVec2 avail = ImVec2(panelMax.x - panelMin.x - 32.f, panelMax.y - panelMin.y - 32.f);
+    const ImVec2 start = ImVec2(panelMin.x + 16.f, panelMin.y + 16.f);
+
+    float gridW = 0.f;
+    float gridH = 0.f;
+    for (const KeyboardKey& item : KeyboardLayout) {
+        gridW = ImMax(gridW, item.x + item.w);
+        gridH = ImMax(gridH, item.y + item.h);
+    }
+
+    const float keySize = ImFloor(ImMin((avail.x + gap) / gridW, (avail.y + gap) / gridH));
+    const ImVec2 origin = {start.x + (avail.x - (keySize * gridW - gap)) * .5f,
+                           start.y + (avail.y - (keySize * gridH - gap)) * .5f};
+
+    static unsigned s_popupMods = 0;
+    static int s_brushButton = -1;
+    static UINT s_pressVk = 0;
+    static bool s_pressInPanel = false;
+    static bool s_pressOnKey = false;
+    static bool s_brushErase = false;
+    static bool s_brushMoved = false;
+
+    const bool anyPopup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    const ImGuiWindow* hoveredWnd = GImGui->HoveredWindow;
+    const bool overPopup = anyPopup && hoveredWnd && (hoveredWnd->Flags & ImGuiWindowFlags_Popup);
+    for (int btn = ImGuiMouseButton_Left; btn <= ImGuiMouseButton_Right; btn++) {
+        if (!ImGui::IsMouseClicked((ImGuiMouseButton)btn)) continue;
+        if (overPopup) continue;
+        if (btn == ImGuiMouseButton_Left && anyPopup) continue;
+        s_brushButton = btn;
+        s_pressInPanel = ImGui::IsMouseHoveringRect(panelMin, panelMax);
+        s_pressOnKey = false;
+        s_pressVk = 0;
+        s_brushErase = false;
+        s_brushMoved = false;
+    }
+    const bool brushing =
+        s_brushButton >= 0 && s_pressInPanel && ImGui::IsMouseDragging((ImGuiMouseButton)s_brushButton, 4.f);
+    if (brushing) s_brushMoved = true;
+    const bool released = s_brushButton >= 0 && ImGui::IsMouseReleased((ImGuiMouseButton)s_brushButton);
+
+    unsigned mods = sKeyboard.TestModifiers();
+    for (size_t i = 0; i < std::size(KeyboardLayout); i++) {
+        const KeyboardKey& key = KeyboardLayout[i];
+        const ImVec2 pos = ImVec2(origin.x + key.x * keySize, origin.y + key.y * keySize);
+        const ImVec2 size = ImVec2(key.w * keySize - gap, key.h * keySize - gap);
+
+        KeyConfig* cfg = profile ? &profile->keys[key.vkCode][mods] : NULL;
+
+        UiKeyDesc desc = {};
+        desc.label = key.name;
+        desc.locked = sKeyboard.IsModifier(key.vkCode) || key.vkCode == VK_LWIN || key.vkCode == VK_RWIN;
+        desc.pressed = sKeyboard.IsPressed(key.vkCode) != 0;
+        desc.selected = _selection.count(key.vkCode) != 0;
+        if (cfg) {
+            Action action = cfg->action;
+            if (action == Action_None && mods != KeyMod_None) {
+                Action base = profile->keys[key.vkCode][KeyMod_None].action;
+                if (base != Action_None) {
+                    action = base;
+                    desc.inherited = true;
+                }
+            }
+            switch (action) {
+            case Action_Spammy: desc.style = UiKeyStyle_Spam; break;
+            case Action_Speedy: desc.style = UiKeyStyle_Speedy; break;
+            case Action_Disabled: desc.style = UiKeyStyle_Blocked; break;
+            default: break;
+            }
+        }
+
+        char id[16];
+        snprintf(id, sizeof(id), "##key%02x", (unsigned)i);
+        UiKey(id, pos, size, desc);
+        const ImVec2 keyMin = ImGui::GetItemRectMin();
+        const ImVec2 keyMax = ImGui::GetItemRectMax();
+
+        const bool hoverKey = ImGui::IsMouseHoveringRect(keyMin, keyMax);
+        const bool pressedHere =
+            s_brushButton >= 0 && s_pressInPanel && ImGui::IsMouseClicked((ImGuiMouseButton)s_brushButton) && hoverKey;
+        if (pressedHere) {
+            s_pressOnKey = true;
+            s_pressVk = key.vkCode;
+        }
+
+        if (cfg && !desc.locked) {
+            if (pressedHere && _selection.count(key.vkCode)) s_brushErase = true;
+
+            if (brushing && hoverKey) {
+                if (s_brushErase)
+                    _selection.erase(key.vkCode);
+                else
+                    _selection.insert(key.vkCode);
+            }
+
+            if (released && !s_brushMoved && hoverKey && s_pressVk == key.vkCode) {
+                if (_selection.count(key.vkCode))
+                    _selection.erase(key.vkCode);
+                else
+                    _selection.insert(key.vkCode);
+            }
+        }
+    }
+
+    if (released) {
+        if (s_pressInPanel && !s_pressOnKey && !s_brushMoved) _selection.clear();
+        if (s_brushButton == ImGuiMouseButton_Right && s_pressInPanel && !_selection.empty()) {
+            s_popupMods = mods;
+            ImGui::OpenPopup("##keymenu");
+        }
+        s_brushButton = -1;
+    }
+
+    DrawKeyMenuPopup(profile, s_popupMods);
+}
+
+void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
+{
+    dl->AddRectFilled(ImVec2(o.x + 20.f, o.y + 666.f), ImVec2(o.x + 1260.f, o.y + 667.f), UiCol::StrokeSoft);
+
+    const char* status;
+    ImU32 statusCol;
+    bool glow = false;
+    std::string detail;
+    if (!sApp.IsEnabled()) {
+        status = "PAUSED";
+        statusCol = UiCol::Mute;
+        detail = "hook disabled";
+    } else if (auto active = sApp.ActiveProfile()) {
+        status = "ACTIVE";
+        statusCol = UiCol::Ok;
+        glow = true;
+        detail = "hooked · " + sApp.ActiveAppName();
+    } else {
+        status = "READY";
+        statusCol = UiCol::SpamText;
+        detail = "waiting for bound app";
+    }
+    AddStatusDot(dl, ImVec2(o.x + 38.f, o.y + 689.f), 3.5f, statusCol, glow);
+    AddTrackedText(dl, UiFonts::Bold, 13.f, ImVec2(o.x + 50.f, o.y + 682.f), statusCol, status, 1.5f);
+    ImVec2 statusSize = CalcTrackedTextSize(UiFonts::Bold, 13.f, status, 1.5f);
+    dl->AddText(UiFonts::Mono, 11.f, ImVec2(o.x + 50.f + statusSize.x + 16.f, o.y + 683.f), UiCol::Mute,
+                detail.c_str());
+
+    static DWORD s_started = GetTickCount();
+    unsigned mins = (GetTickCount() - s_started) / 60000;
+    char value[32];
+    if (mins >= 60)
+        snprintf(value, sizeof(value), "%uh %02um", mins / 60, mins % 60);
+    else
+        snprintf(value, sizeof(value), "%um", mins);
+    ImVec2 valueSize = UiFonts::Mono->CalcTextSizeA(12.f, FLT_MAX, 0.f, value);
+    float x = o.x + 1252.f - valueSize.x;
+    dl->AddText(UiFonts::Mono, 12.f, ImVec2(x, o.y + 681.f), UiCol::Sub, value);
+    ImVec2 labelSize = CalcTrackedTextSize(UiFonts::Semi, 10.f, "SESSION", 1.5f);
+    AddTrackedText(dl, UiFonts::Semi, 10.f, ImVec2(x - 12.f - labelSize.x, o.y + 683.f), UiCol::Mute, "SESSION", 1.5f);
+}
+
+void MainWindow::DrawProfilesPopup(const ImVec2& o)
+{
+    ImGui::SetNextWindowPos(ImVec2(o.x + 28.f, o.y + 116.f));
+    ImGui::SetNextWindowSize(ImVec2(260.f, 0.f));
+    if (!ImGui::BeginPopup("##profiles")) return;
+
+    static char s_newName[64] = {0};
+    static bool s_creating = false;
+    static bool s_focusName = false;
+    static std::string s_armedDelete;
+    if (ImGui::IsWindowAppearing()) {
+        s_newName[0] = '\0';
+        s_creating = false;
+        s_armedDelete.clear();
+    }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    auto editing = sApp.EditingProfile();
+    const char* pendingDelete = NULL;
+    int idx = 0;
+    for (const std::shared_ptr<Profile>& item : sApp.GetProfiles()) {
+        ImGui::PushID(idx++);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        bool selected = item == editing;
+        if (ImGui::Selectable("##prow", selected, 0, ImVec2(200.f, 24.f))) sApp.EditingProfile(item->name.c_str());
+        dl->AddText(UiFonts::Semi, 15.f, ImVec2(p.x + 8.f, p.y + 4.f), selected ? UiCol::SpamText : UiCol::Text,
+                    item->name.c_str());
+        char count[16];
+        snprintf(count, sizeof(count), "%d", (int)item->apps.size());
+        ImVec2 countSize = UiFonts::Mono->CalcTextSizeA(11.f, FLT_MAX, 0.f, count);
+        dl->AddText(UiFonts::Mono, 11.f, ImVec2(p.x + 200.f - countSize.x - 8.f, p.y + 6.f), UiCol::Mute, count);
+
+        bool armed = s_armedDelete == item->name;
+        if (UiGhostButton("##del", ImVec2(p.x + 208.f, p.y), 24.f, UiGlyph_Close)) {
+            if (armed)
+                pendingDelete = item->name.c_str();
+            else
+                s_armedDelete = item->name;
+        }
+        if (armed) dl->AddRect(ImVec2(p.x + 208.f, p.y), ImVec2(p.x + 232.f, p.y + 24.f), UiCol::Danger, 6.f);
+        ImGui::PopID();
+    }
+    if (idx) ImGui::Separator();
+
+    if (!s_creating) {
+        if (UiMenuRow("+  NEW PROFILE", 0, false, true)) {
+            s_creating = true;
+            s_focusName = true;
+        }
+    } else {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (s_focusName) {
+            ImGui::SetKeyboardFocusHere();
+            s_focusName = false;
+        }
+        bool enter = ImGui::InputTextWithHint("##newname", "profile name", s_newName, sizeof(s_newName),
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
+        bool valid = strlen(s_newName) >= 3 && !sApp.IsProfileExists(s_newName);
+        if (enter && valid) {
+            sApp.CreateProfile(s_newName);
+            ImGui::CloseCurrentPopup();
+        }
+    }
+
+    if (pendingDelete) sApp.DeleteProfile(pendingDelete);
+    ImGui::EndPopup();
+}
+
+void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile)
+{
+    ImGui::SetNextWindowPos(ImVec2(o.x + 260.f, o.y + 116.f));
+    ImGui::SetNextWindowSize(ImVec2(280.f, 0.f));
+    if (!ImGui::BeginPopup("##appsmenu")) return;
+
+    static std::vector<std::string> s_appList;
+    if (ImGui::IsWindowAppearing()) {
+        s_appList.clear();
+        EnumWindows([this](HWND hwnd) -> BOOL {
+            std::filesystem::path path = GetProcessPath(hwnd);
+            if (!path.has_filename() || path == _appFilePath) return TRUE;
+            std::string fileName = (const char*)path.filename().u8string().c_str();
+            if (std::find(s_appList.begin(), s_appList.end(), fileName) != s_appList.end()) return TRUE;
+            s_appList.emplace_back(std::move(fileName));
+            return TRUE;
+        });
+        LexicographicalSort(s_appList);
+    }
+
+    ImGui::PushFont(UiFonts::Semi, 12.f);
+    if (!profile->apps.empty()) {
+        ImGui::TextDisabled("BOUND");
+        const char* unbindApp = NULL;
+        int idx = 0;
+        for (const std::string& app : profile->apps) {
+            ImGui::PushID(idx++);
+            if (UiMenuRow(app.c_str(), UiCol::Spam, false, true)) unbindApp = app.c_str();
+            ImGui::PopID();
+        }
+        if (unbindApp) sApp.UnbindProfile(profile->name.c_str(), unbindApp);
+        ImGui::Separator();
+    }
+
+    ImGui::TextDisabled("RUNNING");
+    int shown = 0;
+    int idx = 1000;
+    for (const std::string& app : s_appList) {
+        if (std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) continue;
+        auto appProfile = sApp.FindProfileByApp(app.c_str());
+        bool boundElsewhere = appProfile && appProfile != profile;
+        ImGui::PushID(idx++);
+        if (UiMenuRow(app.c_str(), 0, boundElsewhere, true)) sApp.BindProfile(profile->name.c_str(), app.c_str());
+        ImGui::PopID();
+        shown++;
+    }
+    if (!shown) ImGui::TextDisabled("nothing running");
+    ImGui::PopFont();
+
+    ImGui::EndPopup();
+}
+
+void MainWindow::DrawSettingsPopup(const ImVec2& o)
+{
+    ImGui::SetNextWindowPos(ImVec2(o.x + 1252.f, o.y + 52.f), ImGuiCond_Always, ImVec2(1.f, 0.f));
+    ImGui::SetNextWindowSize(ImVec2(230.f, 0.f));
+    if (!ImGui::BeginPopup("##settings")) return;
+
+    static bool s_autoStart = false;
+    if (ImGui::IsWindowAppearing()) s_autoStart = sApp.IsAutoStartEnabled();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(210.f, 28.f));
+    dl->AddText(UiFonts::Semi, 15.f, ImVec2(p.x + 8.f, p.y + 6.f), UiCol::Text, "AUTO START");
+    if (UiToggle("##autostart", ImVec2(p.x + 164.f, p.y + 4.f), s_autoStart)) {
+        if (sApp.EnableAutoStart(!s_autoStart)) s_autoStart = !s_autoStart;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 34.f));
+
+    ImGui::Separator();
+    if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
+    if (UiMenuRow("DISCORD")) LaunchUrl(L"https://discord.gg/NNnBTK5c8e");
+    if (UiMenuRow("AUTHOR")) LaunchUrl(L"https://t.me/boredatom");
+
+    ImGui::EndPopup();
+}
+
+void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsigned popupMods)
+{
+    if (!profile) return;
+    ImGui::SetNextWindowSize(ImVec2(210.f, 0.f));
+    if (!ImGui::BeginPopup("##keymenu")) return;
+
+    ImGui::PushFont(UiFonts::Semi, 12.f);
+    ImGui::TextDisabled("%d SELECTED", (int)_selection.size());
+    ImGui::PopFont();
+    ImGui::Separator();
+
+    Action action = Action_None;
+    bool apply = false;
+    if (UiMenuRow("SPAMMY", UiCol::Spam)) action = Action_Spammy, apply = true;
+    if (UiMenuRow("SPEEDY", UiCol::Speedy)) action = Action_Speedy, apply = true;
+    if (UiMenuRow("DISABLED", UiCol::Danger)) action = Action_Disabled, apply = true;
+    if (UiMenuRow("CLEAR", UiCol::Mute)) action = Action_None, apply = true;
+    if (apply)
+        for (UINT vk : _selection)
+            profile->keys[vk][popupMods].action = action;
+
+    ImGui::Separator();
+    ImGui::PushFont(UiFonts::Semi, 12.f);
+    ImGui::TextDisabled("RATE");
+    ImGui::PopFont();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    int speed = (int)profile->speed;
+    if (ImGui::SliderInt("##rate", &speed, 10, 1000, "%d ms")) profile->speed = (unsigned)speed;
+
+    ImGui::EndPopup();
+}
+
+bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
+{
+    if (Window::HandleWndProc(msg, wParam, lParam, result)) return true;
     switch (msg) {
     case WM_USER_FOCUS: {
-        if (!isShown()) show();
-        focus();
+        if (!IsShown()) Show();
+        Focus();
         return true;
     }
     }

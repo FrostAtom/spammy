@@ -1,6 +1,6 @@
 #pragma once
-#include "Spammy/Headers.h"
-#define sKeyboard Keyboard::instance()
+#include "Headers.h"
+#define sKeyboard Keyboard::Instance()
 #define INPUT_EXTRA_FLAGS_EMULATED 0x80000000
 #define KEYBOARD_KEYS_COUNT (255)
 #define KEYBOARD_KEYMOD_COUNT ((KeyMod_Shift | KeyMod_Alt | KeyMod_Ctrl) + 1)
@@ -27,33 +27,33 @@ private:
 
 public:
     ~Keyboard();
-    static Keyboard& instance();
-    bool atttach();
-    void detach();
+    static Keyboard& Instance();
+    bool Attach();
+    void Detach();
 
     // key total number
-    static constexpr size_t count() { return KEYBOARD_KEYS_COUNT; }
+    static constexpr size_t Count() { return KEYBOARD_KEYS_COUNT; }
     // check for all mods is pressed
-    bool testModifiers(unsigned mods);
+    bool TestModifiers(unsigned mods);
     // get pressed mods mask
-    unsigned testModifiers();
+    unsigned TestModifiers();
     // key is modifier
-    unsigned isModifier(unsigned short vkCode);
+    unsigned IsModifier(unsigned short vkCode);
     // key is pressed
-    DWORD isPressed(unsigned short vkCode);
+    DWORD IsPressed(unsigned short vkCode);
     // send press notification to target HWND
-    void press(HWND hwnd, unsigned short vkCode);
+    void Press(HWND hwnd, unsigned short vkCode);
     // setups callback to key-down event
-    void onPress(Callback_t&& func);
+    void OnPress(Callback_t&& func);
     // setups callback to key-up event
-    void onRelease(Callback_t&& func);
+    void OnRelease(Callback_t&& func);
     // returns key name
-    static const char* geyKeyName(unsigned short vkCode);
+    static const char* GetKeyName(unsigned short vkCode);
 
 private:
     static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
-    void threadProc(std::stop_token stop, std::promise<bool>& ready);
-    void syncState();
-    bool handleDown(unsigned short vkCode);
-    bool handleUp(unsigned short vkCode);
+    void ThreadProc(std::stop_token stop, std::promise<bool>& ready);
+    void SyncState();
+    bool HandleDown(unsigned short vkCode);
+    bool HandleUp(unsigned short vkCode);
 };

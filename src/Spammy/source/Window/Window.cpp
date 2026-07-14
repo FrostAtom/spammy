@@ -1,17 +1,18 @@
-#include "Spammy/Window/Window.h"
-#include "Spammy/Window/Detail/ImFont_ComicSans.h"
+#include "Window/Window.h"
+#include "ImGui.h"
 
-const char* Window::ErrorCodeNames[] = {
+const char* Window::_errorCodeNames[] = {
     "OK", "Invalid call", "Windows error", "Renderer error", "ImGui errror",
 };
 
-const char* Window::formatError(ErrorCode code)
+const char* Window::FormatError(ErrorCode code)
 {
-    return ErrorCodeNames[code];
+    return _errorCodeNames[code];
 }
 
 static const DWORD ImGuiWindowDisableScrollMask = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 static const DWORD ImGuiWindowMenuBarMask = ImGuiWindowFlags_MenuBar;
+static const DWORD ImGuiWindowNoTitleBarMask = ImGuiWindowFlags_NoTitleBar;
 
 Window::Window(const wchar_t* className, const wchar_t* wndName)
     : _icon(NULL),
@@ -23,40 +24,47 @@ Window::Window(const wchar_t* className, const wchar_t* wndName)
       _imWndFlags(ImGuiWindowDisableScrollMask),
       _movable(false),
       _moving(false),
-      _renderBackend(NULL),
+      _d3d(NULL),
+      _d3dDevice(NULL),
       _trayIcon(NULL),
       _position(CW_USEDEFAULT, CW_USEDEFAULT),
       _size(512, 512)
 {
     if (!wndName) wndName = className;
     wcsncpy_s(_className, className, std::size(_className));
-    setName(wndName);
+    SetName(wndName);
+
+    memset(&_d3dParams, NULL, sizeof(_d3dParams));
+    _d3dParams.Windowed = TRUE;
+    _d3dParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    _d3dParams.BackBufferFormat =
+        D3DFMT_UNKNOWN; // Need to use an explicit format with alpha if needing per-pixel alpha composition.
+    _d3dParams.EnableAutoDepthStencil = TRUE;
+    _d3dParams.AutoDepthStencilFormat = D3DFMT_D16;
+    _d3dParams.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE; // Present without vsync
 }
 
 Window::~Window()
 {
-    cleanup();
+    Cleanup();
 }
 
-Window::ErrorCode Window::initialize()
+Window::ErrorCode Window::Initialize()
 {
     if (_hwnd) return ErrorCode_InvalidCall;
 
     _imCtx = ImGui::CreateContext();
     if (!_imCtx) return ErrorCode_ImGuiError;
 
-    if (!createWindow()) {
-        ImGui::DestroyContext(_imCtx);
-        _imCtx = NULL;
+    if (!CreateWnd()) {
+        Cleanup();
         return ErrorCode_WinError;
     }
     UpdateWindow(_hwnd);
     ShowWindow(_hwnd, SW_SHOWDEFAULT);
 
-    if (_renderBackend && !_renderBackend->create(_hwnd)) {
-        cleanupWindow();
-        ImGui::DestroyContext(_imCtx);
-        _imCtx = NULL;
+    if (!CreateDevice()) {
+        Cleanup();
         return ErrorCode_RendererError;
     }
 
@@ -64,74 +72,63 @@ Window::ErrorCode Window::initialize()
     io.ConfigWindowsResizeFromEdges = false;
     io.IniFilename = NULL;
 
-    ImFontConfig fontCfg;
-    fontCfg.PixelSnapH = true;
-    io.Fonts->AddFontFromMemoryCompressedTTF(ComicSans_compressed_data, ComicSans_compressed_size, 14.f, &fontCfg,
-                                             io.Fonts->GetGlyphRangesCyrillic());
-    io.Fonts->Build();
+    ImGui::LoadUiFonts();
 
-    if (_trayIcon) _trayIcon->create(_hwnd, _icon);
+    if (_trayIcon) _trayIcon->Create(_hwnd, _icon);
 
     return ErrorCode_OK;
 }
 
-void Window::setRenderBackend(WindowRenderer* renderer)
-{
-    if (_renderBackend) delete _renderBackend;
-    _renderBackend = renderer;
-    if (_hwnd && renderer) renderer->create(_hwnd);
-}
-
-void Window::setTrayIcon(TrayIcon* icon)
+void Window::SetTrayIcon(TrayIcon* icon)
 {
     if (_trayIcon) {
         delete _trayIcon;
     }
     _trayIcon = icon;
-    if (_hwnd) _trayIcon->create(_hwnd, _icon);
+    if (_hwnd) _trayIcon->Create(_hwnd, _icon);
 }
 
-void Window::cleanup()
+void Window::Cleanup()
 {
     if (_trayIcon) {
         delete _trayIcon;
         _trayIcon = NULL;
     }
-    if (_renderBackend) {
-        delete _renderBackend;
-        _renderBackend = NULL;
-    };
-    cleanupWindow();
-    if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
+    CleanupDevice();
+    CleanupWnd();
+    if (_imCtx) {
+        ImGui::DestroyContext(_imCtx);
+        _imCtx = NULL;
+    }
 }
 
-void Window::close()
+void Window::Close()
 {
     _mustQuit = true;
 }
 
-void Window::setIcon(HICON icon)
+void Window::SetIcon(HICON icon)
 {
     _icon = icon;
     if (_hwnd) {
         SendMessageW(_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)_icon);
         SendMessageW(_hwnd, WM_SETICON, ICON_BIG, (LPARAM)_icon);
-        if (_trayIcon) _trayIcon->updateIcon(_icon);
+        if (_trayIcon) _trayIcon->UpdateIcon(_icon);
     }
 }
 
-void Window::setIcon(unsigned id)
+void Window::SetIcon(unsigned id)
 {
     HICON icon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(id));
-    setIcon(icon);
+    SetIcon(icon);
 }
 
-bool Window::mustQuit()
+bool Window::MustQuit()
 {
     return _mustQuit;
 }
 
-bool Window::wantQuit()
+bool Window::WantQuit()
 {
     if (_wantQuit) {
         _wantQuit = false;
@@ -140,7 +137,7 @@ bool Window::wantQuit()
     return false;
 }
 
-void Window::focus()
+void Window::Focus()
 {
     if (_hwnd) SetForegroundWindow(_hwnd);
 }
@@ -152,37 +149,37 @@ static int GetShowCmd(HWND hwnd)
     return wPos.showCmd;
 }
 
-bool Window::isMaximized()
+bool Window::IsWndMaximized()
 {
     if (!_hwnd) return false;
     int cmd = GetShowCmd(_hwnd);
     return cmd == SW_MAXIMIZE;
 }
 
-bool Window::isNormalized()
+bool Window::IsWndNormalized()
 {
     if (!_hwnd) return false;
     int cmd = GetShowCmd(_hwnd);
     return cmd == SW_NORMAL;
 }
 
-void Window::show()
+void Window::Show()
 {
     if (_hwnd) ShowWindow(_hwnd, SW_SHOWNORMAL);
 }
 
-void Window::hide()
+void Window::Hide()
 {
     if (_hwnd) ShowWindow(_hwnd, SW_HIDE);
 }
 
-bool Window::isShown()
+bool Window::IsShown()
 {
     if (!_hwnd) return false;
     return (bool)(GetWindowStyle(_hwnd) & WS_VISIBLE);
 }
 
-void Window::setName(const wchar_t* name)
+void Window::SetName(const wchar_t* name)
 {
     wcsncpy_s(_wndName, name, std::size(_wndName));
     std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
@@ -190,54 +187,54 @@ void Window::setName(const wchar_t* name)
     if (_hwnd) SetWindowTextW(_hwnd, name);
 }
 
-Window::Vec2D<size_t> Window::getSize()
+Window::Vec2D<size_t> Window::GetSize()
 {
     return _size;
 }
 
-void Window::setSize(const Vec2D<size_t>& size)
+void Window::SetSize(const Vec2D<size_t>& size)
 {
     _size = size;
     if (_hwnd) MoveWindow(_hwnd, _position.x, _position.y, _size.x, _size.y, FALSE);
 }
 
-void Window::setPosition(const Vec2D<size_t>& position)
+void Window::SetPosition(const Vec2D<size_t>& position)
 {
     _position = position;
     if (_hwnd) MoveWindow(_hwnd, _position.x, _position.y, _size.x, _size.y, FALSE);
 }
 
-void Window::resetPosition()
+void Window::ResetPosition()
 {
-    Vec2D<size_t> pos = getScreenSize();
+    Vec2D<size_t> pos = GetScreenSize();
     pos.x -= _size.x;
     pos.y -= _size.y;
     pos.x /= 2;
     pos.y /= 2;
-    setPosition(pos);
+    SetPosition(pos);
 }
 
-Window::Vec2D<size_t> Window::getScreenSize()
+Window::Vec2D<size_t> Window::GetScreenSize()
 {
     RECT rect;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &rect, 0);
     return {size_t(rect.right - rect.left), size_t(rect.bottom - rect.top)};
 }
 
-void Window::enableMoving(bool state)
+void Window::EnableMoving(bool state)
 {
     _movable = state;
 }
 
-void Window::update()
+void Window::Update()
 {
-    if (isReady()) {
-        if (Window::beginFrame()) draw();
-        Window::endFrame();
+    if (IsReady()) {
+        if (Window::BeginFrame()) Draw();
+        Window::EndFrame();
     }
 }
 
-void Window::enableMenuBar(bool state)
+void Window::EnableMenuBar(bool state)
 {
     if (state)
         _imWndFlags |= ImGuiWindowMenuBarMask;
@@ -245,19 +242,27 @@ void Window::enableMenuBar(bool state)
         _imWndFlags &= ~ImGuiWindowMenuBarMask;
 }
 
-HWND Window::native()
+void Window::EnableTitleBar(bool state)
+{
+    if (state)
+        _imWndFlags &= ~ImGuiWindowNoTitleBarMask;
+    else
+        _imWndFlags |= ImGuiWindowNoTitleBarMask;
+}
+
+HWND Window::Native()
 {
     return _hwnd;
 }
 
-bool Window::isReady()
+bool Window::IsReady()
 {
-    return _hwnd && _renderBackend && _renderBackend->isCreated();
+    return _hwnd && _d3dDevice;
 }
 
-bool Window::beginFrame()
+bool Window::BeginFrame()
 {
-    _renderBackend->beginFrame();
+    ImGui_ImplDX9_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
     bool isShown = true;
@@ -270,33 +275,33 @@ bool Window::beginFrame()
 
     ImGuiContext* ctx = ImGui::GetCurrentContext();
     if (ctx->CurrentWindow && ctx->MovingWindow == ctx->CurrentWindow)
-        startMove();
+        StartMove();
     else
-        stopMove();
+        StopMove();
 
     if (!isShown) PostMessageW(_hwnd, WM_QUIT, NULL, NULL);
     return result;
 }
 
-void Window::endFrame()
+void Window::EndFrame()
 {
     ImGui::End();
     ImGui::EndFrame();
-    _renderBackend->render();
+    Render();
 }
 
-bool Window::createWindow()
+bool Window::CreateWnd()
 {
     WNDCLASSEXW wc = {sizeof(WNDCLASSEXW), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandleW(NULL), NULL, NULL, NULL, NULL,
                       _className,          NULL};
     _atom = RegisterClassExW(&wc);
     if (!_atom) return false;
 
-    DWORD dwStyle = WS_VISIBLE | WS_POPUP;
+    DWORD dwStyle = WS_VISIBLE | WS_POPUP | WS_THICKFRAME;
     _hwnd = CreateWindowExW(0, wc.lpszClassName, _wndName, dwStyle, _position.x, _position.y, _size.x, _size.y, NULL,
                             NULL, wc.hInstance, this);
     if (!_hwnd) {
-        cleanupWindow();
+        CleanupWnd();
         return false;
     }
     if (_icon) {
@@ -304,14 +309,17 @@ bool Window::createWindow()
         SendMessageW(_hwnd, WM_SETICON, ICON_BIG, (LPARAM)_icon);
     }
 
+    MARGINS shadowMargins = {1, 1, 1, 1};
+    DwmExtendFrameIntoClientArea(_hwnd, &shadowMargins);
+
     ImGui_ImplWin32_Init(_hwnd);
     return true;
 }
 
-void Window::cleanupWindow()
+void Window::CleanupWnd()
 {
-    if (ImGui::GetCurrentContext() && ImGui::GetIO().BackendPlatformUserData) ImGui_ImplWin32_Shutdown();
     if (_hwnd) {
+        ImGui_ImplWin32_Shutdown();
         DestroyWindow(_hwnd);
         _hwnd = NULL;
     }
@@ -321,7 +329,60 @@ void Window::cleanupWindow()
     }
 }
 
-void Window::startMove()
+bool Window::CreateDevice()
+{
+    _d3d = Direct3DCreate9(D3D_SDK_VERSION);
+    if (!_d3d) return false;
+
+    HRESULT hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, D3DCREATE_HARDWARE_VERTEXPROCESSING,
+                                      &_d3dParams, &_d3dDevice);
+    if (hRes < 0) {
+        _d3d->Release();
+        _d3d = NULL;
+        return false;
+    }
+    ImGui_ImplDX9_Init(_d3dDevice);
+    return true;
+}
+
+void Window::CleanupDevice()
+{
+    if (_d3dDevice) {
+        ImGui_ImplDX9_Shutdown();
+        _d3dDevice->Release();
+        _d3dDevice = NULL;
+    }
+    if (_d3d) {
+        _d3d->Release();
+        _d3d = NULL;
+    }
+}
+
+void Window::ResetDevice()
+{
+    if (!_d3dDevice) return;
+    ImGui_ImplDX9_InvalidateDeviceObjects();
+    _d3dDevice->Reset(&_d3dParams);
+    ImGui_ImplDX9_CreateDeviceObjects();
+}
+
+void Window::Render()
+{
+    _d3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+    _d3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    _d3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+    D3DCOLOR clearCol = D3DCOLOR_RGBA(10, 13, 19, 255);
+    _d3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, clearCol, 1.0f, 0);
+    if (_d3dDevice->BeginScene() >= 0) {
+        ImGui::Render();
+        ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+        _d3dDevice->EndScene();
+    }
+    HRESULT result = _d3dDevice->Present(NULL, NULL, NULL, NULL);
+    if (result == D3DERR_DEVICELOST && _d3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET) ResetDevice();
+}
+
+void Window::StartMove()
 {
     if (!_movable || _moving) return;
     POINT point;
@@ -332,16 +393,16 @@ void Window::startMove()
     _moving = true;
 }
 
-void Window::stopMove()
+void Window::StopMove()
 {
     if (!_moving) return;
     _moving = false;
 }
 
-void Window::updateMove()
+void Window::UpdateMove()
 {
     if (!_moving) return;
-    if (!_movable) return stopMove();
+    if (!_movable) return StopMove();
     POINT cursorPos;
     GetCursorPos(&cursorPos);
     RECT rect;
@@ -354,50 +415,40 @@ void Window::updateMove()
 }
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-bool Window::handleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
+bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
 {
     *result = 0;
     if (*result = ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam)) return true;
-    if (_trayIcon && _trayIcon->handleMessage(msg, wParam, lParam)) return true;
+    if (_trayIcon && _trayIcon->HandleMessage(msg, wParam, lParam)) return true;
 
     switch (msg) {
     case WM_CLOSE: _wantQuit = true; return true;
     case WM_ENDSESSION: _mustQuit = true; return true;
     case WM_SIZING:
-        update();
+        Update();
         *result = TRUE;
         return true;
     case WM_MOVE: _position = {LOWORD(lParam), HIWORD(lParam)}; return true;
     case WM_SIZE:
         _size = {LOWORD(lParam), HIWORD(lParam)};
-        if (wParam != SIZE_MINIMIZED && _renderBackend) _renderBackend->setSize(_size.x, _size.y);
+        if (wParam != SIZE_MINIMIZED && _d3dDevice) {
+            _d3dParams.BackBufferWidth = _size.x;
+            _d3dParams.BackBufferHeight = _size.y;
+            ResetDevice();
+        }
         return true;
     case WM_MOUSEMOVE: {
-        if (wParam & MK_LBUTTON) updateMove();
+        if (wParam & MK_LBUTTON) UpdateMove();
         return true;
     }
     case WM_SYSCOMMAND:
         if ((wParam & 0xfff0) == SC_KEYMENU) return true;
         break;
     case WM_NCACTIVATE: *result = DefWindowProcW(_hwnd, msg, wParam, -1); return true;
-    case WM_NCCALCSIZE: {
-        if (wParam) {
-            if (!isMaximized()) {
-                RECT borderThickness;
-                SetRectEmpty(&borderThickness);
-                AdjustWindowRectEx(&borderThickness, GetWindowLongPtr(_hwnd, GWL_STYLE) & ~WS_CAPTION, FALSE, NULL);
-                borderThickness.left *= -1;
-                borderThickness.top *= -1;
-                NCCALCSIZE_PARAMS* sz = (NCCALCSIZE_PARAMS*)lParam;
-                sz->rgrc[0].top += borderThickness.top;
-                sz->rgrc[0].left += borderThickness.left;
-                sz->rgrc[0].right -= borderThickness.right;
-                sz->rgrc[0].bottom -= borderThickness.bottom;
-                return true;
-            }
-        }
+    case WM_NCCALCSIZE:
+        if (wParam && !IsWndMaximized()) return true;
         break;
-    }
+    case WM_NCHITTEST: *result = HTCLIENT; return true;
     }
     return false;
 }
@@ -415,6 +466,6 @@ LRESULT __stdcall Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     }
 
     LRESULT result;
-    if (self && self->handleWndProc(msg, wParam, lParam, &result)) return result;
+    if (self && self->HandleWndProc(msg, wParam, lParam, &result)) return result;
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }

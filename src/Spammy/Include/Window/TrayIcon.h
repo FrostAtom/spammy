@@ -1,5 +1,5 @@
 #pragma once
-#include "Spammy/Headers.h"
+#include "Headers.h"
 #ifndef WM_TRAYCMD
 #define WM_TRAYCMD (WM_APP + 0x10)
 #endif
@@ -20,16 +20,16 @@ public:
     TrayIconMenu();
     ~TrayIconMenu();
 
-    void button(const wchar_t* text, Callback_t&& cb);
-    void toggle(const wchar_t* text, bool state, Callback_t&& cb);
-    void disabled(const wchar_t* text);
+    void Button(const wchar_t* text, Callback_t&& cb);
+    void Toggle(const wchar_t* text, bool state, Callback_t&& cb);
+    void Disabled(const wchar_t* text);
 
 private:
-    int append(UINT flags, LPCWSTR newItem);
-    void fire(UINT id);
-    bool create(HWND hwnd);
-    void track(int x, int y);
-    void cleanup();
+    int Append(UINT flags, LPCWSTR newItem);
+    void Fire(UINT id);
+    bool Create(HWND hwnd);
+    void Track(int x, int y);
+    void Cleanup();
 };
 
 class Window;
@@ -50,17 +50,17 @@ private:
 public:
     TrayIcon();
     ~TrayIcon();
-    void setTip(const wchar_t* tip);
+    void SetTip(const wchar_t* tip);
 
-    void setOnClick(ClickCallback_t&& func);
-    void setMenu(MenuCallback_t&& func);
-    void showMenu(int x, int y);
+    void SetOnClick(ClickCallback_t&& func);
+    void SetMenu(MenuCallback_t&& func);
+    void ShowMenu(int x, int y);
 
 private:
-    void updateIcon(HICON icon);
-    bool handleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
-    bool create(HWND hwnd, HICON icon);
-    void cleanup();
-    bool update(DWORD dwMessage);
-    void reset();
+    void UpdateIcon(HICON icon);
+    bool HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
+    bool Create(HWND hwnd, HICON icon);
+    void Cleanup();
+    bool Update(DWORD dwMessage);
+    void Reset();
 };

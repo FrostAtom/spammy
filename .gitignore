@@ -1,4 +1,6 @@
 build
 .vs
 out
-CMakeSettings.json*.aps
+CMakeSettings.json
+*.aps
+RC[ab]*

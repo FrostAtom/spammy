@@ -1,5 +1,5 @@
 #pragma once
-#include "Spammy/Headers.h"
+#include "Headers.h"
 
 void LaunchUrl(const wchar_t* url);
 

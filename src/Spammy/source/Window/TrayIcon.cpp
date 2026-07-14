@@ -1,18 +1,18 @@
-#include "Spammy/Window/TrayIcon.h"
+#include "Window/TrayIcon.h"
 
 TrayIconMenu::TrayIconMenu() : _hwnd(NULL), _menu(NULL), _count(0) {}
 TrayIconMenu::~TrayIconMenu()
 {
-    if (_hwnd) cleanup();
+    if (_hwnd) Cleanup();
 }
 
-bool TrayIconMenu::create(HWND hwnd)
+bool TrayIconMenu::Create(HWND hwnd)
 {
     _hwnd = hwnd;
     return (_menu = CreatePopupMenu());
 }
 
-void TrayIconMenu::cleanup()
+void TrayIconMenu::Cleanup()
 {
     DestroyMenu(_menu);
     _menu = NULL;
@@ -20,14 +20,14 @@ void TrayIconMenu::cleanup()
     _count = 0;
 }
 
-void TrayIconMenu::track(int x, int y)
+void TrayIconMenu::Track(int x, int y)
 {
     SetForegroundWindow(_hwnd);
     UINT uFlags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN;
     TrackPopupMenuEx(_menu, uFlags, x, y, _hwnd, NULL);
 }
 
-int TrayIconMenu::append(UINT flags, LPCWSTR newItem)
+int TrayIconMenu::Append(UINT flags, LPCWSTR newItem)
 {
     UINT id = _count++;
     if (id >= std::size(_funcs)) return -1;
@@ -35,71 +35,71 @@ int TrayIconMenu::append(UINT flags, LPCWSTR newItem)
     return id;
 }
 
-void TrayIconMenu::fire(UINT id)
+void TrayIconMenu::Fire(UINT id)
 {
     if (id > std::size(_funcs)) return;
     Callback_t& func = _funcs[id];
     if (func) func();
 }
 
-void TrayIconMenu::button(const wchar_t* text, Callback_t&& cb)
+void TrayIconMenu::Button(const wchar_t* text, Callback_t&& cb)
 {
-    int idx = append(MF_STRING, text);
+    int idx = Append(MF_STRING, text);
     if (idx >= 0) _funcs[idx] = std::forward<Callback_t>(cb);
 }
 
-void TrayIconMenu::toggle(const wchar_t* text, bool state, Callback_t&& cb)
+void TrayIconMenu::Toggle(const wchar_t* text, bool state, Callback_t&& cb)
 {
     UINT flags = MF_STRING;
     if (state) flags |= MF_CHECKED;
-    int idx = append(flags, text);
+    int idx = Append(flags, text);
     if (idx >= 0) _funcs[idx] = std::forward<Callback_t>(cb);
 }
 
-void TrayIconMenu::disabled(const wchar_t* text)
+void TrayIconMenu::Disabled(const wchar_t* text)
 {
-    append(MF_STRING | MF_GRAYED, text);
+    Append(MF_STRING | MF_GRAYED, text);
 }
 
 UINT TrayIcon::s_idCounter = 0;
 
 TrayIcon::TrayIcon()
 {
-    reset();
+    Reset();
 }
 
 TrayIcon::~TrayIcon()
 {
-    if (_data.uID) cleanup();
+    if (_data.uID) Cleanup();
 }
 
-void TrayIcon::setTip(const wchar_t* tip)
+void TrayIcon::SetTip(const wchar_t* tip)
 {
     wcsncpy(_data.szTip, tip, std::size(_data.szTip));
     _data.uFlags |= (NIF_TIP | NIF_SHOWTIP);
-    if (_data.uID) update(NIM_MODIFY);
+    if (_data.uID) Update(NIM_MODIFY);
 }
 
-void TrayIcon::setOnClick(ClickCallback_t&& func)
+void TrayIcon::SetOnClick(ClickCallback_t&& func)
 {
     _clickFunc = std::forward<ClickCallback_t>(func);
 }
 
-void TrayIcon::setMenu(MenuCallback_t&& func)
+void TrayIcon::SetMenu(MenuCallback_t&& func)
 {
     _menuFunc = std::forward<MenuCallback_t>(func);
 }
 
-void TrayIcon::showMenu(int x, int y)
+void TrayIcon::ShowMenu(int x, int y)
 {
     if (!_menuFunc) return;
-    if (!_menu.create(_data.hWnd)) return;
+    if (!_menu.Create(_data.hWnd)) return;
     _menuFunc(_menu);
-    _menu.track(x, y);
-    _menu.cleanup();
+    _menu.Track(x, y);
+    _menu.Cleanup();
 }
 
-void TrayIcon::updateIcon(HICON icon)
+void TrayIcon::UpdateIcon(HICON icon)
 {
     if (!_data.uID) return;
     _data.hIcon = icon;
@@ -107,10 +107,10 @@ void TrayIcon::updateIcon(HICON icon)
         _data.uFlags |= NIF_ICON;
     else
         _data.uFlags &= ~NIF_ICON;
-    update(NIM_MODIFY);
+    Update(NIM_MODIFY);
 }
 
-bool TrayIcon::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
+bool TrayIcon::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg) {
     case WM_TRAYCMD: {
@@ -122,7 +122,7 @@ bool TrayIcon::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
             return true;
         }
         case WM_CONTEXTMENU: {
-            showMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam));
+            ShowMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam));
             return true;
         }
         }
@@ -130,7 +130,7 @@ bool TrayIcon::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_COMMAND: {
         if (HIWORD(wParam) == 0) {
-            _menu.fire(LOWORD(wParam));
+            _menu.Fire(LOWORD(wParam));
             return true;
         }
         break;
@@ -139,33 +139,33 @@ bool TrayIcon::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
     return false;
 }
 
-bool TrayIcon::create(HWND hwnd, HICON icon)
+bool TrayIcon::Create(HWND hwnd, HICON icon)
 {
     if (_data.hWnd) return false;
     _data.hWnd = hwnd;
     _data.hIcon = icon;
     _data.uFlags |= NIF_ICON;
-    bool added = update(NIM_ADD);
-    if (!added || !update(NIM_SETVERSION)) {
-        if (added) update(NIM_DELETE);
+    bool added = Update(NIM_ADD);
+    if (!added || !Update(NIM_SETVERSION)) {
+        if (added) Update(NIM_DELETE);
         return false;
     }
     return true;
 }
 
-bool TrayIcon::update(DWORD dwMessage)
+bool TrayIcon::Update(DWORD dwMessage)
 {
     return Shell_NotifyIconW(dwMessage, &_data);
 }
 
-void TrayIcon::cleanup()
+void TrayIcon::Cleanup()
 {
     if (!_data.uID) return;
-    update(NIM_DELETE);
-    reset();
+    Update(NIM_DELETE);
+    Reset();
 }
 
-void TrayIcon::reset()
+void TrayIcon::Reset()
 {
     memset(&_data, NULL, sizeof(_data));
     _data.cbSize = sizeof(_data);

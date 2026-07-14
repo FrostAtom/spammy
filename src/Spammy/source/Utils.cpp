@@ -1,4 +1,4 @@
-#include "Spammy/Utils.h"
+#include "Utils.h"
 
 void LaunchUrl(const wchar_t* url)
 {

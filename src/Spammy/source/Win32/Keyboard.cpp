@@ -1,4 +1,4 @@
-#include "Spammy/Win32/Keyboard.h"
+#include "Win32/Keyboard.h"
 
 Keyboard::Keyboard() : _hhook(NULL), _threadId(0)
 {
@@ -7,25 +7,25 @@ Keyboard::Keyboard() : _hhook(NULL), _threadId(0)
 
 Keyboard::~Keyboard()
 {
-    detach();
+    Detach();
 }
 
-Keyboard& Keyboard::instance()
+Keyboard& Keyboard::Instance()
 {
     static std::unique_ptr<Keyboard> keyboard(new Keyboard());
     return *keyboard;
 }
 
-bool Keyboard::atttach()
+bool Keyboard::Attach()
 {
     if (_thread.joinable()) return _hhook != NULL;
     std::promise<bool> ready;
     std::future<bool> result = ready.get_future();
-    _thread = std::jthread([this, &ready](std::stop_token stop) { threadProc(stop, ready); });
+    _thread = std::jthread([this, &ready](std::stop_token stop) { ThreadProc(stop, ready); });
     return result.get();
 }
 
-void Keyboard::detach()
+void Keyboard::Detach()
 {
     if (!_thread.joinable()) return;
     _thread.request_stop();
@@ -34,26 +34,26 @@ void Keyboard::detach()
     _state.fill(0);
 }
 
-void Keyboard::syncState()
+void Keyboard::SyncState()
 {
     DWORD now = GetTickCount();
     for (unsigned short vkCode = 1; vkCode < _state.size(); ++vkCode)
         _state[vkCode] = (GetAsyncKeyState(vkCode) & 0x8000) ? now : 0;
 }
 
-void Keyboard::threadProc(std::stop_token stop, std::promise<bool>& ready)
+void Keyboard::ThreadProc(std::stop_token stop, std::promise<bool>& ready)
 {
     _threadId = GetCurrentThreadId();
-    // force message-queue creation so detach's WM_QUIT can never race ahead of it
+    // force message-queue creation so Detach's WM_QUIT can never race ahead of it
     MSG msg;
     PeekMessageW(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
 
     _hhook = SetWindowsHookExW(WH_KEYBOARD_LL, &LowLevelKeyboardProc, NULL, 0);
-    if (_hhook) syncState();
+    if (_hhook) SyncState();
     ready.set_value(_hhook != NULL);
     if (!_hhook) return;
 
-    // wakes the blocking GetMessage the instant detach() requests a stop
+    // wakes the blocking GetMessage the instant Detach() requests a stop
     std::stop_callback onStop(stop, [id = _threadId]() { PostThreadMessageW(id, WM_QUIT, 0, 0); });
 
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
@@ -65,13 +65,13 @@ void Keyboard::threadProc(std::stop_token stop, std::promise<bool>& ready)
     _hhook = NULL;
 }
 
-bool Keyboard::testModifiers(unsigned mods)
+bool Keyboard::TestModifiers(unsigned mods)
 {
-    DWORD _mods = testModifiers();
+    DWORD _mods = TestModifiers();
     return (_mods & mods) == mods;
 }
 
-unsigned Keyboard::testModifiers()
+unsigned Keyboard::TestModifiers()
 {
     DWORD result = KeyMod_None;
     if (_state[VK_LSHIFT] || _state[VK_RSHIFT] || _state[VK_SHIFT]) result |= KeyMod_Shift;
@@ -80,7 +80,7 @@ unsigned Keyboard::testModifiers()
     return result;
 }
 
-unsigned Keyboard::isModifier(unsigned short vkCode)
+unsigned Keyboard::IsModifier(unsigned short vkCode)
 {
     switch (vkCode) {
     case VK_LMENU:
@@ -96,29 +96,29 @@ unsigned Keyboard::isModifier(unsigned short vkCode)
     return KeyMod_None;
 }
 
-DWORD Keyboard::isPressed(unsigned short vkCode)
+DWORD Keyboard::IsPressed(unsigned short vkCode)
 {
     return _state[vkCode];
 }
 
-void Keyboard::press(HWND hwnd, unsigned short vkCode)
+void Keyboard::Press(HWND hwnd, unsigned short vkCode)
 {
     UINT scCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX);
     keybd_event(vkCode, scCode, 0, INPUT_EXTRA_FLAGS_EMULATED);
     keybd_event(vkCode, scCode, KEYEVENTF_KEYUP, INPUT_EXTRA_FLAGS_EMULATED);
 }
 
-void Keyboard::onPress(Callback_t&& func)
+void Keyboard::OnPress(Callback_t&& func)
 {
     _onPress = std::forward<Callback_t>(func);
 }
 
-void Keyboard::onRelease(Callback_t&& func)
+void Keyboard::OnRelease(Callback_t&& func)
 {
     _onRelease = std::forward<Callback_t>(func);
 }
 
-const char* Keyboard::geyKeyName(unsigned short vkCode)
+const char* Keyboard::GetKeyName(unsigned short vkCode)
 {
     static char buf[64] = {0};
     GetKeyNameTextA(MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC) << 16, buf, std::size(buf));
@@ -127,7 +127,7 @@ const char* Keyboard::geyKeyName(unsigned short vkCode)
 
 LRESULT CALLBACK Keyboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
-    Keyboard& self = Keyboard::instance();
+    Keyboard& self = Keyboard::Instance();
     if (nCode == HC_ACTION) {
         LPKBDLLHOOKSTRUCT data = (LPKBDLLHOOKSTRUCT)lParam;
         bool isEmulated = (data->dwExtraInfo & INPUT_EXTRA_FLAGS_EMULATED) != 0;
@@ -135,12 +135,12 @@ LRESULT CALLBACK Keyboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM
             switch (wParam) {
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN: {
-                if (self.handleDown(data->vkCode)) return 1;
+                if (self.HandleDown(data->vkCode)) return 1;
                 break;
             }
             case WM_KEYUP:
             case WM_SYSKEYUP: {
-                if (self.handleUp(data->vkCode)) return 1;
+                if (self.HandleUp(data->vkCode)) return 1;
                 break;
             }
             }
@@ -149,9 +149,9 @@ LRESULT CALLBACK Keyboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM
     return CallNextHookEx(self._hhook, nCode, wParam, lParam);
 }
 
-bool Keyboard::handleDown(unsigned short vkCode)
+bool Keyboard::HandleDown(unsigned short vkCode)
 {
-    if (isModifier(vkCode)) {
+    if (IsModifier(vkCode)) {
         _state[vkCode] = GetTickCount();
         return false;
     }
@@ -160,9 +160,9 @@ bool Keyboard::handleDown(unsigned short vkCode)
     return _onPress && _onPress(vkCode, repeat);
 }
 
-bool Keyboard::handleUp(unsigned short vkCode)
+bool Keyboard::HandleUp(unsigned short vkCode)
 {
-    if (isModifier(vkCode)) {
+    if (IsModifier(vkCode)) {
         _state[vkCode] = 0;
         return false;
     }
