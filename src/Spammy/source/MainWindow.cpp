@@ -233,9 +233,10 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
                            start.y + (avail.y - (keySize * gridH - gap)) * .5f};
 
     static unsigned s_popupMods = 0;
-    static int s_brushButton = -1;
     static UINT s_pressVk = 0;
+    static UINT s_rightVk = 0;
     static bool s_pressInPanel = false;
+    static bool s_rightInPanel = false;
     static bool s_pressOnKey = false;
     static bool s_brushErase = false;
     static bool s_brushMoved = false;
@@ -243,21 +244,23 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const bool anyPopup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     const ImGuiWindow* hoveredWnd = GImGui->HoveredWindow;
     const bool overPopup = anyPopup && hoveredWnd && (hoveredWnd->Flags & ImGuiWindowFlags_Popup);
-    for (int btn = ImGuiMouseButton_Left; btn <= ImGuiMouseButton_Right; btn++) {
-        if (!ImGui::IsMouseClicked((ImGuiMouseButton)btn)) continue;
-        if (overPopup) continue;
-        if (btn == ImGuiMouseButton_Left && anyPopup) continue;
-        s_brushButton = btn;
-        s_pressInPanel = ImGui::IsMouseHoveringRect(panelMin, panelMax);
+    static bool s_leftDismiss = false;
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        s_leftDismiss = anyPopup;
+        s_pressInPanel = !overPopup && ImGui::IsMouseHoveringRect(panelMin, panelMax);
         s_pressOnKey = false;
         s_pressVk = 0;
         s_brushErase = false;
         s_brushMoved = false;
     }
-    const bool brushing =
-        s_brushButton >= 0 && s_pressInPanel && ImGui::IsMouseDragging((ImGuiMouseButton)s_brushButton, 4.f);
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        s_rightInPanel = !overPopup && ImGui::IsMouseHoveringRect(panelMin, panelMax);
+        s_rightVk = 0;
+    }
+    const bool brushing = s_pressInPanel && !s_leftDismiss && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.f);
     if (brushing) s_brushMoved = true;
-    const bool released = s_brushButton >= 0 && ImGui::IsMouseReleased((ImGuiMouseButton)s_brushButton);
+    const bool releasedLeft = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    const bool releasedRight = ImGui::IsMouseReleased(ImGuiMouseButton_Right);
 
     unsigned mods = sKeyboard.TestModifiers();
     for (size_t i = 0; i < std::size(KeyboardLayout); i++) {
@@ -296,8 +299,7 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
         const ImVec2 keyMax = ImGui::GetItemRectMax();
 
         const bool hoverKey = ImGui::IsMouseHoveringRect(keyMin, keyMax);
-        const bool pressedHere =
-            s_brushButton >= 0 && s_pressInPanel && ImGui::IsMouseClicked((ImGuiMouseButton)s_brushButton) && hoverKey;
+        const bool pressedHere = s_pressInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoverKey;
         if (pressedHere) {
             s_pressOnKey = true;
             s_pressVk = key.vkCode;
@@ -313,23 +315,29 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
                     _selection.insert(key.vkCode);
             }
 
-            if (released && !s_brushMoved && hoverKey && s_pressVk == key.vkCode) {
+            if (releasedLeft && !s_leftDismiss && !s_brushMoved && hoverKey && s_pressVk == key.vkCode) {
                 if (_selection.count(key.vkCode))
                     _selection.erase(key.vkCode);
                 else
                     _selection.insert(key.vkCode);
             }
+
+            if (s_rightInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverKey) s_rightVk = key.vkCode;
+
+            if (releasedRight && hoverKey && s_rightVk == key.vkCode) {
+                if (!_selection.count(key.vkCode)) {
+                    _selection.clear();
+                    _selection.insert(key.vkCode);
+                }
+                s_popupMods = mods;
+                ImGui::OpenPopup("##keymenu");
+                s_rightVk = 0;
+            }
         }
     }
 
-    if (released) {
-        if (s_pressInPanel && !s_pressOnKey && !s_brushMoved) _selection.clear();
-        if (s_brushButton == ImGuiMouseButton_Right && s_pressInPanel && !_selection.empty()) {
-            s_popupMods = mods;
-            ImGui::OpenPopup("##keymenu");
-        }
-        s_brushButton = -1;
-    }
+    if (releasedLeft && s_pressInPanel && !s_pressOnKey && !s_brushMoved) _selection.clear();
+    if (releasedRight && s_rightInPanel && s_rightVk == 0 && !ImGui::IsPopupOpen("##keymenu")) _selection.clear();
 
     DrawKeyMenuPopup(profile, s_popupMods);
 }

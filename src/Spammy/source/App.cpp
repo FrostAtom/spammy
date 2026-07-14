@@ -22,7 +22,10 @@ bool App::Init(int argc, char** argv)
     _mainWindow = new MainWindow(L"" APP_NAME);
     if (!_mainWindow->Initialize()) return false;
 
-    if (argc > 1 && strcmp(argv[1], "autolaunch") == 0) _mainWindow->Hide();
+    if (!(argc > 1 && strcmp(argv[1], "autolaunch") == 0)) {
+        _mainWindow->Update();
+        _mainWindow->Show();
+    }
 
     sKeyboard.OnPress(std::bind_front(&App::OnKeyPress, this));
     sKeyboard.OnRelease(std::bind_front(&App::OnKeyRelease, this));
@@ -85,6 +88,7 @@ bool App::Run()
 
         Sleep(10); // don't abuse cpu X_x
     }
+    _mainWindow->Cleanup();
 
     return true;
 }
@@ -344,8 +348,6 @@ void App::OnFocusChanged()
         _activeApp = newProfile ? newApp : std::string();
     }
 
-    // attach/detach outside the lock: Detach() joins the hook thread, which may be
-    // blocked on _callbackMutex inside a running callback -> deadlock if held here
     if (changed) {
         if (newProfile)
             sKeyboard.Attach();

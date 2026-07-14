@@ -1,3 +1,5 @@
 #include "Resources.h"
+#include <winuser.h>
 
-IDI_ICON1               ICON        DISCARDABLE            "app.ico"
+IDI_ICON1                               ICON        DISCARDABLE     "app.ico"
+CREATEPROCESS_MANIFEST_RESOURCE_ID      RT_MANIFEST                 "Spammy.manifest"

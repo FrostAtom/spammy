@@ -60,8 +60,6 @@ Window::ErrorCode Window::Initialize()
         Cleanup();
         return ErrorCode_WinError;
     }
-    UpdateWindow(_hwnd);
-    ShowWindow(_hwnd, SW_SHOWDEFAULT);
 
     if (!CreateDevice()) {
         Cleanup();
@@ -297,7 +295,7 @@ bool Window::CreateWnd()
     _atom = RegisterClassExW(&wc);
     if (!_atom) return false;
 
-    DWORD dwStyle = WS_VISIBLE | WS_POPUP | WS_THICKFRAME;
+    DWORD dwStyle = WS_POPUP | WS_THICKFRAME;
     _hwnd = CreateWindowExW(0, wc.lpszClassName, _wndName, dwStyle, _position.x, _position.y, _size.x, _size.y, NULL,
                             NULL, wc.hInstance, this);
     if (!_hwnd) {
