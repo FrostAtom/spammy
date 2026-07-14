@@ -1,4 +1,4 @@
-﻿# Spammy
+# Spammy
 ## Lightweight keyboard assistant that makes it easy to create macros that run at Windows level
 
 ## <b> [Overview](#overview) - [Functional](#functional) - [TODO](#todo) - [3rd party libraries](#3rd-party-libraries)
@@ -12,6 +12,8 @@ You create profiles, link them to as example games, and use additional features 
 
 - Mode: Spammy - when u hold button clicks repeats quickly
 - Mode: Speedy - when u press button it immediately releases
+- Select keys right on the keyboard & assign mode via right-click
+- Pause hotkey, Win key & Alt-F4 lock per profile
 
 ## TODO
 
@@ -22,3 +24,4 @@ You create profiles, link them to as example games, and use additional features 
 ## 3rd party libraries
 - [nlohmann-json](https://github.com/nlohmann/json) - [license](https://github.com/nlohmann/json/blob/develop/LICENSE.MIT)
 - [ocornut-imgui](https://github.com/ocornut/imgui) - [license](https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
+- [Rajdhani](https://fonts.google.com/specimen/Rajdhani) & [JetBrains Mono](https://www.jetbrains.com/lp/mono/) fonts - [OFL](https://openfontlicense.org)

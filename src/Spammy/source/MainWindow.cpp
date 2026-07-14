@@ -10,7 +10,8 @@ MainWindow& MainWindow::Instance()
     return *_self;
 }
 
-MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName) : Window(className, wndName), _editPause(false)
+MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName)
+    : Window(className, wndName), _editPause(false), _editPauseHooked(false)
 {
     _self = this;
 
@@ -104,6 +105,11 @@ bool MainWindow::BeginFrame()
 
 void MainWindow::Draw()
 {
+    if (_editPauseHooked && !_editPause) {
+        if (!sApp.ActiveProfile()) sKeyboard.Detach();
+        _editPauseHooked = false;
+    }
+
     auto profile = sApp.EditingProfile();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 o = ImGui::GetWindowPos();
@@ -118,8 +124,8 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
 {
     AddAccentHairline(dl, o, 1280.f, 2.f);
     AddLogoMark(dl, ImVec2(o.x + 28.f, o.y + 20.f), 22.f);
-    AddTrackedText(dl, UiFonts::Bold, 19.f, ImVec2(o.x + 60.f, o.y + 22.f), UiCol::Text, "SPAMMY", 4.f);
-    dl->AddText(UiFonts::Mono, 10.f, ImVec2(o.x + 180.f, o.y + 29.f), UiCol::Mute, __DATE__);
+    AddTrackedText(dl, UiFonts::Bold, 22.f, ImVec2(o.x + 60.f, o.y + 22.f), UiCol::Text, "SPAMMY", 4.f);
+    dl->AddText(UiFonts::Mono, 12.f, ImVec2(o.x + 180.f, o.y + 29.f), UiCol::Mute, __DATE__);
 
     if (UiGhostButton("##gear", ImVec2(o.x + 1152.f, o.y + 17.f), 30.f, UiGlyph_Gear)) ImGui::OpenPopup("##settings");
     if (UiGhostButton("##min", ImVec2(o.x + 1188.f, o.y + 17.f), 30.f, UiGlyph_Minimize))
@@ -134,10 +140,10 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
     if (UiChipFrame("##profile", ImVec2(o.x + 28.f, o.y + 66.f), ImVec2(216.f, 46.f))) ImGui::OpenPopup("##profiles");
     UiChipLabel(ImVec2(o.x + 44.f, o.y + 73.f), "PROFILE");
     if (profile) {
-        dl->AddText(UiFonts::Semi, 17.f, ImVec2(o.x + 44.f, o.y + 85.f), UiCol::Text, profile->name.c_str());
+        dl->AddText(UiFonts::Semi, 20.f, ImVec2(o.x + 44.f, o.y + 85.f), UiCol::Text, profile->name.c_str());
     } else {
         ImU32 flash = ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
-        dl->AddText(UiFonts::Semi, 17.f, ImVec2(o.x + 44.f, o.y + 85.f), flash, "NOT SET");
+        dl->AddText(UiFonts::Semi, 20.f, ImVec2(o.x + 44.f, o.y + 85.f), flash, "NOT SET");
     }
     AddChevronDown(dl, ImVec2(o.x + 222.f, o.y + 89.f), UiCol::Sub);
     DrawProfilesPopup(o);
@@ -147,11 +153,11 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         UiChipLabel(ImVec2(o.x + 276.f, o.y + 73.f), "APPS");
         if (profile->apps.empty()) {
             ImU32 flash = ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
-            dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 276.f, o.y + 86.f), flash, "NONE");
+            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), flash, "NONE");
         } else {
             char buf[32];
             snprintf(buf, sizeof(buf), "%d bound", (int)profile->apps.size());
-            dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 276.f, o.y + 86.f), UiCol::Text, buf);
+            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), UiCol::Text, buf);
         }
         DrawAppsPopup(o, profile);
 
@@ -160,7 +166,7 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         UiChipLabel(ImVec2(o.x + 716.f, o.y + 73.f), "WIN KEY");
         AddStatusDot(dl, ImVec2(o.x + 722.f, o.y + 96.f), 3.5f, profile->disableWin ? UiCol::Spam : UiCol::Mute,
                      profile->disableWin);
-        dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 732.f, o.y + 86.f),
+        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 732.f, o.y + 86.f),
                     profile->disableWin ? UiCol::Text : UiCol::Sub, profile->disableWin ? "LOCKED" : "FREE");
 
         if (UiChipFrame("##altf4", ImVec2(o.x + 824.f, o.y + 66.f), ImVec2(120.f, 46.f)))
@@ -168,15 +174,16 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         UiChipLabel(ImVec2(o.x + 840.f, o.y + 73.f), "ALT + F4");
         AddStatusDot(dl, ImVec2(o.x + 846.f, o.y + 96.f), 3.5f, profile->disableAltF4 ? UiCol::Spam : UiCol::Mute,
                      profile->disableAltF4);
-        dl->AddText(UiFonts::Semi, 15.f, ImVec2(o.x + 856.f, o.y + 86.f),
+        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 856.f, o.y + 86.f),
                     profile->disableAltF4 ? UiCol::Text : UiCol::Sub, profile->disableAltF4 ? "LOCKED" : "FREE");
 
         if (UiChipFrame("##pause", ImVec2(o.x + 958.f, o.y + 66.f), ImVec2(150.f, 46.f))) {
             if (_editPause) {
                 _editPause = false;
             } else {
-                _editPause = true;
                 profile->vkPause = 0;
+                _editPauseHooked = sKeyboard.Attach();
+                _editPause = true;
             }
         }
         UiChipLabel(ImVec2(o.x + 974.f, o.y + 73.f), "PAUSE KEY");
@@ -343,16 +350,16 @@ void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
         status = "ACTIVE";
         statusCol = UiCol::Ok;
         glow = true;
-        detail = "hooked · " + sApp.ActiveAppName();
+        detail = "hooked ?? " + sApp.ActiveAppName();
     } else {
         status = "READY";
         statusCol = UiCol::SpamText;
         detail = "waiting for bound app";
     }
     AddStatusDot(dl, ImVec2(o.x + 38.f, o.y + 689.f), 3.5f, statusCol, glow);
-    AddTrackedText(dl, UiFonts::Bold, 13.f, ImVec2(o.x + 50.f, o.y + 682.f), statusCol, status, 1.5f);
-    ImVec2 statusSize = CalcTrackedTextSize(UiFonts::Bold, 13.f, status, 1.5f);
-    dl->AddText(UiFonts::Mono, 11.f, ImVec2(o.x + 50.f + statusSize.x + 16.f, o.y + 683.f), UiCol::Mute,
+    AddTrackedText(dl, UiFonts::Bold, 15.f, ImVec2(o.x + 50.f, o.y + 682.f), statusCol, status, 1.5f);
+    ImVec2 statusSize = CalcTrackedTextSize(UiFonts::Bold, 15.f, status, 1.5f);
+    dl->AddText(UiFonts::Mono, 13.f, ImVec2(o.x + 50.f + statusSize.x + 16.f, o.y + 683.f), UiCol::Mute,
                 detail.c_str());
 
     static DWORD s_started = GetTickCount();
@@ -362,11 +369,11 @@ void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
         snprintf(value, sizeof(value), "%uh %02um", mins / 60, mins % 60);
     else
         snprintf(value, sizeof(value), "%um", mins);
-    ImVec2 valueSize = UiFonts::Mono->CalcTextSizeA(12.f, FLT_MAX, 0.f, value);
+    ImVec2 valueSize = UiFonts::Mono->CalcTextSizeA(14.f, FLT_MAX, 0.f, value);
     float x = o.x + 1252.f - valueSize.x;
-    dl->AddText(UiFonts::Mono, 12.f, ImVec2(x, o.y + 681.f), UiCol::Sub, value);
-    ImVec2 labelSize = CalcTrackedTextSize(UiFonts::Semi, 10.f, "SESSION", 1.5f);
-    AddTrackedText(dl, UiFonts::Semi, 10.f, ImVec2(x - 12.f - labelSize.x, o.y + 683.f), UiCol::Mute, "SESSION", 1.5f);
+    dl->AddText(UiFonts::Mono, 14.f, ImVec2(x, o.y + 681.f), UiCol::Sub, value);
+    ImVec2 labelSize = CalcTrackedTextSize(UiFonts::Semi, 12.f, "SESSION", 1.5f);
+    AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x - 12.f - labelSize.x, o.y + 683.f), UiCol::Mute, "SESSION", 1.5f);
 }
 
 void MainWindow::DrawProfilesPopup(const ImVec2& o)
@@ -394,12 +401,12 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
         ImVec2 p = ImGui::GetCursorScreenPos();
         bool selected = item == editing;
         if (ImGui::Selectable("##prow", selected, 0, ImVec2(200.f, 24.f))) sApp.EditingProfile(item->name.c_str());
-        dl->AddText(UiFonts::Semi, 15.f, ImVec2(p.x + 8.f, p.y + 4.f), selected ? UiCol::SpamText : UiCol::Text,
+        dl->AddText(UiFonts::Semi, 18.f, ImVec2(p.x + 8.f, p.y + 4.f), selected ? UiCol::SpamText : UiCol::Text,
                     item->name.c_str());
         char count[16];
         snprintf(count, sizeof(count), "%d", (int)item->apps.size());
-        ImVec2 countSize = UiFonts::Mono->CalcTextSizeA(11.f, FLT_MAX, 0.f, count);
-        dl->AddText(UiFonts::Mono, 11.f, ImVec2(p.x + 200.f - countSize.x - 8.f, p.y + 6.f), UiCol::Mute, count);
+        ImVec2 countSize = UiFonts::Mono->CalcTextSizeA(13.f, FLT_MAX, 0.f, count);
+        dl->AddText(UiFonts::Mono, 13.f, ImVec2(p.x + 200.f - countSize.x - 8.f, p.y + 6.f), UiCol::Mute, count);
 
         bool armed = s_armedDelete == item->name;
         if (UiGhostButton("##del", ImVec2(p.x + 208.f, p.y), 24.f, UiGlyph_Close)) {
@@ -457,7 +464,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
         LexicographicalSort(s_appList);
     }
 
-    ImGui::PushFont(UiFonts::Semi, 12.f);
+    ImGui::PushFont(UiFonts::Semi, 14.f);
     if (!profile->apps.empty()) {
         ImGui::TextDisabled("BOUND");
         const char* unbindApp = NULL;
@@ -501,7 +508,7 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(210.f, 28.f));
-    dl->AddText(UiFonts::Semi, 15.f, ImVec2(p.x + 8.f, p.y + 6.f), UiCol::Text, "AUTO START");
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(p.x + 8.f, p.y + 6.f), UiCol::Text, "AUTO START");
     if (UiToggle("##autostart", ImVec2(p.x + 164.f, p.y + 4.f), s_autoStart)) {
         if (sApp.EnableAutoStart(!s_autoStart)) s_autoStart = !s_autoStart;
     }
@@ -521,7 +528,7 @@ void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsig
     ImGui::SetNextWindowSize(ImVec2(210.f, 0.f));
     if (!ImGui::BeginPopup("##keymenu")) return;
 
-    ImGui::PushFont(UiFonts::Semi, 12.f);
+    ImGui::PushFont(UiFonts::Semi, 14.f);
     ImGui::TextDisabled("%d SELECTED", (int)_selection.size());
     ImGui::PopFont();
     ImGui::Separator();
@@ -537,7 +544,7 @@ void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsig
             profile->keys[vk][popupMods].action = action;
 
     ImGui::Separator();
-    ImGui::PushFont(UiFonts::Semi, 12.f);
+    ImGui::PushFont(UiFonts::Semi, 14.f);
     ImGui::TextDisabled("RATE");
     ImGui::PopFont();
     ImGui::SetNextItemWidth(-FLT_MIN);

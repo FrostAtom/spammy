@@ -49,11 +49,11 @@ void ImGui::LoadUiFonts()
     ImFontConfig merge = cfg;
     merge.MergeMode = true;
 
-    UiFonts::Semi = io.Fonts->AddFontFromMemoryTTF((void*)RajdhaniSemiBold_data, RajdhaniSemiBold_size, 17.f, &cfg);
-    io.Fonts->AddFontFromMemoryTTF((void*)JetBrainsMono_data, JetBrainsMono_size, 15.f, &merge);
-    UiFonts::Bold = io.Fonts->AddFontFromMemoryTTF((void*)RajdhaniBold_data, RajdhaniBold_size, 17.f, &cfg);
-    io.Fonts->AddFontFromMemoryTTF((void*)JetBrainsMono_data, JetBrainsMono_size, 15.f, &merge);
-    UiFonts::Mono = io.Fonts->AddFontFromMemoryTTF((void*)JetBrainsMono_data, JetBrainsMono_size, 12.f, &cfg);
+    UiFonts::Semi = io.Fonts->AddFontFromMemoryTTF((void*)RajdhaniSemiBold_data, RajdhaniSemiBold_size, 20.f, &cfg);
+    io.Fonts->AddFontFromMemoryTTF((void*)JetBrainsMono_data, JetBrainsMono_size, 18.f, &merge);
+    UiFonts::Bold = io.Fonts->AddFontFromMemoryTTF((void*)RajdhaniBold_data, RajdhaniBold_size, 20.f, &cfg);
+    io.Fonts->AddFontFromMemoryTTF((void*)JetBrainsMono_data, JetBrainsMono_size, 18.f, &merge);
+    UiFonts::Mono = io.Fonts->AddFontFromMemoryTTF((void*)JetBrainsMono_data, JetBrainsMono_size, 14.f, &cfg);
     io.FontDefault = UiFonts::Semi;
 }
 
@@ -222,8 +222,8 @@ void ImGui::AddKeycap(ImDrawList* dl, const ImVec2& min, const ImVec2& max, cons
 {
     dl->AddRectFilled(min, max, UiCol::Bg2, 4.f);
     dl->AddRect(min, max, UiCol::Stroke, 4.f);
-    ImVec2 size = UiFonts::Mono->CalcTextSizeA(10.f, FLT_MAX, 0.f, text);
-    dl->AddText(UiFonts::Mono, 10.f, ImVec2((min.x + max.x - size.x) * 0.5f, (min.y + max.y - 10.f) * 0.5f), textCol,
+    ImVec2 size = UiFonts::Mono->CalcTextSizeA(12.f, FLT_MAX, 0.f, text);
+    dl->AddText(UiFonts::Mono, 12.f, ImVec2((min.x + max.x - size.x) * 0.5f, (min.y + max.y - 12.f) * 0.5f), textCol,
                 text);
 }
 
@@ -282,7 +282,7 @@ bool ImGui::UiChipFrame(const char* id, const ImVec2& pos, const ImVec2& size)
 
 void ImGui::UiChipLabel(const ImVec2& pos, const char* text)
 {
-    AddTrackedText(GetWindowDrawList(), UiFonts::Semi, 10.f, pos, UiCol::Mute, text, 1.5f);
+    AddTrackedText(GetWindowDrawList(), UiFonts::Semi, 12.f, pos, UiCol::Mute, text, 1.5f);
 }
 
 bool ImGui::UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, bool enabled)
@@ -301,12 +301,12 @@ bool ImGui::UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, 
     dl->AddRectFilled(pos, max, fill, 10.f);
     dl->AddRect(pos, max, WithAlpha(accent, hovered ? 1.f : 0.9f), 10.f, 0, hovered ? 1.5f : 1.f);
 
-    ImVec2 textSize = CalcTrackedTextSize(UiFonts::Bold, 16.f, text, 1.5f);
+    ImVec2 textSize = CalcTrackedTextSize(UiFonts::Bold, 19.f, text, 1.5f);
     const float contentW = 8.f + 10.f + textSize.x;
     const float x = pos.x + (size.x - contentW) * 0.5f;
     const float cy = pos.y + size.y * 0.5f;
     AddStatusDot(dl, ImVec2(x + 4.f, cy), 4.f, accent, enabled);
-    AddTrackedText(dl, UiFonts::Bold, 16.f, ImVec2(x + 18.f, cy - 8.f), accent, text, 1.5f);
+    AddTrackedText(dl, UiFonts::Bold, 19.f, ImVec2(x + 18.f, cy - 9.5f), accent, text, 1.5f);
     return clicked;
 }
 
@@ -374,7 +374,7 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
     dl->AddRect(pos, max, stroke, rounding, 0, strokeW);
 
     ImFont* font = accent ? UiFonts::Bold : UiFonts::Semi;
-    float fontSize = multi ? 12.f : 17.f;
+    float fontSize = multi ? 15.f : 20.f;
     float tracking = multi ? 1.f : 0.f;
     ImVec2 textSize = CalcTrackedTextSize(font, fontSize, desc.label, tracking);
     AddTrackedText(dl, font, fontSize, ImVec2(pos.x + (size.x - textSize.x) * 0.5f, pos.y + (size.y - fontSize) * 0.5f),
@@ -424,6 +424,6 @@ bool ImGui::UiMenuRow(const char* label, ImU32 dotCol, bool disabled, bool keepO
         AddStatusDot(dl, ImVec2(pos.x + 12.f, pos.y + 12.f), 3.f, disabled ? WithAlpha(dotCol, 0.4f) : dotCol, false);
         x = pos.x + 24.f;
     }
-    dl->AddText(UiFonts::Semi, 15.f, ImVec2(x, pos.y + 4.f), disabled ? UiCol::Mute : UiCol::Text, label);
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(x, pos.y + 3.f), disabled ? UiCol::Mute : UiCol::Text, label);
     return clicked;
 }

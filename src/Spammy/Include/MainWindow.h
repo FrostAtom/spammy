@@ -11,6 +11,7 @@ class MainWindow : public Window {
     static MainWindow* _self;
     std::filesystem::path _appFilePath;
     bool _editPause;
+    bool _editPauseHooked;
     std::set<UINT> _selection;
 
 public:
