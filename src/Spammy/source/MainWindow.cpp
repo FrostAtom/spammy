@@ -395,6 +395,7 @@ void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
 void MainWindow::DrawProfilesPopup(const ImVec2& o)
 {
     ImGui::SetNextWindowPos(ImVec2(o.x + 28.f, o.y + 116.f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(260.f, 0.f), ImVec2(260.f, 584.f));
     ImGui::SetNextWindowSize(ImVec2(260.f, 0.f));
     if (!ImGui::UiBeginPopup("##profiles")) return;
 
@@ -465,6 +466,7 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
 void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile)
 {
     ImGui::SetNextWindowPos(ImVec2(o.x + 260.f, o.y + 116.f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280.f, 0.f), ImVec2(280.f, 584.f));
     ImGui::SetNextWindowSize(ImVec2(280.f, 0.f));
     if (!ImGui::UiBeginPopup("##appsmenu")) return;
 
