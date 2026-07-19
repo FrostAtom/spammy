@@ -310,3 +310,13 @@ const char* KeyboardVariantName(KeyboardVariant variant)
     default: return "?";
     }
 }
+
+const char* MouseFormName(MouseForm form)
+{
+    switch (form) {
+    case MouseForm_Off: return "HIDDEN";
+    case MouseForm_3: return "3 BUTTONS";
+    case MouseForm_5: return "5 BUTTONS";
+    default: return "?";
+    }
+}

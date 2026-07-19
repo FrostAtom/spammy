@@ -18,6 +18,7 @@ public:
 
 private:
     HHOOK _hhook;
+    HHOOK _mouseHook;
     std::jthread _thread;
     DWORD _threadId;
     std::array<DWORD, KEYBOARD_KEYS_COUNT> _state;
@@ -39,6 +40,8 @@ public:
     unsigned TestModifiers();
     // key is modifier
     unsigned IsModifier(unsigned short vkCode);
+    // key is mouse button
+    static bool IsMouseButton(unsigned short vkCode);
     // key is pressed
     DWORD IsPressed(unsigned short vkCode);
     // send press notification to target HWND
@@ -54,6 +57,7 @@ public:
 
 private:
     static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam);
     void ThreadProc(std::stop_token stop, std::promise<bool>& ready);
     void SyncState();
     bool HandleDown(unsigned short vkCode);

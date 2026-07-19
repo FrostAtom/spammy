@@ -24,6 +24,7 @@
 #include <Windowsx.h>
 #include <d3d9.h>
 #include <dwmapi.h>
+#include <mmsystem.h>
 #include <psapi.h>
 #include <shellapi.h>
 
@@ -36,3 +37,4 @@
 
 #pragma comment(lib, "d3d9")
 #pragma comment(lib, "dwmapi")
+#pragma comment(lib, "winmm")

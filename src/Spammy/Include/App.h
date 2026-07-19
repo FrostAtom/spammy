@@ -28,10 +28,15 @@ public:
     bool IsShowTrayIcon();
     void SetShowTrayIcon(bool state);
 
+    bool IsSoundsEnabled();
+    void SetSoundsEnabled(bool state);
+
     KeyboardForm Form();
     void SetForm(KeyboardForm form);
     KeyboardVariant Variant();
     void SetVariant(KeyboardVariant variant);
+    MouseForm Mouse();
+    void SetMouse(MouseForm form);
 
     std::shared_ptr<Profile> ActiveProfile();
     std::string ActiveAppName();
@@ -63,8 +68,10 @@ private:
     bool _autoStartEnabled = false;
     bool _minimizeToTray = true;
     bool _showTrayIcon = true;
+    std::atomic<bool> _soundsEnabled = true;
     KeyboardForm _form = KeyboardForm_75;
     KeyboardVariant _variant = KeyboardVariant_Ansi;
+    MouseForm _mouse = MouseForm_5;
     std::atomic<bool> _enabled = false;
     DWORD _lastUpdate = 0;
     HWND _activeHwnd = NULL;

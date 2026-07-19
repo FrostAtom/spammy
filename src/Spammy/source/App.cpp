@@ -121,9 +121,12 @@ bool App::LoadConfig()
             _minimizeToTray = minimizeToTray.get<bool>();
         if (auto showTrayIcon = json["showTrayIcon"]; showTrayIcon.is_boolean())
             _showTrayIcon = showTrayIcon.get<bool>();
+        if (auto soundsEnabled = json["soundsEnabled"]; soundsEnabled.is_boolean())
+            _soundsEnabled = soundsEnabled.get<bool>();
         if (auto form = json["form"]; form.is_number_integer()) SetForm((KeyboardForm)form.get<int>());
         if (auto variant = json["variant"]; variant.is_number_integer())
             SetVariant((KeyboardVariant)variant.get<int>());
+        if (auto mouse = json["mouse"]; mouse.is_number_integer()) SetMouse((MouseForm)mouse.get<int>());
         if (auto profiles = json["profiles"]; profiles.is_array())
             _profiles = json["profiles"].get<std::list<std::shared_ptr<Profile>>>();
         if (auto editingProfile = json["editingProfile"]; editingProfile.is_string())
@@ -143,8 +146,10 @@ void App::SaveConfig()
     if (_enabled) json["enabled"] = true;
     if (!_minimizeToTray) json["minimizeToTray"] = false;
     if (!_showTrayIcon) json["showTrayIcon"] = false;
+    if (!_soundsEnabled) json["soundsEnabled"] = false;
     if (_form != KeyboardForm_75) json["form"] = (int)_form;
     if (_variant != KeyboardVariant_Ansi) json["variant"] = (int)_variant;
+    if (_mouse != MouseForm_5) json["mouse"] = (int)_mouse;
     if (_editingProfile) json["editingProfile"] = _editingProfile->name;
     if (!_profiles.empty()) json["profiles"] = _profiles;
 
@@ -172,6 +177,16 @@ void App::SetShowTrayIcon(bool state)
     if (_mainWindow) _mainWindow->ShowTrayIcon(state);
 }
 
+bool App::IsSoundsEnabled()
+{
+    return _soundsEnabled;
+}
+
+void App::SetSoundsEnabled(bool state)
+{
+    _soundsEnabled = state;
+}
+
 KeyboardForm App::Form()
 {
     return _form;
@@ -192,6 +207,17 @@ void App::SetVariant(KeyboardVariant variant)
 {
     if (variant < 0 || variant >= KeyboardVariant_Count) return;
     _variant = variant;
+}
+
+MouseForm App::Mouse()
+{
+    return _mouse;
+}
+
+void App::SetMouse(MouseForm form)
+{
+    if (form < 0 || form >= MouseForm_Count) return;
+    _mouse = form;
 }
 
 static const wchar_t* getAutoStartCommand()
@@ -239,6 +265,14 @@ bool App::EnableAutoStart(bool state)
     return status == ERROR_SUCCESS;
 }
 
+static void PlayEnabledSound(bool enabled)
+{
+    wchar_t path[MAX_PATH];
+    if (!GetWindowsDirectoryW(path, std::size(path))) return;
+    wcscat_s(path, enabled ? L"\\Media\\Windows Hardware Insert.wav" : L"\\Media\\Windows Hardware Remove.wav");
+    PlaySoundW(path, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+}
+
 bool App::OnKeyPress(UINT vkCode, bool repeat)
 {
     if (_mainWindow && _mainWindow->HandleKeyPress(vkCode, repeat)) return true;
@@ -282,6 +316,7 @@ bool App::OnKeyRelease(UINT vkCode, bool repeat)
         unsigned mods = sKeyboard.TestModifiers();
         if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
             _enabled = !_enabled;
+            if (_soundsEnabled) PlayEnabledSound(_enabled);
             return true;
         }
         if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
@@ -411,7 +446,6 @@ void App::OnFocusChanged()
         newProfile = FindProfileByApp(newApp.c_str());
     }
 
-    const bool changed = (newProfile != _activeProfile);
     {
         std::lock_guard lock(_callbackMutex);
         _activeProfile = newProfile;
@@ -419,12 +453,10 @@ void App::OnFocusChanged()
         _activeApp = newProfile ? newApp : std::string();
     }
 
-    if (changed) {
-        if (newProfile)
-            sKeyboard.Attach();
-        else
-            sKeyboard.Detach();
-    }
+    if (newProfile || (_mainWindow && newHwnd == _mainWindow->Native()))
+        sKeyboard.Attach();
+    else
+        sKeyboard.Detach();
 }
 
 int main(int argc, char** argv)

@@ -24,6 +24,14 @@ enum KeyboardVariant {
     KeyboardVariant_Count,
 };
 
+enum MouseForm {
+    MouseForm_Off,
+    MouseForm_3,
+    MouseForm_5,
+    MouseForm_Count,
+};
+
 const std::vector<KeyboardKey>& GetKeyboardLayout(KeyboardForm form, KeyboardVariant variant);
 const char* KeyboardFormName(KeyboardForm form);
 const char* KeyboardVariantName(KeyboardVariant variant);
+const char* MouseFormName(MouseForm form);

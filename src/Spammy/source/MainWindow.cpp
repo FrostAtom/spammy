@@ -10,8 +10,7 @@ MainWindow& MainWindow::Instance()
     return *_self;
 }
 
-MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName)
-    : Window(className, wndName), _editPause(false), _editPauseHooked(false)
+MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName) : Window(className, wndName), _editPause(false)
 {
     _self = this;
 
@@ -56,12 +55,14 @@ bool MainWindow::Initialize()
 
 bool MainWindow::HandleKeyPress(unsigned short vkCode, bool)
 {
+    if (Keyboard::IsMouseButton(vkCode)) return false;
     if (_editPause) return true;
     return false;
 }
 
 bool MainWindow::HandleKeyRelease(unsigned short vkCode, bool)
 {
+    if (Keyboard::IsMouseButton(vkCode)) return false;
     if (_editPause) {
         if (auto profile = sApp.EditingProfile()) profile->vkPause = MAKE_KEY_BUNDLE(vkCode, sKeyboard.TestModifiers());
         _editPause = false;
@@ -106,11 +107,6 @@ bool MainWindow::BeginFrame()
 
 void MainWindow::Draw()
 {
-    if (_editPauseHooked && !_editPause) {
-        if (!sApp.ActiveProfile()) sKeyboard.Detach();
-        _editPauseHooked = false;
-    }
-
     auto profile = sApp.EditingProfile();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 o = ImGui::GetWindowPos();
@@ -191,7 +187,7 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
                 _editPause = false;
             } else {
                 profile->vkPause = 0;
-                _editPauseHooked = sKeyboard.Attach();
+                sKeyboard.Attach();
                 _editPause = true;
             }
         }
@@ -232,8 +228,12 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     AddPanel(dl, panelMin, panelMax, 16.f);
 
     const float gap = 7.f;
-    const ImVec2 avail = ImVec2(panelMax.x - panelMin.x - 32.f, panelMax.y - panelMin.y - 32.f);
+    const MouseForm mouseForm = sApp.Mouse();
+    const float mouseW = 190.f;
+    const float mouseLeft = panelMax.x - 16.f - mouseW;
     const ImVec2 start = ImVec2(panelMin.x + 16.f, panelMin.y + 16.f);
+    const ImVec2 avail = ImVec2((mouseForm != MouseForm_Off ? mouseLeft - 24.f : panelMax.x - 16.f) - start.x,
+                                panelMax.y - panelMin.y - 32.f);
 
     const std::vector<KeyboardKey>& layout = GetKeyboardLayout(sApp.Form(), sApp.Variant());
 
@@ -279,22 +279,18 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const bool releasedRight = ImGui::IsMouseReleased(ImGuiMouseButton_Right);
 
     unsigned mods = sKeyboard.TestModifiers();
-    for (size_t i = 0; i < layout.size(); i++) {
-        const KeyboardKey& key = layout[i];
-        const ImVec2 pos = ImVec2(origin.x + key.x * keySize, origin.y + key.y * keySize);
-        const ImVec2 size = ImVec2(key.w * keySize - gap, key.h * keySize - gap);
-
-        KeyConfig* cfg = profile ? &profile->keys[key.vkCode][mods] : NULL;
+    auto keyItem = [&](const char* id, const char* label, UINT vkCode, const ImVec2& pos, const ImVec2& size) {
+        KeyConfig* cfg = profile ? &profile->keys[vkCode][mods] : NULL;
 
         UiKeyDesc desc = {};
-        desc.label = key.name;
-        desc.locked = sKeyboard.IsModifier(key.vkCode) || key.vkCode == VK_LWIN || key.vkCode == VK_RWIN;
-        desc.pressed = sKeyboard.IsPressed(key.vkCode) != 0;
-        desc.selected = _selection.count(key.vkCode) != 0;
+        desc.label = label;
+        desc.locked = sKeyboard.IsModifier(vkCode) || vkCode == VK_LWIN || vkCode == VK_RWIN;
+        desc.pressed = sKeyboard.IsPressed(vkCode) != 0;
+        desc.selected = _selection.count(vkCode) != 0;
         if (cfg) {
             Action action = cfg->action;
             if (action == Action_None && mods != KeyMod_None) {
-                Action base = profile->keys[key.vkCode][KeyMod_None].action;
+                Action base = profile->keys[vkCode][KeyMod_None].action;
                 if (base != Action_None) {
                     action = base;
                     desc.inherited = true;
@@ -308,8 +304,6 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
             }
         }
 
-        char id[16];
-        snprintf(id, sizeof(id), "##key%02x", (unsigned)i);
         UiKey(id, pos, size, desc);
         const ImVec2 keyMin = ImGui::GetItemRectMin();
         const ImVec2 keyMax = ImGui::GetItemRectMax();
@@ -318,37 +312,97 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
         const bool pressedHere = s_pressInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoverKey;
         if (pressedHere) {
             s_pressOnKey = true;
-            s_pressVk = key.vkCode;
+            s_pressVk = vkCode;
         }
 
         if (cfg && !desc.locked) {
-            if (pressedHere && _selection.count(key.vkCode)) s_brushErase = true;
+            if (pressedHere && _selection.count(vkCode)) s_brushErase = true;
 
             if (brushing && hoverKey) {
                 if (s_brushErase)
-                    _selection.erase(key.vkCode);
+                    _selection.erase(vkCode);
                 else
-                    _selection.insert(key.vkCode);
+                    _selection.insert(vkCode);
             }
 
-            if (releasedLeft && !s_leftDismiss && !s_brushMoved && hoverKey && s_pressVk == key.vkCode) {
-                if (_selection.count(key.vkCode))
-                    _selection.erase(key.vkCode);
+            if (releasedLeft && !s_leftDismiss && !s_brushMoved && hoverKey && s_pressVk == vkCode) {
+                if (_selection.count(vkCode))
+                    _selection.erase(vkCode);
                 else
-                    _selection.insert(key.vkCode);
+                    _selection.insert(vkCode);
             }
 
-            if (s_rightInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverKey) s_rightVk = key.vkCode;
+            if (s_rightInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverKey) s_rightVk = vkCode;
 
-            if (releasedRight && hoverKey && s_rightVk == key.vkCode) {
-                if (!_selection.count(key.vkCode)) {
+            if (releasedRight && hoverKey && s_rightVk == vkCode) {
+                if (!_selection.count(vkCode)) {
                     _selection.clear();
-                    _selection.insert(key.vkCode);
+                    _selection.insert(vkCode);
                 }
                 s_popupMods = mods;
                 ImGui::OpenPopup("##keymenu");
                 s_rightVk = 0;
             }
+        }
+    };
+
+    for (size_t i = 0; i < layout.size(); i++) {
+        const KeyboardKey& key = layout[i];
+        const ImVec2 pos = ImVec2(origin.x + key.x * keySize, origin.y + key.y * keySize);
+        const ImVec2 size = ImVec2(key.w * keySize - gap, key.h * keySize - gap);
+        char id[16];
+        snprintf(id, sizeof(id), "##key%02x", (unsigned)i);
+        keyItem(id, key.name, key.vkCode, pos, size);
+    }
+
+    if (mouseForm != MouseForm_Off) {
+        dl->AddRectFilled(ImVec2(mouseLeft - 12.f, panelMin.y + 24.f), ImVec2(mouseLeft - 11.f, panelMax.y - 24.f),
+                          UiCol::StrokeSoft);
+
+        const ImVec2 bodySize = ImVec2(150.f, 270.f);
+        const ImVec2 body = ImVec2(mouseLeft + (mouseW - bodySize.x) * .5f + 8.f,
+                                   panelMin.y + (panelMax.y - panelMin.y - bodySize.y) * .5f);
+        auto bp = [&](float x, float y) { return ImVec2(body.x + x, body.y + y); };
+        auto bodyPath = [&] {
+            dl->PathArcTo(bp(26.f, 26.f), 26.f, IM_PI, IM_PI * 1.5f);
+            dl->PathArcTo(bp(124.f, 26.f), 26.f, IM_PI * 1.5f, IM_PI * 2.f);
+            dl->PathBezierCubicCurveTo(bp(151.f, 86.f), bp(133.f, 119.f), bp(133.f, 151.f));
+            dl->PathBezierCubicCurveTo(bp(133.f, 178.f), bp(151.f, 189.f), bp(150.f, 224.f));
+            dl->PathBezierCubicCurveTo(bp(149.f, 256.f), bp(123.f, 270.f), bp(75.f, 270.f));
+            dl->PathBezierCubicCurveTo(bp(27.f, 270.f), bp(1.f, 256.f), bp(0.f, 224.f));
+            dl->PathBezierCubicCurveTo(bp(-1.f, 189.f), bp(17.f, 178.f), bp(17.f, 151.f));
+            dl->PathBezierCubicCurveTo(bp(17.f, 119.f), bp(-1.f, 86.f), bp(0.f, 26.f));
+        };
+        bodyPath();
+        dl->PathFillConcave(UiCol::PanelTop);
+        bodyPath();
+        dl->PathStroke(UiCol::Stroke, ImDrawFlags_Closed, 1.5f);
+
+        const float now = (float)ImGui::GetTime();
+        ImVec2 stripPrev;
+        for (int i = 0; i <= 28; i++) {
+            float a = IM_PI * (.15f + .7f * (float)i / 28.f);
+            ImVec2 pt = bp(75.f + cosf(a) * 77.f, 200.f + sinf(a) * 62.f);
+            if (i) {
+                float hue = (float)i / 28.f * .6f - now * .1f;
+                hue -= floorf(hue);
+                float r, g, b;
+                ImGui::ColorConvertHSVtoRGB(hue, .9f, 1.f, r, g, b);
+                ImU32 led = IM_COL32((int)(r * 255.f), (int)(g * 255.f), (int)(b * 255.f), 255);
+                dl->AddLine(stripPrev, pt, (led & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 70), 8.f);
+                dl->AddLine(stripPrev, pt, (led & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 230), 3.f);
+            }
+            stripPrev = pt;
+        }
+
+        dl->AddBezierQuadratic(bp(10.f, 104.f), bp(75.f, 113.f), bp(140.f, 104.f), UiCol::StrokeSoft, 1.5f);
+
+        keyItem("##mbL", "LMB", VK_LBUTTON, ImVec2(body.x + 8.f, body.y + 8.f), ImVec2(53.f, 92.f));
+        keyItem("##mbM", "M3", VK_MBUTTON, ImVec2(body.x + 63.f, body.y + 22.f), ImVec2(24.f, 64.f));
+        keyItem("##mbR", "RMB", VK_RBUTTON, ImVec2(body.x + 89.f, body.y + 8.f), ImVec2(53.f, 92.f));
+        if (mouseForm == MouseForm_5) {
+            keyItem("##mb5", "M5", VK_XBUTTON2, ImVec2(body.x + 6.f, body.y + 122.f), ImVec2(24.f, 38.f));
+            keyItem("##mb4", "M4", VK_XBUTTON1, ImVec2(body.x + 6.f, body.y + 164.f), ImVec2(24.f, 38.f));
         }
     }
 
@@ -556,6 +610,13 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     if (UiToggle("##trayicon", ImVec2(ti.x + 164.f, ti.y + 4.f), trayIcon)) sApp.SetShowTrayIcon(!trayIcon);
     ImGui::SetCursorScreenPos(ImVec2(ti.x, ti.y + 34.f));
 
+    ImVec2 sn = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(210.f, 28.f));
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(sn.x + 8.f, sn.y + 6.f), UiCol::Text, "ENABLE SOUNDS");
+    bool sounds = sApp.IsSoundsEnabled();
+    if (UiToggle("##sounds", ImVec2(sn.x + 164.f, sn.y + 4.f), sounds)) sApp.SetSoundsEnabled(!sounds);
+    ImGui::SetCursorScreenPos(ImVec2(sn.x, sn.y + 34.f));
+
     ImGui::Separator();
 
     ImVec2 f = ImGui::GetCursorScreenPos();
@@ -579,6 +640,17 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     if (UiStepper("##variant", ImVec2(v.x + 8.f, v.y + 26.f), 194.f, KeyboardVariant_Count, variant))
         sApp.SetVariant((KeyboardVariant)variant);
     ImGui::SetCursorScreenPos(ImVec2(v.x, v.y + 54.f));
+
+    ImVec2 mo = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(210.f, 24.f));
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(mo.x + 8.f, mo.y + 3.f), UiCol::Text, "MOUSE");
+    const char* mouseName = MouseFormName(sApp.Mouse());
+    ImVec2 moSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, mouseName);
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(mo.x + 202.f - moSize.x, mo.y + 3.f), UiCol::SpamText, mouseName);
+    int mouse = (int)sApp.Mouse();
+    if (UiStepper("##mouse", ImVec2(mo.x + 8.f, mo.y + 26.f), 194.f, MouseForm_Count, mouse))
+        sApp.SetMouse((MouseForm)mouse);
+    ImGui::SetCursorScreenPos(ImVec2(mo.x, mo.y + 54.f));
 
     ImGui::Separator();
     if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
