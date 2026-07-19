@@ -49,6 +49,7 @@ public:
 
     ErrorCode Initialize();
     void SetTrayIcon(TrayIcon* icon);
+    void ShowTrayIcon(bool visible);
     HWND Native();
     void Update();
 

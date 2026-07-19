@@ -22,6 +22,17 @@ public:
     bool IsAutoStartEnabled();
     bool EnableAutoStart(bool state);
 
+    bool IsMinimizeToTray();
+    void SetMinimizeToTray(bool state);
+
+    bool IsShowTrayIcon();
+    void SetShowTrayIcon(bool state);
+
+    KeyboardForm Form();
+    void SetForm(KeyboardForm form);
+    KeyboardVariant Variant();
+    void SetVariant(KeyboardVariant variant);
+
     std::shared_ptr<Profile> ActiveProfile();
     std::string ActiveAppName();
 
@@ -50,6 +61,10 @@ private:
     MainWindow* _mainWindow = NULL;
     bool _isRunning = false;
     bool _autoStartEnabled = false;
+    bool _minimizeToTray = true;
+    bool _showTrayIcon = true;
+    KeyboardForm _form = KeyboardForm_75;
+    KeyboardVariant _variant = KeyboardVariant_Ansi;
     std::atomic<bool> _enabled = false;
     DWORD _lastUpdate = 0;
     HWND _activeHwnd = NULL;

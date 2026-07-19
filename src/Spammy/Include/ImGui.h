@@ -43,6 +43,11 @@ inline constexpr ImU32 PanelBottom = IM_COL32(0x0D, 0x11, 0x19, 0xFF);
 inline constexpr ImU32 HoverFill = IM_COL32(0x1A, 0x21, 0x30, 0xFF);
 inline constexpr ImU32 HoverStroke = IM_COL32(0x2E, 0x3A, 0x4E, 0xFF);
 inline constexpr ImU32 PressFill = IM_COL32(0x20, 0x2B, 0x3C, 0xFF);
+inline constexpr ImU32 KeyCap = IM_COL32(0x1E, 0x27, 0x36, 0xFF);
+inline constexpr ImU32 KeyCapStroke = IM_COL32(0x2C, 0x37, 0x4A, 0xFF);
+inline constexpr ImU32 ModFill = IM_COL32(0x28, 0x34, 0x48, 0xFF);
+inline constexpr ImU32 ModStroke = IM_COL32(0x3A, 0x48, 0x60, 0xFF);
+inline constexpr ImU32 ModText = IM_COL32(0x6A, 0x78, 0x8E, 0xFF);
 } // namespace UiCol
 
 struct UiFonts {
@@ -67,6 +72,7 @@ enum UiKeyStyle {
 struct UiKeyDesc {
     const char* label;
     UiKeyStyle style;
+    ImU32 tint;
     bool inherited;
     bool pressed;
     bool selected;
@@ -98,5 +104,6 @@ void UiChipLabel(const ImVec2& pos, const char* text);
 bool UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, bool enabled);
 bool UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const UiKeyDesc& desc);
 bool UiToggle(const char* id, const ImVec2& pos, bool on);
+bool UiStepper(const char* id, const ImVec2& pos, float width, int count, int& value);
 bool UiMenuRow(const char* label, ImU32 dotCol = 0, bool disabled = false, bool keepOpen = false);
 } // namespace ImGui

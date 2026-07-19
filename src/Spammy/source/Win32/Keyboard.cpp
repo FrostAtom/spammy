@@ -108,6 +108,12 @@ void Keyboard::Press(HWND hwnd, unsigned short vkCode)
     keybd_event(vkCode, scCode, KEYEVENTF_KEYUP, INPUT_EXTRA_FLAGS_EMULATED);
 }
 
+void Keyboard::SetState(unsigned short vkCode, bool down)
+{
+    UINT scCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX);
+    keybd_event(vkCode, scCode, down ? 0 : KEYEVENTF_KEYUP, INPUT_EXTRA_FLAGS_EMULATED);
+}
+
 void Keyboard::OnPress(Callback_t&& func)
 {
     _onPress = std::forward<Callback_t>(func);

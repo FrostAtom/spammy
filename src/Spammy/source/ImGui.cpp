@@ -386,7 +386,7 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
     const ImVec2 max = ImVec2(pos.x + size.x, pos.y + size.y);
     const float rounding = 9.f;
 
-    ImU32 fill = UiCol::Bg2;
+    ImU32 fill = desc.locked ? UiCol::ModFill : UiCol::KeyCap;
     ImU32 stroke = UiCol::StrokeSoft;
     float strokeW = 1.f;
     ImU32 accent = 0;
@@ -416,6 +416,13 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
     default: break;
     }
 
+    if (desc.tint) {
+        accent = desc.tint;
+        fill = UiMixColor(UiCol::Bg2, desc.tint, 0.14f);
+        labelCol = UiMixColor(desc.tint, UiCol::Text, 0.4f);
+        fillPressed = UiMixColor(UiCol::Bg2, desc.tint, 0.28f);
+    }
+
     float hoverT = UiAnim(SubId(wid, 1), hovered ? 1.f : 0.f, 18.f);
     float pressT = UiAnim(SubId(wid, 2), desc.pressed ? 1.f : 0.f, 30.f);
     float selT = UiAnim(SubId(wid, 3), desc.selected ? 1.f : 0.f, 20.f);
@@ -435,18 +442,29 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
         if (!desc.inherited) AddGlow(dl, pos, max, accent, rounding, 6, 0.12f + 0.3f * *pulse * *pulse);
         fill = UiMixColor(fill, fillPressed, 0.35f * hoverT);
     } else {
+        ImU32 rest = desc.locked ? UiCol::ModStroke : UiCol::KeyCapStroke;
         fill = UiMixColor(fill, UiCol::HoverFill, hoverT);
-        stroke = UiMixColor(UiCol::StrokeSoft, UiCol::Stroke, hoverT);
+        stroke = UiMixColor(rest, UiCol::Stroke, hoverT);
     }
     fill = UiMixColor(fill, fillPressed, pressT);
     if (!accent) {
         stroke = UiMixColor(stroke, UiCol::HoverStroke, pressT);
         labelCol = UiMixColor(labelCol, UiCol::Text, pressT);
     }
-    if (desc.locked) labelCol = UiCol::Locked;
+    if (desc.locked) labelCol = UiCol::ModText;
+
+    float waveHue = pos.x * 0.0011f + pos.y * 0.0019f - (float)GetTime() * 0.09f;
+    waveHue -= floorf(waveHue);
+    float wr, wg, wb;
+    ColorConvertHSVtoRGB(waveHue, 0.9f, 1.f, wr, wg, wb);
+    ImU32 wave = IM_COL32((int)(wr * 255.f), (int)(wg * 255.f), (int)(wb * 255.f), 255);
+    AddGlow(dl, pos, max, wave, rounding, 7, 0.15f + 0.08f * hoverT);
+    fill = UiMixColor(fill, wave, 0.05f);
 
     dl->AddRectFilled(pos, max, fill, rounding);
     dl->AddRect(pos, max, stroke, rounding, 0, strokeW);
+    dl->AddLine(ImVec2(pos.x + rounding, max.y - 1.5f), ImVec2(max.x - rounding, max.y - 1.5f), WithAlpha(wave, 0.35f),
+                1.5f);
 
     ImFont* font = accent ? UiFonts::Bold : UiFonts::Semi;
     float fontSize = multi ? 15.f : 20.f;
@@ -482,6 +500,51 @@ bool ImGui::UiToggle(const char* id, const ImVec2& pos, bool on)
     if (e < 0.99f) dl->AddRect(pos, max, WithAlpha(UiCol::Stroke, 1.f - e), 10.f);
     dl->AddCircleFilled(ImVec2(pos.x + 10.f + 18.f * e, pos.y + 10.f), 7.f, UiMixColor(UiCol::Mute, UiCol::Bg0, e));
     return clicked;
+}
+
+bool ImGui::UiStepper(const char* id, const ImVec2& pos, float width, int count, int& value)
+{
+    const float height = 20.f;
+    SetCursorScreenPos(pos);
+    InvisibleButton(id, ImVec2(width, height));
+    ImGuiID wid = GetItemID();
+
+    const float pad = height * 0.5f;
+    const float span = width - pad * 2.f;
+    const int last = count > 1 ? count - 1 : 1;
+
+    bool changed = false;
+    if (IsItemActive() && span > 0.f) {
+        float t = ImClamp((GetMousePos().x - (pos.x + pad)) / span, 0.f, 1.f);
+        int next = (int)(t * last + 0.5f);
+        if (next != value) {
+            value = next;
+            changed = true;
+        }
+    }
+    value = ImClamp(value, 0, last);
+
+    float hoverT = UiAnim(SubId(wid, 1), IsItemHovered() ? 1.f : 0.f, 16.f);
+    float knobT = UiAnim(SubId(wid, 2), last > 0 ? (float)value / last : 0.f, 22.f);
+
+    ImDrawList* dl = GetWindowDrawList();
+    const float cy = pos.y + height * 0.5f;
+    const ImVec2 a = ImVec2(pos.x + pad, cy);
+    const ImVec2 b = ImVec2(pos.x + pad + span, cy);
+    dl->AddLine(a, b, UiCol::Stroke, 3.f);
+
+    for (int i = 0; i < count; i++) {
+        float tx = a.x + span * (last > 0 ? (float)i / last : 0.f);
+        dl->AddCircleFilled(ImVec2(tx, cy), 2.f, i <= value ? UiCol::Spam : UiCol::Mute);
+    }
+
+    float knobX = a.x + span * knobT;
+    dl->AddLine(a, ImVec2(knobX, cy), UiCol::Spam, 3.f);
+    if (hoverT > 0.01f)
+        AddGlow(dl, ImVec2(knobX - 7.f, cy - 7.f), ImVec2(knobX + 7.f, cy + 7.f), UiCol::Spam, 7.f, 4, 0.2f * hoverT);
+    dl->AddCircleFilled(ImVec2(knobX, cy), 6.f, UiMixColor(UiCol::Spam, UiCol::SpamText, hoverT));
+    dl->AddCircleFilled(ImVec2(knobX, cy), 3.f, UiCol::Bg0);
+    return changed;
 }
 
 bool ImGui::UiMenuRow(const char* label, ImU32 dotCol, bool disabled, bool keepOpen)

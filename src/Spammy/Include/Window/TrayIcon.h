@@ -43,6 +43,7 @@ public:
 private:
     static UINT s_idCounter;
     NOTIFYICONDATAW _data;
+    bool _added;
     ClickCallback_t _clickFunc;
     MenuCallback_t _menuFunc;
     TrayIconMenu _menu;
@@ -55,6 +56,7 @@ public:
     void SetOnClick(ClickCallback_t&& func);
     void SetMenu(MenuCallback_t&& func);
     void ShowMenu(int x, int y);
+    void SetVisible(bool visible);
 
 private:
     void UpdateIcon(HICON icon);

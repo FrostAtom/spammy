@@ -12,11 +12,13 @@ bool App::Init(int argc, char** argv)
     GetModuleFileNameW(NULL, buf, std::size(buf));
     SetCurrentDirectoryW(std::filesystem::path(buf).parent_path().wstring().c_str());
 
+    bool firstRun = !std::filesystem::is_regular_file(CONFIG_FILE);
     if (!LoadConfig()) {
         int action =
             MessageBoxW(NULL, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
         if (action != IDOK) return false;
     }
+    if (firstRun) EnableAutoStart(true);
     _autoStartEnabled = IsAutoStartEnabled();
 
     _mainWindow = new MainWindow(L"" APP_NAME);
@@ -44,6 +46,13 @@ void App::Uninit()
     }
 }
 
+static Action ResolveKeyAction(const Profile& profile, size_t vkCode, unsigned mods)
+{
+    Action action = profile.keys[vkCode][mods].action;
+    if (action == Action_None && mods != KeyMod_None) action = profile.keys[vkCode][KeyMod_None].action;
+    return action;
+}
+
 bool App::Run()
 {
     if (!_isRunning) return true;
@@ -54,7 +63,12 @@ bool App::Run()
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        if (_mainWindow->WantQuit()) _mainWindow->Hide();
+        if (_mainWindow->WantQuit()) {
+            if (_minimizeToTray && _showTrayIcon)
+                _mainWindow->Hide();
+            else
+                _mainWindow->Close();
+        }
         if (_mainWindow->IsWndNormalized()) _mainWindow->Update();
 
         CheckIsFocusChanged();
@@ -69,18 +83,10 @@ bool App::Run()
         if (_enabled && profile) {
             DWORD ticks = GetTickCount();
             if (ticks - _lastUpdate >= profile->speed) {
-                DWORD mods = sKeyboard.TestModifiers();
-                for (size_t i = 0; i < sKeyboard.Count(); i++) {
-                    if (sKeyboard.IsPressed(i)) {
-                        bool spammy = false;
-                        if (mods != KeyMod_None) {
-                            if (profile->keys[i][mods].action == Action_None)
-                                if (profile->keys[i][KeyMod_None].action == Action_Spammy) spammy = true;
-                        } else {
-                            if (profile->keys[i][KeyMod_None].action == Action_Spammy) spammy = true;
-                        }
-                        if (spammy) sKeyboard.Press(activeHwnd, i);
-                    }
+                unsigned mods = sKeyboard.TestModifiers();
+                for (unsigned short i = 0; i < sKeyboard.Count(); i++) {
+                    if (!sKeyboard.IsPressed(i)) continue;
+                    if (ResolveKeyAction(*profile, i, mods) == Action_Spammy) sKeyboard.Press(activeHwnd, i);
                 }
                 _lastUpdate = ticks;
             }
@@ -111,6 +117,13 @@ bool App::LoadConfig()
     try {
         nlohmann::json json = nlohmann::json::parse(file);
         if (auto enabled = json["enabled"]; enabled.is_boolean()) _enabled = enabled.get<bool>();
+        if (auto minimizeToTray = json["minimizeToTray"]; minimizeToTray.is_boolean())
+            _minimizeToTray = minimizeToTray.get<bool>();
+        if (auto showTrayIcon = json["showTrayIcon"]; showTrayIcon.is_boolean())
+            _showTrayIcon = showTrayIcon.get<bool>();
+        if (auto form = json["form"]; form.is_number_integer()) SetForm((KeyboardForm)form.get<int>());
+        if (auto variant = json["variant"]; variant.is_number_integer())
+            SetVariant((KeyboardVariant)variant.get<int>());
         if (auto profiles = json["profiles"]; profiles.is_array())
             _profiles = json["profiles"].get<std::list<std::shared_ptr<Profile>>>();
         if (auto editingProfile = json["editingProfile"]; editingProfile.is_string())
@@ -128,10 +141,57 @@ void App::SaveConfig()
 
     nlohmann::json json = nlohmann::json::object();
     if (_enabled) json["enabled"] = true;
+    if (!_minimizeToTray) json["minimizeToTray"] = false;
+    if (!_showTrayIcon) json["showTrayIcon"] = false;
+    if (_form != KeyboardForm_75) json["form"] = (int)_form;
+    if (_variant != KeyboardVariant_Ansi) json["variant"] = (int)_variant;
     if (_editingProfile) json["editingProfile"] = _editingProfile->name;
     if (!_profiles.empty()) json["profiles"] = _profiles;
 
     file << json.dump(2, ' ');
+}
+
+bool App::IsMinimizeToTray()
+{
+    return _minimizeToTray;
+}
+
+void App::SetMinimizeToTray(bool state)
+{
+    _minimizeToTray = state;
+}
+
+bool App::IsShowTrayIcon()
+{
+    return _showTrayIcon;
+}
+
+void App::SetShowTrayIcon(bool state)
+{
+    _showTrayIcon = state;
+    if (_mainWindow) _mainWindow->ShowTrayIcon(state);
+}
+
+KeyboardForm App::Form()
+{
+    return _form;
+}
+
+void App::SetForm(KeyboardForm form)
+{
+    if (form < 0 || form >= KeyboardForm_Count) return;
+    _form = form;
+}
+
+KeyboardVariant App::Variant()
+{
+    return _variant;
+}
+
+void App::SetVariant(KeyboardVariant variant)
+{
+    if (variant < 0 || variant >= KeyboardVariant_Count) return;
+    _variant = variant;
 }
 
 static const wchar_t* getAutoStartCommand()
@@ -183,19 +243,26 @@ bool App::OnKeyPress(UINT vkCode, bool repeat)
 {
     if (_mainWindow && _mainWindow->HandleKeyPress(vkCode, repeat)) return true;
 
-    std::lock_guard lock(_callbackMutex);
-    unsigned mods = sKeyboard.TestModifiers();
-    if (_activeProfile) {
-        if (_activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) return true;
-        if (_activeProfile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-        if (_activeProfile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
+    std::shared_ptr<Profile> profile;
+    HWND activeHwnd;
+    {
+        std::lock_guard lock(_callbackMutex);
+        profile = _activeProfile;
+        activeHwnd = _activeHwnd;
+    }
+    if (profile) {
+        unsigned mods = sKeyboard.TestModifiers();
+        if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) return true;
+        if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
+        if (profile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
         if (_enabled) {
-            KeyConfig& cfg = _activeProfile->keys[vkCode][mods];
-            switch (cfg.action) {
+            switch (ResolveKeyAction(*profile, vkCode, mods)) {
+            case Action_Disabled: return true;
             case Action_Spammy:
             case Action_Speedy:
-                if (!repeat) sKeyboard.Press(_activeHwnd, vkCode);
+                if (!repeat) sKeyboard.Press(activeHwnd, vkCode);
                 return true;
+            default: break;
             }
         }
     }
@@ -206,21 +273,25 @@ bool App::OnKeyRelease(UINT vkCode, bool repeat)
 {
     if (_mainWindow && _mainWindow->HandleKeyRelease(vkCode, repeat)) return true;
 
-    std::lock_guard lock(_callbackMutex);
-    unsigned mods = sKeyboard.TestModifiers();
-    if (_activeProfile && _activeProfile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
-        _enabled = !_enabled;
-        return true;
+    std::shared_ptr<Profile> profile;
+    {
+        std::lock_guard lock(_callbackMutex);
+        profile = _activeProfile;
     }
-
-    if (_activeProfile) {
-        if (_activeProfile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-        if (_activeProfile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
+    if (profile) {
+        unsigned mods = sKeyboard.TestModifiers();
+        if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
+            _enabled = !_enabled;
+            return true;
+        }
+        if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
+        if (profile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
         if (_enabled) {
-            KeyConfig& cfg = _activeProfile->keys[vkCode][mods];
-            switch (cfg.action) {
+            switch (ResolveKeyAction(*profile, vkCode, mods)) {
+            case Action_Disabled:
             case Action_Spammy:
             case Action_Speedy: return true;
+            default: break;
             }
         }
     }

@@ -90,6 +90,18 @@ void TrayIcon::SetMenu(MenuCallback_t&& func)
     _menuFunc = std::forward<MenuCallback_t>(func);
 }
 
+void TrayIcon::SetVisible(bool visible)
+{
+    if (!_data.hWnd || visible == _added) return;
+    if (visible) {
+        _added = Update(NIM_ADD);
+        if (_added) Update(NIM_SETVERSION);
+    } else {
+        Update(NIM_DELETE);
+        _added = false;
+    }
+}
+
 void TrayIcon::ShowMenu(int x, int y)
 {
     if (!_menuFunc) return;
@@ -150,6 +162,7 @@ bool TrayIcon::Create(HWND hwnd, HICON icon)
         if (added) Update(NIM_DELETE);
         return false;
     }
+    _added = true;
     return true;
 }
 
@@ -168,6 +181,7 @@ void TrayIcon::Cleanup()
 void TrayIcon::Reset()
 {
     memset(&_data, NULL, sizeof(_data));
+    _added = false;
     _data.cbSize = sizeof(_data);
     _data.uFlags = NIF_MESSAGE;
     _data.uVersion = NOTIFYICON_VERSION_4;

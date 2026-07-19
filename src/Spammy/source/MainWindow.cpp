@@ -47,6 +47,7 @@ bool MainWindow::Initialize()
     trayIcon->SetOnClick(std::bind_front(&MainWindow::OnTrayClick, this));
     trayIcon->SetMenu(std::bind_front(&MainWindow::OnTrayMenu, this));
     SetTrayIcon(trayIcon);
+    if (!sApp.IsShowTrayIcon()) ShowTrayIcon(false);
 
     LoadStyle();
 
@@ -130,7 +131,12 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     if (UiGhostButton("##gear", ImVec2(o.x + 1152.f, o.y + 17.f), 30.f, UiGlyph_Gear)) ImGui::OpenPopup("##settings");
     if (UiGhostButton("##min", ImVec2(o.x + 1188.f, o.y + 17.f), 30.f, UiGlyph_Minimize))
         ShowWindow(Native(), SW_MINIMIZE);
-    if (UiGhostButton("##close", ImVec2(o.x + 1224.f, o.y + 17.f), 30.f, UiGlyph_Close)) Hide();
+    if (UiGhostButton("##close", ImVec2(o.x + 1224.f, o.y + 17.f), 30.f, UiGlyph_Close)) {
+        if (sApp.IsMinimizeToTray() && sApp.IsShowTrayIcon())
+            Hide();
+        else
+            Close();
+    }
 
     DrawSettingsPopup(o);
 }
@@ -229,9 +235,11 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const ImVec2 avail = ImVec2(panelMax.x - panelMin.x - 32.f, panelMax.y - panelMin.y - 32.f);
     const ImVec2 start = ImVec2(panelMin.x + 16.f, panelMin.y + 16.f);
 
+    const std::vector<KeyboardKey>& layout = GetKeyboardLayout(sApp.Form(), sApp.Variant());
+
     float gridW = 0.f;
     float gridH = 0.f;
-    for (const KeyboardKey& item : KeyboardLayout) {
+    for (const KeyboardKey& item : layout) {
         gridW = ImMax(gridW, item.x + item.w);
         gridH = ImMax(gridH, item.y + item.h);
     }
@@ -271,8 +279,8 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const bool releasedRight = ImGui::IsMouseReleased(ImGuiMouseButton_Right);
 
     unsigned mods = sKeyboard.TestModifiers();
-    for (size_t i = 0; i < std::size(KeyboardLayout); i++) {
-        const KeyboardKey& key = KeyboardLayout[i];
+    for (size_t i = 0; i < layout.size(); i++) {
+        const KeyboardKey& key = layout[i];
         const ImVec2 pos = ImVec2(origin.x + key.x * keySize, origin.y + key.y * keySize);
         const ImVec2 size = ImVec2(key.w * keySize - gap, key.h * keySize - gap);
 
@@ -534,10 +542,46 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     }
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 34.f));
 
+    ImVec2 t = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(210.f, 28.f));
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(t.x + 8.f, t.y + 6.f), UiCol::Text, "HIDE ON CLOSE");
+    bool tray = sApp.IsMinimizeToTray();
+    if (UiToggle("##tray", ImVec2(t.x + 164.f, t.y + 4.f), tray)) sApp.SetMinimizeToTray(!tray);
+    ImGui::SetCursorScreenPos(ImVec2(t.x, t.y + 34.f));
+
+    ImVec2 ti = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(210.f, 28.f));
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(ti.x + 8.f, ti.y + 6.f), UiCol::Text, "SHOW TRAY ICON");
+    bool trayIcon = sApp.IsShowTrayIcon();
+    if (UiToggle("##trayicon", ImVec2(ti.x + 164.f, ti.y + 4.f), trayIcon)) sApp.SetShowTrayIcon(!trayIcon);
+    ImGui::SetCursorScreenPos(ImVec2(ti.x, ti.y + 34.f));
+
+    ImGui::Separator();
+
+    ImVec2 f = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(210.f, 24.f));
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(f.x + 8.f, f.y + 3.f), UiCol::Text, "LAYOUT");
+    const char* formName = KeyboardFormName(sApp.Form());
+    ImVec2 fSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, formName);
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(f.x + 202.f - fSize.x, f.y + 3.f), UiCol::SpamText, formName);
+    int form = (int)sApp.Form();
+    if (UiStepper("##form", ImVec2(f.x + 8.f, f.y + 26.f), 194.f, KeyboardForm_Count, form))
+        sApp.SetForm((KeyboardForm)form);
+    ImGui::SetCursorScreenPos(ImVec2(f.x, f.y + 54.f));
+
+    ImVec2 v = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(210.f, 24.f));
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(v.x + 8.f, v.y + 3.f), UiCol::Text, "VARIANT");
+    const char* variantName = KeyboardVariantName(sApp.Variant());
+    ImVec2 vSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, variantName);
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(v.x + 202.f - vSize.x, v.y + 3.f), UiCol::SpamText, variantName);
+    int variant = (int)sApp.Variant();
+    if (UiStepper("##variant", ImVec2(v.x + 8.f, v.y + 26.f), 194.f, KeyboardVariant_Count, variant))
+        sApp.SetVariant((KeyboardVariant)variant);
+    ImGui::SetCursorScreenPos(ImVec2(v.x, v.y + 54.f));
+
     ImGui::Separator();
     if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
-    if (UiMenuRow("DISCORD")) LaunchUrl(L"https://discord.gg/NNnBTK5c8e");
-    if (UiMenuRow("AUTHOR")) LaunchUrl(L"https://t.me/boredatom");
 
     ImGui::UiEndPopup();
 }

@@ -43,6 +43,8 @@ public:
     DWORD IsPressed(unsigned short vkCode);
     // send press notification to target HWND
     void Press(HWND hwnd, unsigned short vkCode);
+    // emulate a standalone key-down or key-up
+    void SetState(unsigned short vkCode, bool down);
     // setups callback to key-down event
     void OnPress(Callback_t&& func);
     // setups callback to key-up event

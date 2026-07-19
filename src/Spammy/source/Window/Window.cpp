@@ -86,6 +86,13 @@ void Window::SetTrayIcon(TrayIcon* icon)
     if (_hwnd) _trayIcon->Create(_hwnd, _icon);
 }
 
+void Window::ShowTrayIcon(bool visible)
+{
+    if (!_trayIcon || !_hwnd) return;
+    if (visible) _trayIcon->Create(_hwnd, _icon);
+    _trayIcon->SetVisible(visible);
+}
+
 void Window::Cleanup()
 {
     if (_trayIcon) {
