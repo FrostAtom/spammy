@@ -59,8 +59,7 @@ private:
 
     void CheckIsFocusChanged();
     void OnFocusChanged();
-    bool OnKeyPress(UINT vkCode, bool repeat);
-    bool OnKeyRelease(UINT vkCode, bool repeat);
+    bool OnKeyEvent(bool down, UINT vkCode, bool repeat);
 
 private:
     MainWindow* _mainWindow = NULL;

@@ -1,6 +1,8 @@
 #include "MainWindow.h"
 #include "App.h"
+#include "Modes.h"
 #include "Resources.h"
+#include "Updater.h"
 
 using namespace ImGui;
 
@@ -124,6 +126,13 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     AddTrackedText(dl, UiFonts::Bold, 22.f, ImVec2(o.x + 60.f, o.y + 22.f), UiCol::Text, "SPAMMY", 4.f);
     dl->AddText(UiFonts::Mono, 12.f, ImVec2(o.x + 180.f, o.y + 29.f), UiCol::Mute, __DATE__);
 
+    if (sUpdater.IsUpdateAvailable()) {
+        char update[48];
+        snprintf(update, sizeof(update), "NEW BUILD AVAIL %s", sUpdater.LatestDate());
+        if (UiBadge("##update", ImVec2(o.x + 272.f, o.y + 19.f), update, UiCol::Ok)) sUpdater.OpenReleasePage();
+        ImGui::Tip("Open latest release on GitHub");
+    }
+
     if (UiGhostButton("##gear", ImVec2(o.x + 1152.f, o.y + 17.f), 30.f, UiGlyph_Gear)) ImGui::OpenPopup("##settings");
     if (UiGhostButton("##min", ImVec2(o.x + 1188.f, o.y + 17.f), 30.f, UiGlyph_Minimize))
         ShowWindow(Native(), SW_MINIMIZE);
@@ -144,8 +153,7 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
     if (profile) {
         dl->AddText(UiFonts::Semi, 20.f, ImVec2(o.x + 44.f, o.y + 85.f), UiCol::Text, profile->name.c_str());
     } else {
-        ImU32 flash = ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
-        dl->AddText(UiFonts::Semi, 20.f, ImVec2(o.x + 44.f, o.y + 85.f), flash, "NOT SET");
+        dl->AddText(UiFonts::Semi, 20.f, ImVec2(o.x + 44.f, o.y + 85.f), UiFlashDanger(), "NOT SET");
     }
     float chevT = UiAnim(ImGui::GetID("##profiles.chev"), ImGui::IsPopupOpen("##profiles") ? 1.f : 0.f, 16.f);
     AddChevronDown(dl, ImVec2(o.x + 222.f, o.y + 89.f), UiMixColor(UiCol::Sub, UiCol::Text, chevT), chevT);
@@ -155,8 +163,7 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         if (UiChipFrame("##apps", ImVec2(o.x + 260.f, o.y + 66.f), ImVec2(110.f, 46.f))) ImGui::OpenPopup("##appsmenu");
         UiChipLabel(ImVec2(o.x + 276.f, o.y + 73.f), "APPS");
         if (profile->apps.empty()) {
-            ImU32 flash = ImGui::GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
-            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), flash, "NONE");
+            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), UiFlashDanger(), "NONE");
         } else {
             char buf[32];
             snprintf(buf, sizeof(buf), "%d bound", (int)profile->apps.size());
@@ -164,23 +171,13 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         }
         DrawAppsPopup(o, profile);
 
-        if (UiChipFrame("##winkey", ImVec2(o.x + 700.f, o.y + 66.f), ImVec2(110.f, 46.f)))
+        if (UiLockChip("##winkey", ImVec2(o.x + 700.f, o.y + 66.f), ImVec2(110.f, 46.f), "WIN KEY",
+                       profile->disableWin))
             profile->disableWin = !profile->disableWin;
-        UiChipLabel(ImVec2(o.x + 716.f, o.y + 73.f), "WIN KEY");
-        float winT = UiAnim(ImGui::GetID("##winkey.t"), profile->disableWin ? 1.f : 0.f, 14.f);
-        AddStatusDot(dl, ImVec2(o.x + 722.f, o.y + 96.f), 3.5f, UiMixColor(UiCol::Mute, UiCol::Spam, winT),
-                     profile->disableWin);
-        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 732.f, o.y + 86.f), UiMixColor(UiCol::Sub, UiCol::Text, winT),
-                    profile->disableWin ? "LOCKED" : "FREE");
 
-        if (UiChipFrame("##altf4", ImVec2(o.x + 824.f, o.y + 66.f), ImVec2(120.f, 46.f)))
+        if (UiLockChip("##altf4", ImVec2(o.x + 824.f, o.y + 66.f), ImVec2(120.f, 46.f), "ALT + F4",
+                       profile->disableAltF4))
             profile->disableAltF4 = !profile->disableAltF4;
-        UiChipLabel(ImVec2(o.x + 840.f, o.y + 73.f), "ALT + F4");
-        float altT = UiAnim(ImGui::GetID("##altf4.t"), profile->disableAltF4 ? 1.f : 0.f, 14.f);
-        AddStatusDot(dl, ImVec2(o.x + 846.f, o.y + 96.f), 3.5f, UiMixColor(UiCol::Mute, UiCol::Spam, altT),
-                     profile->disableAltF4);
-        dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 856.f, o.y + 86.f), UiMixColor(UiCol::Sub, UiCol::Text, altT),
-                    profile->disableAltF4 ? "LOCKED" : "FREE");
 
         if (UiChipFrame("##pause", ImVec2(o.x + 958.f, o.y + 66.f), ImVec2(150.f, 46.f))) {
             if (_editPause) {
@@ -280,28 +277,16 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
 
     unsigned mods = sKeyboard.TestModifiers();
     auto keyItem = [&](const char* id, const char* label, UINT vkCode, const ImVec2& pos, const ImVec2& size) {
-        KeyConfig* cfg = profile ? &profile->keys[vkCode][mods] : NULL;
-
         UiKeyDesc desc = {};
         desc.label = label;
         desc.locked = sKeyboard.IsModifier(vkCode) || vkCode == VK_LWIN || vkCode == VK_RWIN;
         desc.pressed = sKeyboard.IsPressed(vkCode) != 0;
         desc.selected = _selection.count(vkCode) != 0;
-        if (cfg) {
-            Action action = cfg->action;
-            if (action == Action_None && mods != KeyMod_None) {
-                Action base = profile->keys[vkCode][KeyMod_None].action;
-                if (base != Action_None) {
-                    action = base;
-                    desc.inherited = true;
-                }
-            }
-            switch (action) {
-            case Action_Spammy: desc.style = UiKeyStyle_Spam; break;
-            case Action_Speedy: desc.style = UiKeyStyle_Speedy; break;
-            case Action_Disabled: desc.style = UiKeyStyle_Blocked; break;
-            default: break;
-            }
+        if (profile) {
+            bool inherited = false;
+            const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods, &inherited));
+            desc.inherited = inherited;
+            if (mode) desc.style = mode->keyStyle;
         }
 
         UiKey(id, pos, size, desc);
@@ -315,7 +300,7 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
             s_pressVk = vkCode;
         }
 
-        if (cfg && !desc.locked) {
+        if (profile && !desc.locked) {
             if (pressedHere && _selection.count(vkCode)) s_brushErase = true;
 
             if (brushing && hoverKey) {
@@ -507,7 +492,7 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
             s_focusName = true;
         }
     } else {
-        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SetNextItemWidth(-52.f);
         if (s_focusName) {
             ImGui::SetKeyboardFocusHere();
             s_focusName = false;
@@ -515,7 +500,11 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
         bool enter = ImGui::InputTextWithHint("##newname", "profile name", s_newName, sizeof(s_newName),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
         bool valid = strlen(s_newName) >= 3 && !sApp.IsProfileExists(s_newName);
-        if (enter && valid) {
+        ImGui::SameLine(0.f, 6.f);
+        ImGui::BeginDisabled(!valid);
+        bool ok = ImGui::Button("OK", ImVec2(-FLT_MIN, 0.f));
+        ImGui::EndDisabled();
+        if ((enter || ok) && valid) {
             sApp.CreateProfile(s_newName);
             ImGui::CloseCurrentPopup();
         }
@@ -525,6 +514,14 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
     ImGui::UiEndPopup();
 }
 
+static bool MatchesFilter(const std::string& name, const char* filter)
+{
+    if (!filter[0]) return true;
+    auto it = std::search(name.begin(), name.end(), filter, filter + strlen(filter),
+                          [](char a, char b) { return tolower((unsigned char)a) == tolower((unsigned char)b); });
+    return it != name.end();
+}
+
 void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile)
 {
     ImGui::SetNextWindowPos(ImVec2(o.x + 260.f, o.y + 116.f));
@@ -532,8 +529,10 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     ImGui::SetNextWindowSize(ImVec2(280.f, 0.f));
     if (!ImGui::UiBeginPopup("##appsmenu")) return;
 
+    static char s_search[64] = {0};
     static std::vector<std::string> s_appList;
     if (ImGui::IsWindowAppearing()) {
+        s_search[0] = '\0';
         s_appList.clear();
         EnumWindows([this](HWND hwnd) -> BOOL {
             std::filesystem::path path = GetProcessPath(hwnd);
@@ -544,7 +543,10 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
             return TRUE;
         });
         LexicographicalSort(s_appList);
+        ImGui::SetKeyboardFocusHere();
     }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##appsearch", "search", s_search, sizeof(s_search));
 
     ImGui::PushFont(UiFonts::Semi, 14.f);
     if (!profile->apps.empty()) {
@@ -552,6 +554,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
         const char* unbindApp = NULL;
         int idx = 0;
         for (const std::string& app : profile->apps) {
+            if (!MatchesFilter(app, s_search)) continue;
             ImGui::PushID(idx++);
             if (UiMenuRow(app.c_str(), UiCol::Spam, false, true)) unbindApp = app.c_str();
             ImGui::PopID();
@@ -564,6 +567,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     int shown = 0;
     int idx = 1000;
     for (const std::string& app : s_appList) {
+        if (!MatchesFilter(app, s_search)) continue;
         if (std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) continue;
         auto appProfile = sApp.FindProfileByApp(app.c_str());
         bool boundElsewhere = appProfile && appProfile != profile;
@@ -572,7 +576,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
         ImGui::PopID();
         shown++;
     }
-    if (!shown) ImGui::TextDisabled("nothing running");
+    if (!shown) ImGui::TextDisabled(s_search[0] ? "no matches" : "nothing running");
     ImGui::PopFont();
 
     ImGui::UiEndPopup();
@@ -587,70 +591,27 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     static bool s_autoStart = false;
     if (ImGui::IsWindowAppearing()) s_autoStart = sApp.IsAutoStartEnabled();
 
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(210.f, 28.f));
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(p.x + 8.f, p.y + 6.f), UiCol::Text, "AUTO START");
-    if (UiToggle("##autostart", ImVec2(p.x + 164.f, p.y + 4.f), s_autoStart)) {
+    if (UiToggleRow("##autostart", "AUTO START", s_autoStart)) {
         if (sApp.EnableAutoStart(!s_autoStart)) s_autoStart = !s_autoStart;
     }
-    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 34.f));
-
-    ImVec2 t = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(210.f, 28.f));
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(t.x + 8.f, t.y + 6.f), UiCol::Text, "HIDE ON CLOSE");
-    bool tray = sApp.IsMinimizeToTray();
-    if (UiToggle("##tray", ImVec2(t.x + 164.f, t.y + 4.f), tray)) sApp.SetMinimizeToTray(!tray);
-    ImGui::SetCursorScreenPos(ImVec2(t.x, t.y + 34.f));
-
-    ImVec2 ti = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(210.f, 28.f));
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(ti.x + 8.f, ti.y + 6.f), UiCol::Text, "SHOW TRAY ICON");
-    bool trayIcon = sApp.IsShowTrayIcon();
-    if (UiToggle("##trayicon", ImVec2(ti.x + 164.f, ti.y + 4.f), trayIcon)) sApp.SetShowTrayIcon(!trayIcon);
-    ImGui::SetCursorScreenPos(ImVec2(ti.x, ti.y + 34.f));
-
-    ImVec2 sn = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(210.f, 28.f));
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(sn.x + 8.f, sn.y + 6.f), UiCol::Text, "ENABLE SOUNDS");
-    bool sounds = sApp.IsSoundsEnabled();
-    if (UiToggle("##sounds", ImVec2(sn.x + 164.f, sn.y + 4.f), sounds)) sApp.SetSoundsEnabled(!sounds);
-    ImGui::SetCursorScreenPos(ImVec2(sn.x, sn.y + 34.f));
+    if (UiToggleRow("##tray", "HIDE ON CLOSE", sApp.IsMinimizeToTray()))
+        sApp.SetMinimizeToTray(!sApp.IsMinimizeToTray());
+    if (UiToggleRow("##trayicon", "SHOW TRAY ICON", sApp.IsShowTrayIcon()))
+        sApp.SetShowTrayIcon(!sApp.IsShowTrayIcon());
+    if (UiToggleRow("##sounds", "ENABLE SOUNDS", sApp.IsSoundsEnabled()))
+        sApp.SetSoundsEnabled(!sApp.IsSoundsEnabled());
 
     ImGui::Separator();
 
-    ImVec2 f = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(210.f, 24.f));
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(f.x + 8.f, f.y + 3.f), UiCol::Text, "LAYOUT");
-    const char* formName = KeyboardFormName(sApp.Form());
-    ImVec2 fSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, formName);
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(f.x + 202.f - fSize.x, f.y + 3.f), UiCol::SpamText, formName);
     int form = (int)sApp.Form();
-    if (UiStepper("##form", ImVec2(f.x + 8.f, f.y + 26.f), 194.f, KeyboardForm_Count, form))
+    if (UiStepperRow("##form", "LAYOUT", KeyboardFormName(sApp.Form()), KeyboardForm_Count, form))
         sApp.SetForm((KeyboardForm)form);
-    ImGui::SetCursorScreenPos(ImVec2(f.x, f.y + 54.f));
-
-    ImVec2 v = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(210.f, 24.f));
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(v.x + 8.f, v.y + 3.f), UiCol::Text, "VARIANT");
-    const char* variantName = KeyboardVariantName(sApp.Variant());
-    ImVec2 vSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, variantName);
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(v.x + 202.f - vSize.x, v.y + 3.f), UiCol::SpamText, variantName);
     int variant = (int)sApp.Variant();
-    if (UiStepper("##variant", ImVec2(v.x + 8.f, v.y + 26.f), 194.f, KeyboardVariant_Count, variant))
+    if (UiStepperRow("##variant", "VARIANT", KeyboardVariantName(sApp.Variant()), KeyboardVariant_Count, variant))
         sApp.SetVariant((KeyboardVariant)variant);
-    ImGui::SetCursorScreenPos(ImVec2(v.x, v.y + 54.f));
-
-    ImVec2 mo = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(210.f, 24.f));
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(mo.x + 8.f, mo.y + 3.f), UiCol::Text, "MOUSE");
-    const char* mouseName = MouseFormName(sApp.Mouse());
-    ImVec2 moSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, mouseName);
-    dl->AddText(UiFonts::Semi, 18.f, ImVec2(mo.x + 202.f - moSize.x, mo.y + 3.f), UiCol::SpamText, mouseName);
     int mouse = (int)sApp.Mouse();
-    if (UiStepper("##mouse", ImVec2(mo.x + 8.f, mo.y + 26.f), 194.f, MouseForm_Count, mouse))
+    if (UiStepperRow("##mouse", "MOUSE", MouseFormName(sApp.Mouse()), MouseForm_Count, mouse))
         sApp.SetMouse((MouseForm)mouse);
-    ImGui::SetCursorScreenPos(ImVec2(mo.x, mo.y + 54.f));
 
     ImGui::Separator();
     if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
@@ -671,9 +632,12 @@ void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsig
 
     Action action = Action_None;
     bool apply = false;
-    if (UiMenuRow("SPAMMY", UiCol::Spam)) action = Action_Spammy, apply = true;
-    if (UiMenuRow("SPEEDY", UiCol::Speedy)) action = Action_Speedy, apply = true;
-    if (UiMenuRow("DISABLED", UiCol::Danger)) action = Action_Disabled, apply = true;
+    for (const KeyMode& mode : KeyModes()) {
+        if (UiMenuRow(mode.name, mode.menuColor)) {
+            action = mode.action;
+            apply = true;
+        }
+    }
     if (UiMenuRow("CLEAR", UiCol::Mute)) action = Action_None, apply = true;
     if (apply)
         for (UINT vk : _selection)

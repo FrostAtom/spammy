@@ -25,6 +25,11 @@ ImVec4 ImGui::FlashColor(float r, float g, float b, float f, float min, float ma
     return ImVec4(r, g, b, a);
 }
 
+ImU32 ImGui::UiFlashDanger()
+{
+    return GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
+}
+
 void ImGui::PushStyleColorTriplet(ImGuiCol idx, ImVec4 col)
 {
     for (int i = 0; i < 3; i++)
@@ -282,6 +287,28 @@ void ImGui::AddKeycap(ImDrawList* dl, const ImVec2& min, const ImVec2& max, cons
                 text);
 }
 
+bool ImGui::UiBadge(const char* id, const ImVec2& pos, const char* text, ImU32 accent)
+{
+    ImVec2 textSize = CalcTrackedTextSize(UiFonts::Bold, 13.f, text, 1.f);
+    ImVec2 size = ImVec2(textSize.x + 36.f, 26.f);
+    SetCursorScreenPos(pos);
+    bool clicked = InvisibleButton(id, size);
+    ImGuiID wid = GetItemID();
+    float hoverT = UiAnim(SubId(wid, 1), IsItemHovered() ? 1.f : 0.f, 18.f);
+
+    ImDrawList* dl = GetWindowDrawList();
+    const ImVec2 max = ImVec2(pos.x + size.x, pos.y + size.y);
+    const float cy = pos.y + size.y * 0.5f;
+    float breath = 0.8f + 0.2f * sinf((float)GetTime() * 2.5f);
+    AddGlow(dl, pos, max, accent, 13.f, 5, (0.12f + 0.18f * hoverT) * breath);
+    dl->AddRectFilled(pos, max, UiMixColor(UiCol::Bg1, accent, 0.12f + 0.08f * hoverT), 13.f);
+    dl->AddRect(pos, max, WithAlpha(accent, 0.7f + 0.3f * hoverT), 13.f, 0, 1.f + 0.5f * hoverT);
+    AddStatusDot(dl, ImVec2(pos.x + 13.f, cy), 3.f, accent, true);
+    AddTrackedText(dl, UiFonts::Bold, 13.f, ImVec2(pos.x + 24.f, cy - 6.5f),
+                   UiMixColor(accent, UiCol::Text, 0.25f + 0.35f * hoverT), text, 1.f);
+    return clicked;
+}
+
 bool ImGui::UiGhostButton(const char* id, const ImVec2& pos, float size, UiGlyph glyph)
 {
     SetCursorScreenPos(pos);
@@ -341,6 +368,20 @@ bool ImGui::UiChipFrame(const char* id, const ImVec2& pos, const ImVec2& size)
 void ImGui::UiChipLabel(const ImVec2& pos, const char* text)
 {
     AddTrackedText(GetWindowDrawList(), UiFonts::Semi, 12.f, pos, UiCol::Mute, text, 1.5f);
+}
+
+bool ImGui::UiLockChip(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, bool locked)
+{
+    bool clicked = UiChipFrame(id, pos, size);
+    ImGuiID wid = GetItemID();
+    UiChipLabel(ImVec2(pos.x + 16.f, pos.y + 7.f), label);
+    float t = UiAnim(SubId(wid, 3), locked ? 1.f : 0.f, 14.f);
+
+    ImDrawList* dl = GetWindowDrawList();
+    AddStatusDot(dl, ImVec2(pos.x + 22.f, pos.y + 30.f), 3.5f, UiMixColor(UiCol::Mute, UiCol::Spam, t), locked);
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(pos.x + 32.f, pos.y + 20.f), UiMixColor(UiCol::Sub, UiCol::Text, t),
+                locked ? "LOCKED" : "FREE");
+    return clicked;
 }
 
 bool ImGui::UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, bool enabled)
@@ -544,6 +585,29 @@ bool ImGui::UiStepper(const char* id, const ImVec2& pos, float width, int count,
         AddGlow(dl, ImVec2(knobX - 7.f, cy - 7.f), ImVec2(knobX + 7.f, cy + 7.f), UiCol::Spam, 7.f, 4, 0.2f * hoverT);
     dl->AddCircleFilled(ImVec2(knobX, cy), 6.f, UiMixColor(UiCol::Spam, UiCol::SpamText, hoverT));
     dl->AddCircleFilled(ImVec2(knobX, cy), 3.f, UiCol::Bg0);
+    return changed;
+}
+
+bool ImGui::UiToggleRow(const char* id, const char* label, bool on)
+{
+    ImVec2 pos = GetCursorScreenPos();
+    Dummy(ImVec2(210.f, 28.f));
+    GetWindowDrawList()->AddText(UiFonts::Semi, 18.f, ImVec2(pos.x + 8.f, pos.y + 6.f), UiCol::Text, label);
+    bool clicked = UiToggle(id, ImVec2(pos.x + 164.f, pos.y + 4.f), on);
+    SetCursorScreenPos(ImVec2(pos.x, pos.y + 34.f));
+    return clicked;
+}
+
+bool ImGui::UiStepperRow(const char* id, const char* label, const char* value, int count, int& index)
+{
+    ImVec2 pos = GetCursorScreenPos();
+    Dummy(ImVec2(210.f, 24.f));
+    ImDrawList* dl = GetWindowDrawList();
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(pos.x + 8.f, pos.y + 3.f), UiCol::Text, label);
+    ImVec2 valueSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, value);
+    dl->AddText(UiFonts::Semi, 18.f, ImVec2(pos.x + 202.f - valueSize.x, pos.y + 3.f), UiCol::SpamText, value);
+    bool changed = UiStepper(id, ImVec2(pos.x + 8.f, pos.y + 26.f), 194.f, count, index);
+    SetCursorScreenPos(ImVec2(pos.x, pos.y + 54.f));
     return changed;
 }
 

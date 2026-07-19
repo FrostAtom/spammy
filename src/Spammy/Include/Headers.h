@@ -2,7 +2,6 @@
 
 #include <array>
 #include <atomic>
-#include <codecvt>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -27,6 +26,7 @@
 #include <mmsystem.h>
 #include <psapi.h>
 #include <shellapi.h>
+#include <winhttp.h>
 
 #include <nlohmann/json.hpp>
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -37,4 +37,5 @@
 
 #pragma comment(lib, "d3d9")
 #pragma comment(lib, "dwmapi")
+#pragma comment(lib, "winhttp")
 #pragma comment(lib, "winmm")

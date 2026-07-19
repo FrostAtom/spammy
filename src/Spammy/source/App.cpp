@@ -1,4 +1,6 @@
 #include "App.h"
+#include "Modes.h"
+#include "Updater.h"
 
 App& App::Instance()
 {
@@ -29,8 +31,10 @@ bool App::Init(int argc, char** argv)
         _mainWindow->Show();
     }
 
-    sKeyboard.OnPress(std::bind_front(&App::OnKeyPress, this));
-    sKeyboard.OnRelease(std::bind_front(&App::OnKeyRelease, this));
+    sKeyboard.OnPress([this](UINT vkCode, bool repeat) { return OnKeyEvent(true, vkCode, repeat); });
+    sKeyboard.OnRelease([this](UINT vkCode, bool repeat) { return OnKeyEvent(false, vkCode, repeat); });
+
+    sUpdater.CheckAsync();
 
     _isRunning = true;
     return true;
@@ -44,13 +48,6 @@ void App::Uninit()
         delete _mainWindow;
         _mainWindow = NULL;
     }
-}
-
-static Action ResolveKeyAction(const Profile& profile, size_t vkCode, unsigned mods)
-{
-    Action action = profile.keys[vkCode][mods].action;
-    if (action == Action_None && mods != KeyMod_None) action = profile.keys[vkCode][KeyMod_None].action;
-    return action;
 }
 
 bool App::Run()
@@ -86,7 +83,8 @@ bool App::Run()
                 unsigned mods = sKeyboard.TestModifiers();
                 for (unsigned short i = 0; i < sKeyboard.Count(); i++) {
                     if (!sKeyboard.IsPressed(i)) continue;
-                    if (ResolveKeyAction(*profile, i, mods) == Action_Spammy) sKeyboard.Press(activeHwnd, i);
+                    const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, i, mods));
+                    if (mode && mode->onTick) mode->onTick({activeHwnd, i, false, *profile});
                 }
                 _lastUpdate = ticks;
             }
@@ -273,9 +271,11 @@ static void PlayEnabledSound(bool enabled)
     PlaySoundW(path, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
 }
 
-bool App::OnKeyPress(UINT vkCode, bool repeat)
+bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
 {
-    if (_mainWindow && _mainWindow->HandleKeyPress(vkCode, repeat)) return true;
+    if (_mainWindow &&
+        (down ? _mainWindow->HandleKeyPress(vkCode, repeat) : _mainWindow->HandleKeyRelease(vkCode, repeat)))
+        return true;
 
     std::shared_ptr<Profile> profile;
     HWND activeHwnd;
@@ -284,53 +284,25 @@ bool App::OnKeyPress(UINT vkCode, bool repeat)
         profile = _activeProfile;
         activeHwnd = _activeHwnd;
     }
-    if (profile) {
-        unsigned mods = sKeyboard.TestModifiers();
-        if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) return true;
-        if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-        if (profile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
-        if (_enabled) {
-            switch (ResolveKeyAction(*profile, vkCode, mods)) {
-            case Action_Disabled: return true;
-            case Action_Spammy:
-            case Action_Speedy:
-                if (!repeat) sKeyboard.Press(activeHwnd, vkCode);
-                return true;
-            default: break;
-            }
-        }
-    }
-    return false;
-}
+    if (!profile) return false;
 
-bool App::OnKeyRelease(UINT vkCode, bool repeat)
-{
-    if (_mainWindow && _mainWindow->HandleKeyRelease(vkCode, repeat)) return true;
-
-    std::shared_ptr<Profile> profile;
-    {
-        std::lock_guard lock(_callbackMutex);
-        profile = _activeProfile;
-    }
-    if (profile) {
-        unsigned mods = sKeyboard.TestModifiers();
-        if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
+    unsigned mods = sKeyboard.TestModifiers();
+    if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
+        if (!down) {
             _enabled = !_enabled;
             if (_soundsEnabled) PlayEnabledSound(_enabled);
-            return true;
         }
-        if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-        if (profile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
-        if (_enabled) {
-            switch (ResolveKeyAction(*profile, vkCode, mods)) {
-            case Action_Disabled:
-            case Action_Spammy:
-            case Action_Speedy: return true;
-            default: break;
-            }
-        }
+        return true;
     }
-    return false;
+    if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
+    if (profile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
+    if (!_enabled) return false;
+
+    const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods));
+    if (!mode) return false;
+    KeyModeContext ctx = {activeHwnd, (unsigned short)vkCode, repeat, *profile};
+    bool (*handler)(const KeyModeContext&) = down ? mode->onPress : mode->onRelease;
+    return handler && handler(ctx);
 }
 
 std::shared_ptr<Profile> App::ActiveProfile()

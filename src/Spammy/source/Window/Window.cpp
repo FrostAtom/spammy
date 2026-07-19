@@ -187,8 +187,8 @@ bool Window::IsShown()
 void Window::SetName(const wchar_t* name)
 {
     wcsncpy_s(_wndName, name, std::size(_wndName));
-    std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
-    strncpy_s(_u8wndName, conv.to_bytes(name).c_str(), std::size(_u8wndName));
+    _u8wndName[0] = '\0';
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, _u8wndName, (int)std::size(_u8wndName), NULL, NULL);
     if (_hwnd) SetWindowTextW(_hwnd, name);
 }
 

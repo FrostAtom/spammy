@@ -1,3 +1,4 @@
+#pragma once
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 #define _USE_MATH_DEFINES
@@ -8,6 +9,8 @@ void Tip(const char* fmt, ...);
 
 // Flashes alpha every f seconds
 ImVec4 FlashColor(float r, float g, float b, float f = 8.f, float min = 0.f, float max = 1.f);
+
+ImU32 UiFlashDanger();
 
 void PushStyleColorTriplet(ImGuiCol idx, ImVec4 col);
 
@@ -98,12 +101,16 @@ void AddPanel(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float roundi
 void AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col, float flip = 0.f);
 void AddKeycap(ImDrawList* dl, const ImVec2& min, const ImVec2& max, const char* text, ImU32 textCol);
 
+bool UiBadge(const char* id, const ImVec2& pos, const char* text, ImU32 accent);
 bool UiGhostButton(const char* id, const ImVec2& pos, float size, UiGlyph glyph);
 bool UiChipFrame(const char* id, const ImVec2& pos, const ImVec2& size);
 void UiChipLabel(const ImVec2& pos, const char* text);
+bool UiLockChip(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, bool locked);
 bool UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, bool enabled);
 bool UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const UiKeyDesc& desc);
 bool UiToggle(const char* id, const ImVec2& pos, bool on);
 bool UiStepper(const char* id, const ImVec2& pos, float width, int count, int& value);
+bool UiToggleRow(const char* id, const char* label, bool on);
+bool UiStepperRow(const char* id, const char* label, const char* value, int count, int& index);
 bool UiMenuRow(const char* label, ImU32 dotCol = 0, bool disabled = false, bool keepOpen = false);
 } // namespace ImGui
