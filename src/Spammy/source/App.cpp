@@ -64,7 +64,7 @@ bool App::Run()
             DispatchMessageW(&msg);
         }
         if (_mainWindow->WantQuit()) {
-            if (_minimizeToTray && _showTrayIcon)
+            if (_minimizeToTray)
                 _mainWindow->Hide();
             else
                 _mainWindow->Close();

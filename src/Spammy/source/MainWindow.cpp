@@ -132,7 +132,7 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     if (UiGhostButton("##min", ImVec2(o.x + 1188.f, o.y + 17.f), 30.f, UiGlyph_Minimize))
         ShowWindow(Native(), SW_MINIMIZE);
     if (UiGhostButton("##close", ImVec2(o.x + 1224.f, o.y + 17.f), 30.f, UiGlyph_Close)) {
-        if (sApp.IsMinimizeToTray() && sApp.IsShowTrayIcon())
+        if (sApp.IsMinimizeToTray())
             Hide();
         else
             Close();
