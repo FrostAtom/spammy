@@ -12,6 +12,10 @@ class MainWindow : public Window {
     std::filesystem::path _appFilePath;
     bool _editPause;
     std::set<UINT> _selection;
+    std::array<unsigned, KEYBOARD_KEYS_COUNT> _pressCount = {};
+    std::array<DWORD, KEYBOARD_KEYS_COUNT> _pressTick = {};
+    std::array<DWORD, KEYBOARD_KEYS_COUNT> _pressStart = {};
+    std::array<DWORD, KEYBOARD_KEYS_COUNT> _spamTick = {};
 
 public:
     MainWindow(const wchar_t* className, const wchar_t* wndName = NULL);

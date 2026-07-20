@@ -55,8 +55,18 @@ bool MainWindow::Initialize()
     return true;
 }
 
-bool MainWindow::HandleKeyPress(unsigned short vkCode, bool)
+bool MainWindow::HandleKeyPress(unsigned short vkCode, bool repeat)
 {
+    if (!repeat && vkCode < KEYBOARD_KEYS_COUNT && GetForegroundWindow() == Native()) {
+        DWORD ticks = GetTickCount();
+        if (ticks - _pressTick[vkCode] > 1000) {
+            _pressCount[vkCode] = 1;
+            _pressStart[vkCode] = ticks;
+        } else {
+            _pressCount[vkCode]++;
+        }
+        _pressTick[vkCode] = ticks;
+    }
     if (Keyboard::IsMouseButton(vkCode)) return false;
     if (_editPause) return true;
     return false;
@@ -287,6 +297,15 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const bool releasedLeft = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
     const bool releasedRight = ImGui::IsMouseReleased(ImGuiMouseButton_Right);
 
+    struct PressBadge {
+        ImVec2 pos;
+        float rate;
+        DWORD age;
+    };
+    std::vector<PressBadge> badges;
+    const DWORD nowTicks = GetTickCount();
+    const bool wndFocused = GetForegroundWindow() == Native();
+
     unsigned mods = sKeyboard.TestModifiers();
     auto keyItem = [&](const char* id, const char* label, UINT vkCode, const ImVec2& pos, const ImVec2& size) {
         UiKeyDesc desc = {};
@@ -299,11 +318,32 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
             const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods, &inherited));
             desc.inherited = inherited;
             if (mode) desc.style = mode->keyStyle;
+
+            if (vkCode < KEYBOARD_KEYS_COUNT) {
+                if (wndFocused && desc.pressed && mode && mode->onTick) {
+                    DWORD steps = (nowTicks - _spamTick[vkCode]) / profile->speed;
+                    if (steps) {
+                        _pressCount[vkCode] += steps;
+                        _pressTick[vkCode] = nowTicks;
+                        _spamTick[vkCode] += steps * profile->speed;
+                    }
+                } else {
+                    _spamTick[vkCode] = nowTicks;
+                }
+            }
         }
 
         UiKey(id, pos, size, desc);
         const ImVec2 keyMin = ImGui::GetItemRectMin();
         const ImVec2 keyMax = ImGui::GetItemRectMax();
+
+        if (vkCode < KEYBOARD_KEYS_COUNT && _pressCount[vkCode] > 2) {
+            DWORD age = nowTicks - _pressTick[vkCode];
+            DWORD span = _pressTick[vkCode] - _pressStart[vkCode];
+            if (age <= 1000 && span)
+                badges.push_back(
+                    {ImVec2((keyMin.x + keyMax.x) * .5f, keyMin.y), (_pressCount[vkCode] - 1) * 1000.f / span, age});
+        }
 
         const bool hoverKey = ImGui::IsMouseHoveringRect(keyMin, keyMax);
         const bool pressedHere = s_pressInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoverKey;
@@ -401,6 +441,22 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
             keyItem("##mb5", "M5", VK_XBUTTON2, ImVec2(body.x + 6.f, body.y + 122.f), ImVec2(24.f, 38.f));
             keyItem("##mb4", "M4", VK_XBUTTON1, ImVec2(body.x + 6.f, body.y + 164.f), ImVec2(24.f, 38.f));
         }
+    }
+
+    for (const PressBadge& badge : badges) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), badge.rate < 9.95f ? "%.1f/s" : "%.0f/s", badge.rate);
+        float pop = badge.age < 120 ? 1.3f - .3f * (badge.age / 120.f) : 1.f;
+        float alpha = badge.age > 700 ? 1.f - (badge.age - 700) / 300.f : 1.f;
+        ImU32 a = (ImU32)(alpha * 255.f + .5f);
+        auto fade = [a](ImU32 col) { return (col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT); };
+        ImVec2 ts = UiFonts::Bold->CalcTextSizeA(24.f * pop, FLT_MAX, 0.f, buf);
+        ImVec2 bmin = ImVec2(badge.pos.x - ts.x * .5f - 10.f, badge.pos.y - ts.y - 16.f);
+        ImVec2 bmax = ImVec2(badge.pos.x + ts.x * .5f + 10.f, badge.pos.y - 6.f);
+        dl->AddRectFilled(bmin, bmax, fade(UiCol::KeyCap), 8.f);
+        dl->AddRect(bmin, bmax, fade(UiCol::Spam), 8.f, 0, 2.f);
+        dl->AddText(UiFonts::Bold, 24.f * pop, ImVec2(badge.pos.x - ts.x * .5f, bmin.y + 5.f), fade(UiCol::SpamText),
+                    buf);
     }
 
     if (releasedLeft && s_pressInPanel && !s_pressOnKey && !s_brushMoved) _selection.clear();
