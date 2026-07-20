@@ -183,7 +183,8 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
                 while (!apps.empty() &&
                        UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, (apps + "...").c_str()).x > maxW) {
                     apps.pop_back();
-                    while (!apps.empty() && ((unsigned char)apps.back() & 0xC0) == 0x80) apps.pop_back();
+                    while (!apps.empty() && ((unsigned char)apps.back() & 0xC0) == 0x80)
+                        apps.pop_back();
                 }
                 apps += "...";
             }

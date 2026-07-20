@@ -25,7 +25,8 @@ bool App::Init(int argc, char** argv)
 
     if (_profiles.empty()) {
         CreateProfile("UNNAMED");
-        for (unsigned short vk = '1'; vk <= '5'; vk++) _editingProfile->keys[vk][KeyMod_None].action = Action_Spammy;
+        for (unsigned short vk = '1'; vk <= '5'; vk++)
+            _editingProfile->keys[vk][KeyMod_None].action = Action_Spammy;
     }
 
     _mainWindow = new MainWindow(L"" APP_NAME);
