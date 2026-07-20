@@ -78,7 +78,6 @@ struct UiKeyDesc {
     ImU32 tint;
     bool inherited;
     bool pressed;
-    bool selected;
     bool locked;
 };
 
@@ -112,5 +111,6 @@ bool UiToggle(const char* id, const ImVec2& pos, bool on);
 bool UiStepper(const char* id, const ImVec2& pos, float width, int count, int& value);
 bool UiToggleRow(const char* id, const char* label, bool on);
 bool UiStepperRow(const char* id, const char* label, const char* value, int count, int& index);
-bool UiMenuRow(const char* label, ImU32 dotCol = 0, bool disabled = false, bool keepOpen = false);
+bool UiMenuRow(const char* label, ImU32 dotCol = 0, bool disabled = false, bool keepOpen = false,
+               bool allowOverlap = false);
 } // namespace ImGui

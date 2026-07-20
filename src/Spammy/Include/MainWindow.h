@@ -12,9 +12,10 @@ class MainWindow : public Window {
     std::filesystem::path _appFilePath;
     bool _editPause;
     std::set<UINT> _selection;
-    std::array<unsigned, KEYBOARD_KEYS_COUNT> _pressCount = {};
+    Action _brushAction = Action_Spammy;
+    std::array<std::array<DWORD, 128>, KEYBOARD_KEYS_COUNT> _pressLog = {};
+    std::array<unsigned, KEYBOARD_KEYS_COUNT> _pressHead = {};
     std::array<DWORD, KEYBOARD_KEYS_COUNT> _pressTick = {};
-    std::array<DWORD, KEYBOARD_KEYS_COUNT> _pressStart = {};
     std::array<DWORD, KEYBOARD_KEYS_COUNT> _spamTick = {};
 
 public:
@@ -36,6 +37,7 @@ protected:
     bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result) final;
 
 private:
+    void LogKeyPress(unsigned short vkCode, DWORD ticks);
     void DrawTitleBar(ImDrawList* dl, const ImVec2& o);
     void DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile);
     void DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile);

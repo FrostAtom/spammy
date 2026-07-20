@@ -23,6 +23,11 @@ bool App::Init(int argc, char** argv)
     if (firstRun) EnableAutoStart(true);
     _autoStartEnabled = IsAutoStartEnabled();
 
+    if (_profiles.empty()) {
+        CreateProfile("UNNAMED");
+        for (unsigned short vk = '1'; vk <= '5'; vk++) _editingProfile->keys[vk][KeyMod_None].action = Action_Spammy;
+    }
+
     _mainWindow = new MainWindow(L"" APP_NAME);
     if (!_mainWindow->Initialize()) return false;
 
@@ -145,7 +150,7 @@ void App::SaveConfig()
     if (!file) return;
 
     nlohmann::json json = nlohmann::json::object();
-    if (_enabled) json["enabled"] = true;
+    if (!_enabled) json["enabled"] = false;
     if (!_minimizeToTray) json["minimizeToTray"] = false;
     if (!_showTrayIcon) json["showTrayIcon"] = false;
     if (!_soundsEnabled) json["soundsEnabled"] = false;
@@ -420,6 +425,15 @@ void App::OnFocusChanged()
     if (std::filesystem::path path; newHwnd && (path = GetProcessPath(newHwnd)).has_filename()) {
         newApp = (const char*)path.filename().u8string().c_str();
         newProfile = FindProfileByApp(newApp.c_str());
+        if (!newProfile) {
+            wchar_t selfPath[MAX_PATH] = {0};
+            GetModuleFileNameW(NULL, selfPath, std::size(selfPath));
+            if (path != selfPath) {
+                auto it = std::find_if(_profiles.begin(), _profiles.end(),
+                                       [](const std::shared_ptr<Profile>& item) { return item->apps.empty(); });
+                if (it != _profiles.end()) newProfile = *it;
+            }
+        }
     }
 
     {

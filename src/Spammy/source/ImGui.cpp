@@ -380,7 +380,7 @@ bool ImGui::UiLockChip(const char* id, const ImVec2& pos, const ImVec2& size, co
     ImDrawList* dl = GetWindowDrawList();
     AddStatusDot(dl, ImVec2(pos.x + 22.f, pos.y + 30.f), 3.5f, UiMixColor(UiCol::Mute, UiCol::Spam, t), locked);
     dl->AddText(UiFonts::Semi, 18.f, ImVec2(pos.x + 32.f, pos.y + 20.f), UiMixColor(UiCol::Sub, UiCol::Text, t),
-                locked ? "LOCKED" : "FREE");
+                locked ? "BLOCKED" : "NONE");
     return clicked;
 }
 
@@ -397,7 +397,7 @@ bool ImGui::UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, 
     const ImU32 accent = UiMixColor(UiCol::Danger, UiCol::Ok, t);
     const ImU32 fill = UiMixColor(UiCol::DangerFill, UiCol::OkFill, t);
     const bool on = t >= 0.5f;
-    const char* text = on ? "ENABLED" : "DISABLED";
+    const char* text = on ? "ENABLED" : "PAUSED";
     const float contentA = fabsf(t * 2.f - 1.f);
 
     if (t > 0.01f) {
@@ -466,7 +466,6 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
 
     float hoverT = UiAnim(SubId(wid, 1), hovered ? 1.f : 0.f, 18.f);
     float pressT = UiAnim(SubId(wid, 2), desc.pressed ? 1.f : 0.f, 30.f);
-    float selT = UiAnim(SubId(wid, 3), desc.selected ? 1.f : 0.f, 20.f);
     int* lastStyle = s_animStorage.GetIntRef(SubId(wid, 4), desc.style);
     float* pulse = s_animStorage.GetFloatRef(SubId(wid, 5), 0.f);
     if (*lastStyle != (int)desc.style) {
@@ -515,12 +514,6 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
                    labelCol, desc.label, tracking);
 
     if (accent && !desc.inherited) dl->AddCircleFilled(ImVec2(max.x - 9.f, pos.y + 9.f), 2.5f, accent);
-
-    if (selT > 0.01f) {
-        float off = 2.f + 2.f * (1.f - selT);
-        dl->AddRect(ImVec2(pos.x - off, pos.y - off), ImVec2(max.x + off, max.y + off),
-                    WithAlpha(UiCol::Text, 0.7f * selT), rounding + off, 0, 2.f);
-    }
 
     return clicked && !desc.locked;
 }
@@ -611,14 +604,16 @@ bool ImGui::UiStepperRow(const char* id, const char* label, const char* value, i
     return changed;
 }
 
-bool ImGui::UiMenuRow(const char* label, ImU32 dotCol, bool disabled, bool keepOpen)
+bool ImGui::UiMenuRow(const char* label, ImU32 dotCol, bool disabled, bool keepOpen, bool allowOverlap)
 {
     char id[64];
     snprintf(id, sizeof(id), "##row_%s", label);
     ImVec2 pos = GetCursorScreenPos();
     PushStyleColorTriplet(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
     if (disabled) BeginDisabled();
-    bool clicked = Selectable(id, false, keepOpen ? ImGuiSelectableFlags_NoAutoClosePopups : 0, ImVec2(0.f, 24.f));
+    ImGuiSelectableFlags flags = (keepOpen ? ImGuiSelectableFlags_NoAutoClosePopups : 0) |
+                                 (allowOverlap ? ImGuiSelectableFlags_AllowOverlap : 0);
+    bool clicked = Selectable(id, false, flags, ImVec2(0.f, 24.f));
     if (disabled) EndDisabled();
     PopStyleColorTriplet();
 

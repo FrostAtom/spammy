@@ -71,7 +71,7 @@ private:
     KeyboardForm _form = KeyboardForm_75;
     KeyboardVariant _variant = KeyboardVariant_Ansi;
     MouseForm _mouse = MouseForm_5;
-    std::atomic<bool> _enabled = false;
+    std::atomic<bool> _enabled = true;
     DWORD _lastUpdate = 0;
     DWORD _statTicks = 0;
     HWND _activeHwnd = NULL;
