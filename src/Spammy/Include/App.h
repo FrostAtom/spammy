@@ -73,6 +73,7 @@ private:
     MouseForm _mouse = MouseForm_5;
     std::atomic<bool> _enabled = false;
     DWORD _lastUpdate = 0;
+    DWORD _statTicks = 0;
     HWND _activeHwnd = NULL;
 
     std::list<std::shared_ptr<Profile>> _profiles;

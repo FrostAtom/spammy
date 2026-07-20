@@ -54,6 +54,7 @@ bool App::Run()
 {
     if (!_isRunning) return true;
 
+    _statTicks = GetTickCount();
     while (!_mainWindow->MustQuit()) {
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -77,8 +78,11 @@ bool App::Run()
             profile = _activeProfile;
             activeHwnd = _activeHwnd;
         }
+        DWORD ticks = GetTickCount();
+        if (profile) profile->activeMs += ticks - _statTicks;
+        _statTicks = ticks;
+
         if (_enabled && profile) {
-            DWORD ticks = GetTickCount();
             if (ticks - _lastUpdate >= profile->speed) {
                 unsigned mods = sKeyboard.TestModifiers();
                 for (unsigned short i = 0; i < sKeyboard.Count(); i++) {

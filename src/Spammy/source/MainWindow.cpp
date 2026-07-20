@@ -160,14 +160,26 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
     DrawProfilesPopup(o);
 
     if (profile) {
-        if (UiChipFrame("##apps", ImVec2(o.x + 260.f, o.y + 66.f), ImVec2(110.f, 46.f))) ImGui::OpenPopup("##appsmenu");
+        if (UiChipFrame("##apps", ImVec2(o.x + 260.f, o.y + 66.f), ImVec2(216.f, 46.f))) ImGui::OpenPopup("##appsmenu");
         UiChipLabel(ImVec2(o.x + 276.f, o.y + 73.f), "APPS");
         if (profile->apps.empty()) {
             dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), UiFlashDanger(), "NONE");
         } else {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%d bound", (int)profile->apps.size());
-            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), UiCol::Text, buf);
+            std::string apps;
+            for (const std::string& app : profile->apps) {
+                if (!apps.empty()) apps += ", ";
+                apps += app;
+            }
+            const float maxW = 184.f;
+            if (UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, apps.c_str()).x > maxW) {
+                while (!apps.empty() &&
+                       UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, (apps + "...").c_str()).x > maxW) {
+                    apps.pop_back();
+                    while (!apps.empty() && ((unsigned char)apps.back() & 0xC0) == 0x80) apps.pop_back();
+                }
+                apps += "...";
+            }
+            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), UiCol::Text, apps.c_str());
         }
         DrawAppsPopup(o, profile);
 
@@ -425,8 +437,10 @@ void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
     dl->AddText(UiFonts::Mono, 13.f, ImVec2(o.x + 50.f + statusSize.x + 16.f, o.y + 683.f), UiCol::Mute,
                 detail.c_str());
 
-    static DWORD s_started = GetTickCount();
-    unsigned mins = (GetTickCount() - s_started) / 60000;
+    auto editing = sApp.EditingProfile();
+    if (!editing) return;
+
+    unsigned mins = (unsigned)(editing->activeMs / 60000);
     char value[32];
     if (mins >= 60)
         snprintf(value, sizeof(value), "%uh %02um", mins / 60, mins % 60);
@@ -435,8 +449,9 @@ void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
     ImVec2 valueSize = UiFonts::Mono->CalcTextSizeA(14.f, FLT_MAX, 0.f, value);
     float x = o.x + 1252.f - valueSize.x;
     dl->AddText(UiFonts::Mono, 14.f, ImVec2(x, o.y + 681.f), UiCol::Sub, value);
-    ImVec2 labelSize = CalcTrackedTextSize(UiFonts::Semi, 12.f, "SESSION", 1.5f);
-    AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x - 12.f - labelSize.x, o.y + 683.f), UiCol::Mute, "SESSION", 1.5f);
+    ImVec2 labelSize = CalcTrackedTextSize(UiFonts::Semi, 12.f, "ACTIVE TIME", 1.5f);
+    AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x - 12.f - labelSize.x, o.y + 683.f), UiCol::Mute, "ACTIVE TIME",
+                   1.5f);
 }
 
 void MainWindow::DrawProfilesPopup(const ImVec2& o)
