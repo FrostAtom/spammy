@@ -715,9 +715,17 @@ void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsig
     ImGui::PushFont(UiFonts::Semi, 14.f);
     ImGui::TextDisabled("RATE");
     ImGui::PopFont();
-    ImGui::SetNextItemWidth(-FLT_MIN);
     int speed = (int)profile->speed;
-    if (ImGui::SliderInt("##rate", &speed, 10, 1000, "%d ms")) profile->speed = (unsigned)speed;
+    bool changed = false;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    float pad = (ImGui::GetFrameHeight() - 24.f) * .5f;
+    if (UiGhostButton("##ratedec", ImVec2(p.x, p.y + pad), 24.f, UiGlyph_Minus)) speed--, changed = true;
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 28.f, p.y));
+    ImGui::SetNextItemWidth(w - 56.f);
+    if (ImGui::SliderInt("##rate", &speed, 10, 200, "%d ms")) changed = true;
+    if (UiGhostButton("##rateinc", ImVec2(p.x + w - 24.f, p.y + pad), 24.f, UiGlyph_Plus)) speed++, changed = true;
+    if (changed) profile->speed = (unsigned)ImClamp(speed, 10, 200);
 
     ImGui::UiEndPopup();
 }

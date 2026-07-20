@@ -63,6 +63,8 @@ enum UiGlyph {
     UiGlyph_Gear,
     UiGlyph_Minimize,
     UiGlyph_Close,
+    UiGlyph_Plus,
+    UiGlyph_Minus,
 };
 
 enum UiKeyStyle {

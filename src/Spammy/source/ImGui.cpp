@@ -344,6 +344,12 @@ bool ImGui::UiGhostButton(const char* id, const ImVec2& pos, float size, UiGlyph
         dl->AddLine(ImVec2(c.x - 5.f * s, c.y - 5.f * s), ImVec2(c.x + 5.f * s, c.y + 5.f * s), col, 2.f * s);
         dl->AddLine(ImVec2(c.x - 5.f * s, c.y + 5.f * s), ImVec2(c.x + 5.f * s, c.y - 5.f * s), col, 2.f * s);
         break;
+    case UiGlyph_Plus:
+        dl->AddRectFilled(ImVec2(c.x - 1.f * s, c.y - 5.f * s), ImVec2(c.x + 1.f * s, c.y + 5.f * s), col, 1.f * s);
+        [[fallthrough]];
+    case UiGlyph_Minus:
+        dl->AddRectFilled(ImVec2(c.x - 5.f * s, c.y - 1.f * s), ImVec2(c.x + 5.f * s, c.y + 1.f * s), col, 1.f * s);
+        break;
     }
     return clicked;
 }
