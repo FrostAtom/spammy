@@ -1,7 +1,7 @@
 # generated files (embedded font byte arrays)
-src/Spammy/Source/ImFont_RajdhaniSemiBold.inl
-src/Spammy/Source/ImFont_RajdhaniBold.inl
-src/Spammy/Source/ImFont_JetBrainsMono.inl
+src/Spammy/Source/Resources/ImFont_RajdhaniSemiBold.inl
+src/Spammy/Source/Resources/ImFont_RajdhaniBold.inl
+src/Spammy/Source/Resources/ImFont_JetBrainsMono.inl
 
 # vendored dependencies (also covered by deps/.clang-format with DisableFormat)
 deps/*

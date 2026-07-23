@@ -22,7 +22,7 @@ struct KeyConfig {
 struct Profile {
     using KeyModList_t = std::array<KeyConfig, KEYBOARD_KEYMOD_COUNT>;
 
-    inline Profile() : speed(20), vkPause(0), disableAltF4(false), disableWin(false), activeMs(0) {}
+    inline Profile() : speed(20), vkPause(0), disableAltF4(false), disableWin(false) {}
     std::string name;
     std::vector<std::string> apps;
     std::array<KeyModList_t, KEYBOARD_KEYS_COUNT> keys;
@@ -30,7 +30,6 @@ struct Profile {
     unsigned vkPause;
     bool disableAltF4;
     bool disableWin;
-    unsigned long long activeMs;
 };
 
 #define JSON_READ_FIELD(field) value.field = json.at(_CRT_STRINGIZE(field)).get<decltype(value.field)>()
@@ -45,7 +44,6 @@ inline void to_json(nlohmann::json& json, const Profile& value)
         {"disableAltF4", value.disableAltF4},
         {"disableWin", value.disableWin},
     };
-    if (value.activeMs) json["activeMs"] = value.activeMs;
 
     nlohmann::json keys = nlohmann::json::array();
     for (int k = 0; k < KEYBOARD_KEYS_COUNT; k++) {
@@ -71,7 +69,6 @@ inline void from_json(const nlohmann::json& json, Profile& value)
     JSON_READ_FIELD(vkPause);
     JSON_READ_FIELD(disableAltF4);
     JSON_READ_FIELD(disableWin);
-    value.activeMs = json.value("activeMs", 0ull);
 
     if (auto keys = json.at("keys"); keys.is_array()) {
         for (auto& item : keys) {

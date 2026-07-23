@@ -12,6 +12,8 @@ ImVec4 FlashColor(float r, float g, float b, float f = 8.f, float min = 0.f, flo
 
 ImU32 UiFlashDanger();
 
+ImU32 UiFlashWarn();
+
 void PushStyleColorTriplet(ImGuiCol idx, ImVec4 col);
 
 inline void PopStyleColorTriplet()
@@ -77,10 +79,13 @@ enum UiKeyStyle {
 struct UiKeyDesc {
     const char* label;
     UiKeyStyle style;
+    UiKeyStyle preview;
     ImU32 tint;
     bool inherited;
     bool pressed;
     bool locked;
+    ImU32 dots[3];
+    int dotCount;
 };
 
 void LoadUiFonts();
@@ -110,6 +115,7 @@ bool UiLockChip(const char* id, const ImVec2& pos, const ImVec2& size, const cha
 bool UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, bool enabled);
 bool UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const UiKeyDesc& desc);
 bool UiToggle(const char* id, const ImVec2& pos, bool on);
+bool UiBrushChip(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, ImU32 accent, bool active);
 bool UiStepper(const char* id, const ImVec2& pos, float width, int count, int& value);
 bool UiToggleRow(const char* id, const char* label, bool on);
 bool UiStepperRow(const char* id, const char* label, const char* value, int count, int& index);

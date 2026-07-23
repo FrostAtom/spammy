@@ -18,9 +18,12 @@ static void Autofire(const KeyModeContext& ctx)
 }
 
 static const KeyMode s_modes[] = {
-    {Action_Spammy, "SPAMMY", ImGui::UiKeyStyle_Spam, ImGui::UiCol::Spam, &PressOnce, &Swallow, &Autofire},
-    {Action_Speedy, "SPEEDY", ImGui::UiKeyStyle_Speedy, ImGui::UiCol::Speedy, &PressOnce, &Swallow, NULL},
-    {Action_Disabled, "DISABLED", ImGui::UiKeyStyle_Blocked, ImGui::UiCol::Danger, &Swallow, &Swallow, NULL},
+    {Action_Spammy, "SPAMMY", "autofire while held", ImGui::UiKeyStyle_Spam, ImGui::UiCol::Spam, &PressOnce, &Swallow,
+     &Autofire},
+    {Action_Speedy, "SPEEDY", "release instantly", ImGui::UiKeyStyle_Speedy, ImGui::UiCol::Speedy, &PressOnce, &Swallow,
+     NULL},
+    {Action_Disabled, "NOTHING", "don't inherit global", ImGui::UiKeyStyle_Blocked, ImGui::UiCol::Danger, &Swallow,
+     &Swallow, NULL},
 };
 
 std::span<const KeyMode> KeyModes()

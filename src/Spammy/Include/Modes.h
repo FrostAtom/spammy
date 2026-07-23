@@ -13,6 +13,7 @@ struct KeyModeContext {
 struct KeyMode {
     Action action;
     const char* name;
+    const char* desc;
     ImGui::UiKeyStyle keyStyle;
     ImU32 menuColor;
     bool (*onPress)(const KeyModeContext& ctx);

@@ -60,7 +60,6 @@ bool App::Run()
 {
     if (!_isRunning) return true;
 
-    _statTicks = GetTickCount();
     while (!_mainWindow->MustQuit()) {
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -85,9 +84,6 @@ bool App::Run()
             activeHwnd = _activeHwnd;
         }
         DWORD ticks = GetTickCount();
-        if (profile) profile->activeMs += ticks - _statTicks;
-        _statTicks = ticks;
-
         sConfig.SaveIfDirty(ticks);
 
         if (sConfig.enabled && profile) {

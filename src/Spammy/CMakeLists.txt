@@ -8,10 +8,9 @@ FetchFilesInFolder(SRCS "Source")
 
 add_executable(
 	${PROJECT_NAME} WIN32
-		${HRDS}
+		${HDRS}
 		${SRCS}
-		"Include/Resources.h"
-		Source/Resources.rc
+		Source/Resources/Resources.rc
 )
 
 target_precompile_headers(

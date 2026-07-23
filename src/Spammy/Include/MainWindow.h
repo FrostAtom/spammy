@@ -11,8 +11,8 @@ class MainWindow : public Window {
     static MainWindow* _self;
     std::filesystem::path _appFilePath;
     std::atomic<bool> _editPause;
-    std::set<UINT> _selection;
     Action _brushAction = Action_Spammy;
+    unsigned _editMods = 0;
     std::array<std::array<DWORD, 128>, KEYBOARD_KEYS_COUNT> _pressLog = {};
     std::array<unsigned, KEYBOARD_KEYS_COUNT> _pressHead = {};
     std::array<DWORD, KEYBOARD_KEYS_COUNT> _pressTick = {};
@@ -41,9 +41,7 @@ private:
     void DrawTitleBar(ImDrawList* dl, const ImVec2& o);
     void DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile);
     void DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile);
-    void DrawFooter(ImDrawList* dl, const ImVec2& o);
     void DrawProfilesPopup(const ImVec2& o);
     void DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile);
     void DrawSettingsPopup(const ImVec2& o);
-    void DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsigned popupMods);
 };

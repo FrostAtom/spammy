@@ -36,7 +36,6 @@ private:
     bool _isRunning = false;
     bool _autoStartEnabled = false;
     DWORD _lastUpdate = 0;
-    DWORD _statTicks = 0;
     HWND _activeHwnd = NULL;
 
     std::shared_ptr<Profile> _activeProfile;

@@ -9,7 +9,6 @@
 struct Config {
     std::atomic<bool> enabled = true;
     bool minimizeToTray = true;
-    bool showTrayIcon = true;
     std::atomic<bool> soundsEnabled = true;
     KeyboardForm form = KeyboardForm_75;
     KeyboardVariant variant = KeyboardVariant_Ansi;

@@ -17,7 +17,6 @@ bool Config::Load()
         nlohmann::json json = nlohmann::json::parse(file);
         if (auto item = json["enabled"]; item.is_boolean()) enabled = item.get<bool>();
         if (auto item = json["minimizeToTray"]; item.is_boolean()) minimizeToTray = item.get<bool>();
-        if (auto item = json["showTrayIcon"]; item.is_boolean()) showTrayIcon = item.get<bool>();
         if (auto item = json["soundsEnabled"]; item.is_boolean()) soundsEnabled = item.get<bool>();
         if (auto item = json["form"]; item.is_number_integer()) {
             int value = item.get<int>();
@@ -48,7 +47,6 @@ void Config::Save()
     nlohmann::json json = nlohmann::json::object();
     if (!enabled) json["enabled"] = false;
     if (!minimizeToTray) json["minimizeToTray"] = false;
-    if (!showTrayIcon) json["showTrayIcon"] = false;
     if (!soundsEnabled) json["soundsEnabled"] = false;
     if (form != KeyboardForm_75) json["form"] = (int)form;
     if (variant != KeyboardVariant_Ansi) json["variant"] = (int)variant;

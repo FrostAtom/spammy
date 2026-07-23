@@ -1,9 +1,9 @@
 #include "ImGui.h"
 #include <cstring>
 
-#include "ImFont_JetBrainsMono.inl"
-#include "ImFont_RajdhaniBold.inl"
-#include "ImFont_RajdhaniSemiBold.inl"
+#include "Resources/ImFont_JetBrainsMono.inl"
+#include "Resources/ImFont_RajdhaniBold.inl"
+#include "Resources/ImFont_RajdhaniSemiBold.inl"
 
 ImFont* ImGui::UiFonts::Semi = NULL;
 ImFont* ImGui::UiFonts::Bold = NULL;
@@ -29,6 +29,11 @@ ImVec4 ImGui::FlashColor(float r, float g, float b, float f, float min, float ma
 ImU32 ImGui::UiFlashDanger()
 {
     return GetColorU32(FlashColor(1.f, .3f, .37f, 2.f, .4f, 1.f));
+}
+
+ImU32 ImGui::UiFlashWarn()
+{
+    return GetColorU32(FlashColor(1.f, .42f, .1f, 2.f, .4f, 1.f));
 }
 
 void ImGui::PushStyleColorTriplet(ImGuiCol idx, ImVec4 col)
@@ -500,6 +505,28 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
     }
     if (desc.locked) labelCol = UiCol::ModText;
 
+    if (hovered && desc.preview != UiKeyStyle_None && desc.preview != desc.style) {
+        ImU32 previewFill = fill;
+        ImU32 previewAccent = stroke;
+        switch (desc.preview) {
+        case UiKeyStyle_Spam:
+            previewFill = UiCol::SpamFill;
+            previewAccent = UiCol::Spam;
+            break;
+        case UiKeyStyle_Speedy:
+            previewFill = UiCol::SpeedyFill;
+            previewAccent = UiCol::Speedy;
+            break;
+        case UiKeyStyle_Blocked:
+            previewFill = UiCol::DangerFill;
+            previewAccent = UiCol::Danger;
+            break;
+        default: break;
+        }
+        fill = UiMixColor(fill, previewFill, 0.6f * hoverT);
+        stroke = UiMixColor(stroke, previewAccent, 0.5f * hoverT);
+    }
+
     float waveHue = pos.x * 0.0011f + pos.y * 0.0019f - (float)GetTime() * 0.09f;
     waveHue -= floorf(waveHue);
     float wr, wg, wb;
@@ -520,7 +547,11 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
     AddTrackedText(dl, font, fontSize, ImVec2(pos.x + (size.x - textSize.x) * 0.5f, pos.y + (size.y - fontSize) * 0.5f),
                    labelCol, desc.label, tracking);
 
-    if (accent && !desc.inherited) dl->AddCircleFilled(ImVec2(max.x - 9.f, pos.y + 9.f), 2.5f, accent);
+    float dotX = max.x - 9.f;
+    for (int i = 0; i < desc.dotCount; i++) {
+        dl->AddCircleFilled(ImVec2(dotX, pos.y + 9.f), 2.5f, desc.dots[i]);
+        dotX -= 7.f;
+    }
 
     return clicked && !desc.locked;
 }
@@ -540,6 +571,29 @@ bool ImGui::UiToggle(const char* id, const ImVec2& pos, bool on)
     dl->AddRectFilled(pos, max, UiMixColor(UiCol::Bg0, UiCol::Spam, e), 10.f);
     if (e < 0.99f) dl->AddRect(pos, max, WithAlpha(UiCol::Stroke, 1.f - e), 10.f);
     dl->AddCircleFilled(ImVec2(pos.x + 10.f + 18.f * e, pos.y + 10.f), 7.f, UiMixColor(UiCol::Mute, UiCol::Bg0, e));
+    return clicked;
+}
+
+bool ImGui::UiBrushChip(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, ImU32 accent,
+                        bool active)
+{
+    SetCursorScreenPos(pos);
+    bool clicked = InvisibleButton(id, size);
+    ImGuiID wid = GetItemID();
+    float hoverT = UiAnim(SubId(wid, 1), IsItemHovered() ? 1.f : 0.f, 18.f);
+    float t = UiAnim(SubId(wid, 2), active ? 1.f : 0.f, 16.f);
+
+    ImDrawList* dl = GetWindowDrawList();
+    const ImVec2 max = ImVec2(pos.x + size.x, pos.y + size.y);
+    ImU32 fill = UiMixColor(UiMixColor(UiCol::Bg2, UiCol::HoverFill, hoverT), UiMixColor(UiCol::Bg1, accent, 0.16f), t);
+    ImU32 stroke = UiMixColor(UiMixColor(UiCol::KeyCapStroke, UiCol::Stroke, hoverT), accent, t);
+    ImU32 labelCol = UiMixColor(UiCol::Sub, UiMixColor(accent, UiCol::Text, .3f), t);
+    if (t > 0.01f) AddGlow(dl, pos, max, accent, 6.f, 4, 0.14f * t);
+    dl->AddRectFilled(pos, max, fill, 6.f);
+    dl->AddRect(pos, max, stroke, 6.f);
+    ImVec2 textSize = CalcTrackedTextSize(UiFonts::Semi, 13.f, label, 1.f);
+    AddTrackedText(dl, UiFonts::Semi, 13.f, ImVec2(pos.x + (size.x - textSize.x) * .5f, pos.y + (size.y - 13.f) * .5f),
+                   labelCol, label, 1.f);
     return clicked;
 }
 

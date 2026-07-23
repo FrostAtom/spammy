@@ -7,6 +7,9 @@
 
 using namespace ImGui;
 
+static const ImVec2 s_panelMin(20.f, 134.f);
+static const ImVec2 s_panelMax(1260.f, 660.f);
+
 MainWindow* MainWindow::_self = NULL;
 MainWindow& MainWindow::Instance()
 {
@@ -41,7 +44,7 @@ bool MainWindow::Initialize()
     SetIcon(IDI_ICON1);
     EnableMoving();
     EnableTitleBar(false);
-    SetSize({1280, 720});
+    SetSize({1280, 680});
     ResetPosition();
 
     TrayIcon* trayIcon = new TrayIcon();
@@ -49,7 +52,6 @@ bool MainWindow::Initialize()
     trayIcon->SetOnClick(std::bind_front(&MainWindow::OnTrayClick, this));
     trayIcon->SetMenu(std::bind_front(&MainWindow::OnTrayMenu, this));
     SetTrayIcon(trayIcon);
-    if (!sConfig.showTrayIcon) ShowTrayIcon(false);
 
     LoadStyle();
 
@@ -128,7 +130,6 @@ void MainWindow::Draw()
     DrawTitleBar(dl, o);
     DrawHeader(dl, o, profile);
     DrawKeyboard(dl, o, profile);
-    DrawFooter(dl, o);
 }
 
 void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
@@ -175,7 +176,7 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         if (UiChipFrame("##apps", ImVec2(o.x + 260.f, o.y + 66.f), ImVec2(216.f, 46.f))) ImGui::OpenPopup("##appsmenu");
         UiChipLabel(ImVec2(o.x + 276.f, o.y + 73.f), "ENABLE ONLY IN APPS");
         if (profile->apps.empty()) {
-            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), UiFlashDanger(), "ALL APPS");
+            dl->AddText(UiFonts::Semi, 18.f, ImVec2(o.x + 276.f, o.y + 86.f), UiFlashWarn(), "ALL APPS");
         } else {
             std::string apps;
             for (const std::string& app : profile->apps) {
@@ -250,17 +251,17 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
 
 void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile)
 {
-    const ImVec2 panelMin = ImVec2(o.x + 20.f, o.y + 134.f);
-    const ImVec2 panelMax = ImVec2(o.x + 1260.f, o.y + 660.f);
+    const ImVec2 panelMin = ImVec2(o.x + s_panelMin.x, o.y + s_panelMin.y);
+    const ImVec2 panelMax = ImVec2(o.x + s_panelMax.x, o.y + s_panelMax.y);
     AddPanel(dl, panelMin, panelMax, 16.f);
 
     const float gap = 7.f;
     const MouseForm mouseForm = sConfig.mouse;
     const float mouseW = 190.f;
     const float mouseLeft = panelMax.x - 16.f - mouseW;
-    const ImVec2 start = ImVec2(panelMin.x + 16.f, panelMin.y + 16.f);
+    const ImVec2 start = ImVec2(panelMin.x + 16.f, panelMin.y + 104.f);
     const ImVec2 avail = ImVec2((mouseForm != MouseForm_Off ? mouseLeft - 24.f : panelMax.x - 16.f) - start.x,
-                                panelMax.y - panelMin.y - 32.f);
+                                panelMax.y - panelMin.y - 120.f);
 
     const std::vector<KeyboardKey>& layout = GetKeyboardLayout(sConfig.form, sConfig.variant);
 
@@ -275,13 +276,9 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const ImVec2 origin = {start.x + (avail.x - (keySize * gridW - gap)) * .5f,
                            start.y + (avail.y - (keySize * gridH - gap)) * .5f};
 
-    static unsigned s_popupMods = 0;
     static UINT s_pressVk = 0;
-    static UINT s_rightVk = 0;
     static bool s_pressInPanel = false;
     static bool s_rightInPanel = false;
-    static bool s_pressOnKey = false;
-    static bool s_brushErase = false;
     static bool s_brushMoved = false;
 
     const bool anyPopup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
@@ -291,19 +288,15 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         s_leftDismiss = anyPopup;
         s_pressInPanel = !overPopup && ImGui::IsMouseHoveringRect(panelMin, panelMax);
-        s_pressOnKey = false;
         s_pressVk = 0;
-        s_brushErase = false;
         s_brushMoved = false;
     }
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
         s_rightInPanel = !overPopup && ImGui::IsMouseHoveringRect(panelMin, panelMax);
-        s_rightVk = 0;
-    }
     const bool brushing = s_pressInPanel && !s_leftDismiss && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.f);
     if (brushing) s_brushMoved = true;
     const bool releasedLeft = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-    const bool releasedRight = ImGui::IsMouseReleased(ImGuiMouseButton_Right);
+    const bool erasingRight = s_rightInPanel && ImGui::IsMouseDown(ImGuiMouseButton_Right);
 
     struct PressBadge {
         ImVec2 pos;
@@ -314,17 +307,29 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const DWORD nowTicks = GetTickCount();
     const bool wndFocused = GetForegroundWindow() == Native();
 
-    unsigned mods = sKeyboard.TestModifiers();
+    unsigned mods = _editMods;
+    const KeyMode* brushMode = FindKeyMode(_brushAction);
+    const UiKeyStyle brushPreview = brushMode ? brushMode->keyStyle : UiKeyStyle_None;
     auto keyItem = [&](const char* id, const char* label, UINT vkCode, const ImVec2& pos, const ImVec2& size) {
         UiKeyDesc desc = {};
         desc.label = label;
         desc.locked = sKeyboard.IsModifier(vkCode) || vkCode == VK_LWIN || vkCode == VK_RWIN;
         desc.pressed = sKeyboard.IsPressed(vkCode) != 0;
         if (profile) {
+            desc.preview = brushPreview;
             bool inherited = false;
             const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods, &inherited));
             desc.inherited = inherited;
             if (mode) desc.style = mode->keyStyle;
+
+            if (mods == KeyMod_None && vkCode < KEYBOARD_KEYS_COUNT) {
+                for (const KeyMode& layerMode : KeyModes()) {
+                    bool found = false;
+                    for (unsigned layer = 1; layer < KEYBOARD_KEYMOD_COUNT && !found; layer++)
+                        found = profile->keys[vkCode][layer].action == layerMode.action;
+                    if (found) desc.dots[desc.dotCount++] = layerMode.menuColor;
+                }
+            }
 
             if (vkCode < KEYBOARD_KEYS_COUNT) {
                 if (wndFocused && desc.pressed && mode && mode->onTick) {
@@ -353,38 +358,22 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
 
         const bool hoverKey = ImGui::IsMouseHoveringRect(keyMin, keyMax);
         const bool pressedHere = s_pressInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoverKey;
-        if (pressedHere) {
-            s_pressOnKey = true;
-            s_pressVk = vkCode;
-        }
+        if (pressedHere) s_pressVk = vkCode;
 
         if (profile && !desc.locked) {
-            if (pressedHere && profile->keys[vkCode][mods].action == _brushAction) s_brushErase = true;
-
-            if (brushing && hoverKey) {
-                Action next = s_brushErase ? Action_None : _brushAction;
-                if (profile->keys[vkCode][mods].action != next) {
-                    profile->keys[vkCode][mods].action = next;
-                    sConfig.MarkDirty();
-                }
-            }
-
-            if (releasedLeft && !s_leftDismiss && !s_brushMoved && hoverKey && s_pressVk == vkCode) {
-                KeyConfig& config = profile->keys[vkCode][mods];
-                config.action = config.action == _brushAction ? Action_None : _brushAction;
+            KeyConfig& config = profile->keys[vkCode][mods];
+            if (brushing && hoverKey && config.action != _brushAction) {
+                config.action = _brushAction;
                 sConfig.MarkDirty();
             }
-
-            if (s_rightInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverKey) s_rightVk = vkCode;
-
-            if (releasedRight && hoverKey && s_rightVk == vkCode) {
-                if (!_selection.count(vkCode)) {
-                    _selection.clear();
-                    _selection.insert(vkCode);
-                }
-                s_popupMods = mods;
-                ImGui::OpenPopup("##keymenu");
-                s_rightVk = 0;
+            if (releasedLeft && !s_leftDismiss && !s_brushMoved && hoverKey && s_pressVk == vkCode &&
+                config.action != _brushAction) {
+                config.action = _brushAction;
+                sConfig.MarkDirty();
+            }
+            if (erasingRight && hoverKey && config.action != Action_None) {
+                config.action = Action_None;
+                sConfig.MarkDirty();
             }
         }
     };
@@ -399,9 +388,6 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     }
 
     if (mouseForm != MouseForm_Off) {
-        dl->AddRectFilled(ImVec2(mouseLeft - 12.f, panelMin.y + 24.f), ImVec2(mouseLeft - 11.f, panelMax.y - 24.f),
-                          UiCol::StrokeSoft);
-
         const ImVec2 bodySize = ImVec2(150.f, 270.f);
         const ImVec2 body = ImVec2(mouseLeft + (mouseW - bodySize.x) * .5f + 8.f,
                                    panelMin.y + (panelMax.y - panelMin.y - bodySize.y) * .5f);
@@ -465,61 +451,103 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
                     buf);
     }
 
-    if (releasedLeft && s_pressInPanel && !s_pressOnKey && !s_brushMoved) _selection.clear();
-    if (releasedRight && s_rightInPanel && s_rightVk == 0 && !ImGui::IsPopupOpen("##keymenu")) _selection.clear();
+    const float titleY = panelMin.y + 10.f;
+    const float descY = panelMin.y + 26.f;
+    const float barY = panelMin.y + 42.f;
 
-    DrawKeyMenuPopup(profile, s_popupMods);
-}
+    auto groupTitle = [&](float x, float w, const char* text) {
+        ImVec2 size = CalcTrackedTextSize(UiFonts::Semi, 12.f, text, 1.5f);
+        AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x + (w - size.x) * .5f, titleY), UiCol::Text, text, 1.5f);
+    };
+    auto groupFade = [&](float x, float w, ImU32 accent) {
+        const ImU32 gradTop = (accent & ~IM_COL32_A_MASK) | (51u << IM_COL32_A_SHIFT);
+        const ImU32 gradClear = accent & ~IM_COL32_A_MASK;
+        dl->AddRectFilledMultiColor(ImVec2(x - 3.f, panelMin.y), ImVec2(x + w + 3.f, panelMin.y + 96.f), gradTop,
+                                    gradTop, gradClear, gradClear);
+    };
+    auto blockDesc = [&](float x, float w, const char* desc) {
+        float descW = UiFonts::Mono->CalcTextSizeA(13.f, FLT_MAX, 0.f, desc).x;
+        dl->AddText(UiFonts::Mono, 13.f, ImVec2(x + (w - descW) * .5f, descY), UiCol::Mute, desc);
+    };
 
-void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
-{
-    dl->AddRectFilled(ImVec2(o.x + 20.f, o.y + 666.f), ImVec2(o.x + 1260.f, o.y + 667.f), UiCol::StrokeSoft);
+    float allX = panelMin.x + 16.f;
+    float modsX = allX + 176.f;
+    groupFade(allX, 362.f, UiCol::Spam);
+    groupTitle(allX, 362.f, "GLOBAL / OVERRIDE LAYERS");
+    blockDesc(allX, 170.f, "paint the base layer");
+    if (UiBrushChip("##layerall", ImVec2(allX, barY), ImVec2(170.f, 22.f), "GLOBAL", UiCol::Spam, _editMods == 0))
+        _editMods = 0;
 
-    const char* status;
-    ImU32 statusCol;
-    bool glow = false;
-    std::string detail;
-    if (!sApp.IsEnabled()) {
-        status = "PAUSED";
-        statusCol = UiCol::Mute;
-        detail = "hook disabled";
-    } else if (auto active = sApp.ActiveProfile()) {
-        status = "ACTIVE";
-        statusCol = UiCol::Ok;
-        glow = true;
-        detail = "hooked -> " + sApp.ActiveAppName();
-    } else {
-        status = "READY";
-        statusCol = UiCol::SpamText;
-        detail = "waiting for bound app";
+    static const struct {
+        const char* name;
+        unsigned mod;
+    } s_layers[] = {{"SHIFT", KeyMod_Shift}, {"CTRL", KeyMod_Ctrl}, {"ALT", KeyMod_Alt}};
+    blockDesc(modsX, 186.f, "only when modifier held");
+    float layerX = modsX;
+    for (const auto& layer : s_layers) {
+        char layerId[16];
+        snprintf(layerId, sizeof(layerId), "##layer%u", layer.mod);
+        if (UiBrushChip(layerId, ImVec2(layerX, barY), ImVec2(58.f, 22.f), layer.name, UiCol::Spam,
+                        _editMods & layer.mod))
+            _editMods ^= layer.mod;
+        layerX += 64.f;
     }
-    AddStatusDot(dl, ImVec2(o.x + 38.f, o.y + 689.f), 3.5f, statusCol, glow);
-    AddTrackedText(dl, UiFonts::Bold, 15.f, ImVec2(o.x + 50.f, o.y + 682.f), statusCol, status, 1.5f);
-    ImVec2 statusSize = CalcTrackedTextSize(UiFonts::Bold, 15.f, status, 1.5f);
-    dl->AddText(UiFonts::Mono, 13.f, ImVec2(o.x + 50.f + statusSize.x + 16.f, o.y + 683.f), UiCol::Mute,
-                detail.c_str());
+    if (_editMods == 0 && _brushAction == Action_Disabled) _brushAction = Action_Spammy;
 
-    auto editing = sConfig.editingProfile;
-    if (!editing) return;
+    const char* hint = "LMB paint / RMB erase";
+    float hintW = UiFonts::Mono->CalcTextSizeA(12.f, FLT_MAX, 0.f, hint).x;
+    dl->AddText(UiFonts::Mono, 12.f, ImVec2((panelMin.x + panelMax.x - hintW) * .5f, titleY), UiCol::Text, hint);
 
-    unsigned mins = (unsigned)(editing->activeMs / 60000);
-    char value[32];
-    if (mins >= 60)
-        snprintf(value, sizeof(value), "%uh %02um", mins / 60, mins % 60);
-    else
-        snprintf(value, sizeof(value), "%um", mins);
-    ImVec2 valueSize = UiFonts::Mono->CalcTextSizeA(14.f, FLT_MAX, 0.f, value);
-    float x = o.x + 1252.f - valueSize.x;
-    dl->AddText(UiFonts::Mono, 14.f, ImVec2(x, o.y + 681.f), UiCol::Sub, value);
-    ImVec2 labelSize = CalcTrackedTextSize(UiFonts::Semi, 12.f, "ACTIVE TIME", 1.5f);
-    AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x - 12.f - labelSize.x, o.y + 683.f), UiCol::Mute, "ACTIVE TIME",
-                   1.5f);
+    const int modeCount = _editMods ? 3 : 2;
+    const float modesW = modeCount * 170.f + (modeCount - 1) * 6.f;
+    groupFade(panelMax.x - 16.f - modesW, modesW, brushMode ? brushMode->menuColor : UiCol::Spam);
+    groupTitle(panelMax.x - 16.f - modesW, modesW, "BRUSH");
+
+    float modeX = panelMax.x - 16.f;
+    auto brushChip = [&](Action act) {
+        const KeyMode* mode = FindKeyMode(act);
+        const float colW = 170.f;
+        modeX -= colW;
+        float colX = modeX;
+        const float chipW = 140.f;
+        float chipX = colX + (colW - chipW) * .5f;
+        char brushId[16];
+        snprintf(brushId, sizeof(brushId), "##brush%d", (int)act);
+        if (UiBrushChip(brushId, ImVec2(chipX, barY), ImVec2(chipW, 22.f), mode->name, mode->menuColor,
+                        _brushAction == act))
+            _brushAction = act;
+        blockDesc(colX, colW, mode->desc);
+        modeX -= 6.f;
+        return chipX;
+    };
+    brushChip(Action_Speedy);
+    float spammyX = brushChip(Action_Spammy);
+    if (_editMods) brushChip(Action_Disabled);
+
+    if (profile) {
+        float rateY = barY + 26.f;
+        int speed = (int)profile->speed;
+        bool changed = false;
+        if (UiGhostButton("##ratedec", ImVec2(spammyX, rateY), 22.f, UiGlyph_Minus)) speed--, changed = true;
+        ImGui::PushFont(UiFonts::Mono, 12.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
+        ImGui::SetCursorScreenPos(ImVec2(spammyX + 26.f, rateY));
+        ImGui::SetNextItemWidth(88.f);
+        if (ImGui::SliderInt("##rate", &speed, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX, "%d ms")) changed = true;
+        ImGui::PopStyleVar();
+        ImGui::PopFont();
+        if (UiGhostButton("##rateinc", ImVec2(spammyX + 118.f, rateY), 22.f, UiGlyph_Plus)) speed++, changed = true;
+        if (changed) {
+            profile->speed = (unsigned)ImClamp(speed, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX);
+            sConfig.MarkDirty();
+        }
+    }
 }
 
 void MainWindow::DrawProfilesPopup(const ImVec2& o)
 {
     ImGui::SetNextWindowPos(ImVec2(o.x + 28.f, o.y + 116.f));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(260.f, 0.f), ImVec2(260.f, 584.f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(260.f, 0.f), ImVec2(260.f, 544.f));
     ImGui::SetNextWindowSize(ImVec2(260.f, 0.f));
     if (!ImGui::UiBeginPopup("##profiles")) return;
 
@@ -625,7 +653,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##appsearch", "search", s_search, sizeof(s_search));
 
-    ImGui::SetNextWindowSizeConstraints(ImVec2(0.f, 0.f), ImVec2(FLT_MAX, 520.f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.f, 0.f), ImVec2(FLT_MAX, 490.f));
     ImGui::BeginChild("##applist", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeY);
 
     ImGui::PushFont(UiFonts::Semi, 14.f);
@@ -682,11 +710,6 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
         sConfig.minimizeToTray = !sConfig.minimizeToTray;
         sConfig.MarkDirty();
     }
-    if (UiToggleRow("##trayicon", "SHOW TRAY ICON", sConfig.showTrayIcon)) {
-        sConfig.showTrayIcon = !sConfig.showTrayIcon;
-        ShowTrayIcon(sConfig.showTrayIcon);
-        sConfig.MarkDirty();
-    }
     if (UiToggleRow("##sounds", "ENABLE SOUNDS", sConfig.soundsEnabled)) {
         sConfig.soundsEnabled = !sConfig.soundsEnabled;
         sConfig.MarkDirty();
@@ -716,55 +739,6 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     ImGui::UiEndPopup();
 }
 
-void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsigned popupMods)
-{
-    if (!profile) return;
-    ImGui::SetNextWindowSize(ImVec2(210.f, 0.f));
-    if (!ImGui::UiBeginPopup("##keymenu")) return;
-
-    ImGui::PushFont(UiFonts::Semi, 14.f);
-    ImGui::TextDisabled("%d SELECTED", (int)_selection.size());
-    ImGui::PopFont();
-    ImGui::Separator();
-
-    Action action = Action_None;
-    bool apply = false;
-    for (const KeyMode& mode : KeyModes()) {
-        if (UiMenuRow(mode.name, mode.menuColor)) {
-            action = mode.action;
-            apply = true;
-        }
-    }
-    if (apply) _brushAction = action;
-    if (UiMenuRow("CLEAR", UiCol::Mute)) action = Action_None, apply = true;
-    if (apply) {
-        for (UINT vk : _selection)
-            profile->keys[vk][popupMods].action = action;
-        sConfig.MarkDirty();
-    }
-
-    ImGui::Separator();
-    ImGui::PushFont(UiFonts::Semi, 14.f);
-    ImGui::TextDisabled("RATE");
-    ImGui::PopFont();
-    int speed = (int)profile->speed;
-    bool changed = false;
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x;
-    float pad = (ImGui::GetFrameHeight() - 24.f) * .5f;
-    if (UiGhostButton("##ratedec", ImVec2(p.x, p.y + pad), 24.f, UiGlyph_Minus)) speed--, changed = true;
-    ImGui::SetCursorScreenPos(ImVec2(p.x + 28.f, p.y));
-    ImGui::SetNextItemWidth(w - 56.f);
-    if (ImGui::SliderInt("##rate", &speed, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX, "%d ms")) changed = true;
-    if (UiGhostButton("##rateinc", ImVec2(p.x + w - 24.f, p.y + pad), 24.f, UiGlyph_Plus)) speed++, changed = true;
-    if (changed) {
-        profile->speed = (unsigned)ImClamp(speed, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX);
-        sConfig.MarkDirty();
-    }
-
-    ImGui::UiEndPopup();
-}
-
 bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
 {
     if (Window::HandleWndProc(msg, wParam, lParam, result)) return true;
@@ -773,6 +747,10 @@ bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* 
         if (!IsShown()) Show();
         Focus();
         return true;
+    }
+    case WM_SHOWWINDOW: {
+        if (wParam) _editMods = 0;
+        break;
     }
     }
     return false;
