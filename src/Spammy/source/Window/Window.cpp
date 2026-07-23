@@ -24,6 +24,11 @@ Window::Window(const wchar_t* className, const wchar_t* wndName)
       _imWndFlags(ImGuiWindowDisableScrollMask),
       _movable(false),
       _moving(false),
+      _dpi(96),
+      _scaleFactor(1.f),
+      _scale(1.f),
+      _scalePending(false),
+      _inFrame(false),
       _d3d(NULL),
       _d3dDevice(NULL),
       _trayIcon(NULL),
@@ -68,6 +73,7 @@ Window::ErrorCode Window::Initialize()
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigWindowsResizeFromEdges = false;
+    io.ConfigInputTrickleEventQueue = false;
     io.IniFilename = NULL;
 
     ImGui::LoadUiFonts();
@@ -193,23 +199,76 @@ Window::Vec2D<int> Window::GetSize()
 void Window::SetSize(const Vec2D<int>& size)
 {
     _size = size;
-    if (_hwnd) MoveWindow(_hwnd, _position.x, _position.y, _size.x, _size.y, FALSE);
+    if (_hwnd) {
+        Vec2D<int> scaled = ScaledSize();
+        MoveWindow(_hwnd, _position.x, _position.y, scaled.x, scaled.y, FALSE);
+    }
 }
 
 void Window::SetPosition(const Vec2D<int>& position)
 {
     _position = position;
-    if (_hwnd) MoveWindow(_hwnd, _position.x, _position.y, _size.x, _size.y, FALSE);
+    if (_hwnd) {
+        Vec2D<int> scaled = ScaledSize();
+        MoveWindow(_hwnd, _position.x, _position.y, scaled.x, scaled.y, FALSE);
+    }
 }
 
 void Window::ResetPosition()
 {
     Vec2D<int> pos = GetScreenSize();
-    pos.x -= _size.x;
-    pos.y -= _size.y;
-    pos.x /= 2;
-    pos.y /= 2;
+    Vec2D<int> size = ScaledSize();
+    pos.x = (pos.x - size.x) / 2;
+    pos.y = (pos.y - size.y) / 2;
     SetPosition(pos);
+}
+
+Window::Vec2D<int> Window::ScaledSize()
+{
+    return {(int)lroundf(_size.x * _scale), (int)lroundf(_size.y * _scale)};
+}
+
+void Window::SetScaleFactor(float factor)
+{
+    _scaleFactor = factor;
+    if (_inFrame)
+        _scalePending = true;
+    else
+        ApplyScale(true);
+}
+
+void Window::ApplyScale(bool keepCenter)
+{
+    float scale = _scaleFactor * (float)_dpi / 96.f;
+    MONITORINFO monitor = {sizeof(monitor)};
+    bool hasMonitor = _hwnd && GetMonitorInfoW(MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST), &monitor);
+    if (hasMonitor && _size.x > 0 && _size.y > 0) {
+        float fitW = (float)(monitor.rcWork.right - monitor.rcWork.left) / (float)_size.x;
+        float fitH = (float)(monitor.rcWork.bottom - monitor.rcWork.top) / (float)_size.y;
+        scale = ImMin(scale, ImMin(fitW, fitH));
+    }
+    _scale = ImMax(scale, 0.5f);
+
+    if (_imCtx) {
+        _imCtx->Style.CircleTessellationMaxError = 0.3f / _scale;
+        _imCtx->Style.CurveTessellationTol = 1.25f / _scale;
+        _imCtx->DrawListSharedData.InitialFringeScale = 1.f / _scale;
+    }
+
+    if (!_hwnd) return;
+    RECT rect;
+    GetWindowRect(_hwnd, &rect);
+    Vec2D<int> size = ScaledSize();
+    Vec2D<int> pos = _position;
+    if (keepCenter)
+        pos = {((int)rect.left + (int)rect.right - size.x) / 2, ((int)rect.top + (int)rect.bottom - size.y) / 2};
+    if (hasMonitor) {
+        pos.x = ImClamp(pos.x, (int)monitor.rcWork.left,
+                        ImMax((int)monitor.rcWork.left, (int)monitor.rcWork.right - size.x));
+        pos.y = ImClamp(pos.y, (int)monitor.rcWork.top,
+                        ImMax((int)monitor.rcWork.top, (int)monitor.rcWork.bottom - size.y));
+    }
+    MoveWindow(_hwnd, pos.x, pos.y, size.x, size.y, TRUE);
 }
 
 Window::Vec2D<int> Window::GetScreenSize()
@@ -226,6 +285,10 @@ void Window::EnableMoving(bool state)
 
 void Window::Update()
 {
+    if (_scalePending) {
+        _scalePending = false;
+        ApplyScale(true);
+    }
     if (IsReady()) {
         if (Window::BeginFrame()) Draw();
         Window::EndFrame();
@@ -260,8 +323,19 @@ bool Window::IsReady()
 
 bool Window::BeginFrame()
 {
+    _inFrame = true;
     ImGui_ImplDX9_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplayFramebufferScale = ImVec2(_scale, _scale);
+    if (_scale != 1.f) {
+        io.DisplaySize = ImVec2(io.DisplaySize.x / _scale, io.DisplaySize.y / _scale);
+        for (ImGuiInputEvent& event : GImGui->InputEventsQueue)
+            if (event.Type == ImGuiInputEventType_MousePos && event.MousePos.PosX != -FLT_MAX) {
+                event.MousePos.PosX /= _scale;
+                event.MousePos.PosY /= _scale;
+            }
+    }
     ImGui::NewFrame();
     bool isShown = true;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -286,6 +360,7 @@ void Window::EndFrame()
     ImGui::End();
     ImGui::EndFrame();
     Render();
+    _inFrame = false;
 }
 
 bool Window::CreateWnd()
@@ -309,6 +384,9 @@ bool Window::CreateWnd()
 
     MARGINS shadowMargins = {1, 1, 1, 1};
     DwmExtendFrameIntoClientArea(_hwnd, &shadowMargins);
+
+    _dpi = GetDpiForWindow(_hwnd);
+    _scale = _scaleFactor * (float)_dpi / 96.f;
 
     ImGui_ImplWin32_Init(_hwnd);
     return true;
@@ -373,7 +451,24 @@ void Window::Render()
     _d3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, clearCol, 1.0f, 0);
     if (_d3dDevice->BeginScene() >= 0) {
         ImGui::Render();
-        ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+        ImDrawData* drawData = ImGui::GetDrawData();
+        if (_scale != 1.f) {
+            drawData->DisplaySize = ImVec2(drawData->DisplaySize.x * _scale, drawData->DisplaySize.y * _scale);
+            drawData->FramebufferScale = ImVec2(1.f, 1.f);
+            for (ImDrawList* cmdList : drawData->CmdLists) {
+                for (ImDrawVert& vertex : cmdList->VtxBuffer) {
+                    vertex.pos.x *= _scale;
+                    vertex.pos.y *= _scale;
+                }
+                for (ImDrawCmd& cmd : cmdList->CmdBuffer) {
+                    cmd.ClipRect.x *= _scale;
+                    cmd.ClipRect.y *= _scale;
+                    cmd.ClipRect.z *= _scale;
+                    cmd.ClipRect.w *= _scale;
+                }
+            }
+        }
+        ImGui_ImplDX9_RenderDrawData(drawData);
         _d3dDevice->EndScene();
     }
     HRESULT result = _d3dDevice->Present(NULL, NULL, NULL, NULL);
@@ -428,13 +523,19 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
         return true;
     case WM_MOVE: _position = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; return true;
     case WM_SIZE:
-        _size = {LOWORD(lParam), HIWORD(lParam)};
         if (wParam != SIZE_MINIMIZED && _d3dDevice) {
-            _d3dParams.BackBufferWidth = _size.x;
-            _d3dParams.BackBufferHeight = _size.y;
+            _d3dParams.BackBufferWidth = LOWORD(lParam);
+            _d3dParams.BackBufferHeight = HIWORD(lParam);
             ResetDevice();
         }
         return true;
+    case WM_DPICHANGED: {
+        _dpi = HIWORD(wParam);
+        RECT* suggested = (RECT*)lParam;
+        _position = {(int)suggested->left, (int)suggested->top};
+        ApplyScale(false);
+        return true;
+    }
     case WM_MOUSEMOVE: {
         if (wParam & MK_LBUTTON) UpdateMove();
         return true;

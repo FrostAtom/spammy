@@ -6,6 +6,16 @@
 #define CONFIG_SAVE_DELAY_MS 10000
 #define sConfig Config::GetInstance()
 
+enum UiSize {
+    UiSize_Small,
+    UiSize_Medium,
+    UiSize_Large,
+    UiSize_Count,
+};
+
+const char* UiSizeName(UiSize size);
+float UiSizeFactor(UiSize size);
+
 struct Config {
     std::atomic<bool> enabled = true;
     bool minimizeToTray = true;
@@ -13,6 +23,7 @@ struct Config {
     KeyboardForm form = KeyboardForm_75;
     KeyboardVariant variant = KeyboardVariant_Ansi;
     MouseForm mouse = MouseForm_5;
+    UiSize uiSize = UiSize_Medium;
     std::list<std::shared_ptr<Profile>> profiles;
     std::shared_ptr<Profile> editingProfile;
 

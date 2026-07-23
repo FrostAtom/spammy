@@ -1,6 +1,18 @@
 #include "Config.h"
 #include "Utils.h"
 
+const char* UiSizeName(UiSize size)
+{
+    static const char* s_names[UiSize_Count] = {"SMALL", "MEDIUM", "LARGE"};
+    return s_names[size];
+}
+
+float UiSizeFactor(UiSize size)
+{
+    static const float s_factors[UiSize_Count] = {0.8f, 1.f, 1.25f};
+    return s_factors[size];
+}
+
 Config& Config::GetInstance()
 {
     static Config s_config;
@@ -30,6 +42,10 @@ bool Config::Load()
             int value = item.get<int>();
             if (value >= 0 && value < MouseForm_Count) mouse = (MouseForm)value;
         }
+        if (auto item = json["uiSize"]; item.is_number_integer()) {
+            int value = item.get<int>();
+            if (value >= 0 && value < UiSize_Count) uiSize = (UiSize)value;
+        }
         if (auto item = json["profiles"]; item.is_array()) profiles = item.get<std::list<std::shared_ptr<Profile>>>();
         if (auto item = json["editingProfile"]; item.is_string())
             editingProfile = FindProfile(item.get_ref<const std::string&>().c_str());
@@ -51,6 +67,7 @@ void Config::Save()
     if (form != KeyboardForm_75) json["form"] = (int)form;
     if (variant != KeyboardVariant_Ansi) json["variant"] = (int)variant;
     if (mouse != MouseForm_5) json["mouse"] = (int)mouse;
+    if (uiSize != UiSize_Medium) json["uiSize"] = (int)uiSize;
     if (editingProfile) json["editingProfile"] = editingProfile->name;
     if (!profiles.empty()) json["profiles"] = profiles;
 

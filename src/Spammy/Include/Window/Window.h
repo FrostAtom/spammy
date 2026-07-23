@@ -37,6 +37,12 @@ private:
     bool _moving;
     Vec2D<int> _movePos;
 
+    unsigned _dpi;
+    float _scaleFactor;
+    float _scale;
+    bool _scalePending;
+    bool _inFrame;
+
     LPDIRECT3D9 _d3d;
     LPDIRECT3DDEVICE9 _d3dDevice;
     D3DPRESENT_PARAMETERS _d3dParams;
@@ -75,6 +81,7 @@ public:
 
     void SetSize(const Vec2D<int>& v);
     Vec2D<int> GetSize();
+    void SetScaleFactor(float factor);
     void SetPosition(const Vec2D<int>& pos);
     void ResetPosition();
 
@@ -98,6 +105,9 @@ protected:
     void StartMove();
     void StopMove();
     void UpdateMove();
+
+    void ApplyScale(bool keepCenter);
+    Vec2D<int> ScaledSize();
 
     virtual bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result);
 

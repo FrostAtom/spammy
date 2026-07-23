@@ -45,6 +45,7 @@ bool MainWindow::Initialize()
     EnableMoving();
     EnableTitleBar(false);
     SetSize({1280, 680});
+    SetScaleFactor(UiSizeFactor(sConfig.uiSize));
     ResetPosition();
 
     TrayIcon* trayIcon = new TrayIcon();
@@ -701,7 +702,11 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     if (!ImGui::UiBeginPopup("##settings")) return;
 
     static bool s_autoStart = false;
-    if (ImGui::IsWindowAppearing()) s_autoStart = sApp.IsAutoStartEnabled();
+    static int s_uiSize = 0;
+    if (ImGui::IsWindowAppearing()) {
+        s_autoStart = sApp.IsAutoStartEnabled();
+        s_uiSize = (int)sConfig.uiSize;
+    }
 
     if (UiToggleRow("##autostart", "AUTO START", s_autoStart)) {
         if (sApp.EnableAutoStart(!s_autoStart)) s_autoStart = !s_autoStart;
@@ -731,6 +736,12 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     if (UiStepperRow("##mouse", "MOUSE", MouseFormName(sConfig.mouse), MouseForm_Count, mouse)) {
         sConfig.mouse = (MouseForm)mouse;
         sConfig.MarkDirty();
+    }
+    UiStepperRow("##uisize", "UI SIZE", UiSizeName((UiSize)s_uiSize), UiSize_Count, s_uiSize);
+    if (ImGui::IsItemDeactivated() && (UiSize)s_uiSize != sConfig.uiSize) {
+        sConfig.uiSize = (UiSize)s_uiSize;
+        sConfig.MarkDirty();
+        SetScaleFactor(UiSizeFactor(sConfig.uiSize));
     }
 
     ImGui::Separator();
