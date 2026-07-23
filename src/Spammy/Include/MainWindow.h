@@ -10,7 +10,7 @@
 class MainWindow : public Window {
     static MainWindow* _self;
     std::filesystem::path _appFilePath;
-    bool _editPause;
+    std::atomic<bool> _editPause;
     std::set<UINT> _selection;
     Action _brushAction = Action_Spammy;
     std::array<std::array<DWORD, 128>, KEYBOARD_KEYS_COUNT> _pressLog = {};

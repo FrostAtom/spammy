@@ -31,11 +31,11 @@ private:
 
     DWORD _imWndFlags;
     bool _movable;
-    Vec2D<size_t> _size;
-    Vec2D<size_t> _position;
+    Vec2D<int> _size;
+    Vec2D<int> _position;
 
     bool _moving;
-    Vec2D<size_t> _movePos;
+    Vec2D<int> _movePos;
 
     LPDIRECT3D9 _d3d;
     LPDIRECT3DDEVICE9 _d3dDevice;
@@ -74,12 +74,12 @@ public:
 
     void SetName(const wchar_t* name);
 
-    void SetSize(const Vec2D<size_t>& v);
-    Vec2D<size_t> GetSize();
-    void SetPosition(const Vec2D<size_t>& pos);
+    void SetSize(const Vec2D<int>& v);
+    Vec2D<int> GetSize();
+    void SetPosition(const Vec2D<int>& pos);
     void ResetPosition();
 
-    static Vec2D<size_t> GetScreenSize();
+    static Vec2D<int> GetScreenSize();
     static const char* FormatError(ErrorCode code);
 
 protected:

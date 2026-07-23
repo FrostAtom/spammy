@@ -15,7 +15,7 @@ bool App::Init(int argc, char** argv)
     SetCurrentDirectoryW(std::filesystem::path(buf).parent_path().wstring().c_str());
 
     bool firstRun = !std::filesystem::is_regular_file(CONFIG_FILE);
-    if (!LoadConfig()) {
+    if (!sConfig.Load()) {
         int action =
             MessageBoxW(NULL, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
         if (action != IDOK) return false;
@@ -23,10 +23,10 @@ bool App::Init(int argc, char** argv)
     if (firstRun) EnableAutoStart(true);
     _autoStartEnabled = IsAutoStartEnabled();
 
-    if (_profiles.empty()) {
-        CreateProfile("UNNAMED");
+    if (sConfig.profiles.empty()) {
+        sConfig.CreateProfile("UNNAMED");
         for (unsigned short vk = '1'; vk <= '5'; vk++)
-            _editingProfile->keys[vk][KeyMod_None].action = Action_Spammy;
+            sConfig.editingProfile->keys[vk][KeyMod_None].action = Action_Spammy;
     }
 
     _mainWindow = new MainWindow(L"" APP_NAME);
@@ -49,7 +49,7 @@ bool App::Init(int argc, char** argv)
 void App::Uninit()
 {
     sKeyboard.Detach();
-    SaveConfig();
+    sConfig.Save();
     if (_mainWindow) {
         delete _mainWindow;
         _mainWindow = NULL;
@@ -68,7 +68,7 @@ bool App::Run()
             DispatchMessageW(&msg);
         }
         if (_mainWindow->WantQuit()) {
-            if (_minimizeToTray)
+            if (sConfig.minimizeToTray)
                 _mainWindow->Hide();
             else
                 _mainWindow->Close();
@@ -88,7 +88,9 @@ bool App::Run()
         if (profile) profile->activeMs += ticks - _statTicks;
         _statTicks = ticks;
 
-        if (_enabled && profile) {
+        sConfig.SaveIfDirty(ticks);
+
+        if (sConfig.enabled && profile) {
             if (ticks - _lastUpdate >= profile->speed) {
                 unsigned mods = sKeyboard.TestModifiers();
                 for (unsigned short i = 0; i < sKeyboard.Count(); i++) {
@@ -109,123 +111,13 @@ bool App::Run()
 
 void App::Enable(bool state)
 {
-    _enabled = state;
+    sConfig.enabled = state;
+    sConfig.MarkDirty();
 }
 
 bool App::IsEnabled()
 {
-    return _enabled;
-}
-
-bool App::LoadConfig()
-{
-    if (!std::filesystem::is_regular_file(CONFIG_FILE)) return true;
-    std::ifstream file(CONFIG_FILE);
-    if (!file) return false;
-    try {
-        nlohmann::json json = nlohmann::json::parse(file);
-        if (auto enabled = json["enabled"]; enabled.is_boolean()) _enabled = enabled.get<bool>();
-        if (auto minimizeToTray = json["minimizeToTray"]; minimizeToTray.is_boolean())
-            _minimizeToTray = minimizeToTray.get<bool>();
-        if (auto showTrayIcon = json["showTrayIcon"]; showTrayIcon.is_boolean())
-            _showTrayIcon = showTrayIcon.get<bool>();
-        if (auto soundsEnabled = json["soundsEnabled"]; soundsEnabled.is_boolean())
-            _soundsEnabled = soundsEnabled.get<bool>();
-        if (auto form = json["form"]; form.is_number_integer()) SetForm((KeyboardForm)form.get<int>());
-        if (auto variant = json["variant"]; variant.is_number_integer())
-            SetVariant((KeyboardVariant)variant.get<int>());
-        if (auto mouse = json["mouse"]; mouse.is_number_integer()) SetMouse((MouseForm)mouse.get<int>());
-        if (auto profiles = json["profiles"]; profiles.is_array())
-            _profiles = json["profiles"].get<std::list<std::shared_ptr<Profile>>>();
-        if (auto editingProfile = json["editingProfile"]; editingProfile.is_string())
-            _editingProfile = FindProfile(editingProfile.get_ref<const std::string&>().c_str());
-    } catch (nlohmann::json::exception&) {
-        return false;
-    }
-    return true;
-}
-
-void App::SaveConfig()
-{
-    std::ofstream file(CONFIG_FILE);
-    if (!file) return;
-
-    nlohmann::json json = nlohmann::json::object();
-    if (!_enabled) json["enabled"] = false;
-    if (!_minimizeToTray) json["minimizeToTray"] = false;
-    if (!_showTrayIcon) json["showTrayIcon"] = false;
-    if (!_soundsEnabled) json["soundsEnabled"] = false;
-    if (_form != KeyboardForm_75) json["form"] = (int)_form;
-    if (_variant != KeyboardVariant_Ansi) json["variant"] = (int)_variant;
-    if (_mouse != MouseForm_5) json["mouse"] = (int)_mouse;
-    if (_editingProfile) json["editingProfile"] = _editingProfile->name;
-    if (!_profiles.empty()) json["profiles"] = _profiles;
-
-    file << json.dump(2, ' ');
-}
-
-bool App::IsMinimizeToTray()
-{
-    return _minimizeToTray;
-}
-
-void App::SetMinimizeToTray(bool state)
-{
-    _minimizeToTray = state;
-}
-
-bool App::IsShowTrayIcon()
-{
-    return _showTrayIcon;
-}
-
-void App::SetShowTrayIcon(bool state)
-{
-    _showTrayIcon = state;
-    if (_mainWindow) _mainWindow->ShowTrayIcon(state);
-}
-
-bool App::IsSoundsEnabled()
-{
-    return _soundsEnabled;
-}
-
-void App::SetSoundsEnabled(bool state)
-{
-    _soundsEnabled = state;
-}
-
-KeyboardForm App::Form()
-{
-    return _form;
-}
-
-void App::SetForm(KeyboardForm form)
-{
-    if (form < 0 || form >= KeyboardForm_Count) return;
-    _form = form;
-}
-
-KeyboardVariant App::Variant()
-{
-    return _variant;
-}
-
-void App::SetVariant(KeyboardVariant variant)
-{
-    if (variant < 0 || variant >= KeyboardVariant_Count) return;
-    _variant = variant;
-}
-
-MouseForm App::Mouse()
-{
-    return _mouse;
-}
-
-void App::SetMouse(MouseForm form)
-{
-    if (form < 0 || form >= MouseForm_Count) return;
-    _mouse = form;
+    return sConfig.enabled;
 }
 
 static const wchar_t* getAutoStartCommand()
@@ -299,14 +191,15 @@ bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
     unsigned mods = sKeyboard.TestModifiers();
     if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
         if (!down) {
-            _enabled = !_enabled;
-            if (_soundsEnabled) PlayEnabledSound(_enabled);
+            sConfig.enabled = !sConfig.enabled;
+            sConfig.MarkDirty();
+            if (sConfig.soundsEnabled) PlayEnabledSound(sConfig.enabled);
         }
         return true;
     }
     if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
     if (profile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
-    if (!_enabled) return false;
+    if (!sConfig.enabled) return false;
 
     const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods));
     if (!mode) return false;
@@ -327,83 +220,15 @@ std::string App::ActiveAppName()
     return _activeApp;
 }
 
-const std::list<std::shared_ptr<Profile>>& App::GetProfiles()
-{
-    return _profiles;
-}
-
-std::shared_ptr<Profile> App::FindProfile(const char* name)
-{
-    auto it = std::find_if(_profiles.begin(), _profiles.end(),
-                           [=](const std::shared_ptr<Profile>& item) { return item->name == name; });
-    return it != _profiles.end() ? *it : NULL;
-}
-
-bool App::IsProfileExists(const char* name)
-{
-    return (bool)FindProfile(name);
-}
-
-void App::CreateProfile(const char* name)
-{
-    std::shared_ptr<Profile> profile = std::make_shared<Profile>();
-    profile->name = name;
-
-    _profiles.emplace_back(profile);
-    _editingProfile = profile;
-}
-
-void App::EditingProfile(const char* name)
-{
-    _editingProfile = FindProfile(name);
-}
-
-std::shared_ptr<Profile> App::EditingProfile()
-{
-    return _editingProfile;
-}
-
 void App::DeleteProfile(const char* name)
 {
-    auto it = std::find_if(_profiles.begin(), _profiles.end(),
-                           [name](const std::shared_ptr<Profile>& item) { return item->name == name; });
-    if (it == _profiles.end()) return;
-    if (*it == _activeProfile) {
+    std::shared_ptr<Profile> profile = sConfig.FindProfile(name);
+    if (!profile) return;
+    if (profile == _activeProfile) {
         std::lock_guard lock(_callbackMutex);
         _activeProfile = NULL;
     }
-    if (*it == _editingProfile) _editingProfile = NULL;
-    _profiles.erase(it);
-}
-
-std::shared_ptr<Profile> App::FindProfileByApp(const char* app)
-{
-    auto it = std::find_if(_profiles.begin(), _profiles.end(), [app](const std::shared_ptr<Profile>& item) {
-        return std::find(item->apps.begin(), item->apps.end(), app) != item->apps.end();
-    });
-    return it != _profiles.end() ? *it : NULL;
-}
-
-bool App::IsProfileBinded(const char* name, const char* app)
-{
-    if (std::shared_ptr<Profile> profile = FindProfile(name))
-        return std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end();
-    return false;
-}
-
-void App::BindProfile(const char* name, const char* app)
-{
-    std::shared_ptr<Profile> profile = FindProfile(name);
-    if (!profile || std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) return;
-    profile->apps.emplace_back(app);
-    LexicographicalSort(profile->apps);
-}
-
-void App::UnbindProfile(const char* name, const char* app)
-{
-    std::shared_ptr<Profile> profile = FindProfile(name);
-    if (!profile) return;
-    profile->apps.erase(std::remove(profile->apps.begin(), profile->apps.end(), app), profile->apps.end());
+    sConfig.DeleteProfile(name);
 }
 
 void App::CheckIsFocusChanged()
@@ -425,14 +250,14 @@ void App::OnFocusChanged()
     std::string newApp;
     if (std::filesystem::path path; newHwnd && (path = GetProcessPath(newHwnd)).has_filename()) {
         newApp = (const char*)path.filename().u8string().c_str();
-        newProfile = FindProfileByApp(newApp.c_str());
+        newProfile = sConfig.FindProfileByApp(newApp.c_str());
         if (!newProfile) {
             wchar_t selfPath[MAX_PATH] = {0};
             GetModuleFileNameW(NULL, selfPath, std::size(selfPath));
             if (path != selfPath) {
-                auto it = std::find_if(_profiles.begin(), _profiles.end(),
+                auto it = std::find_if(sConfig.profiles.begin(), sConfig.profiles.end(),
                                        [](const std::shared_ptr<Profile>& item) { return item->apps.empty(); });
-                if (it != _profiles.end()) newProfile = *it;
+                if (it != sConfig.profiles.end()) newProfile = *it;
             }
         }
     }

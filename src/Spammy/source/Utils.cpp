@@ -42,6 +42,6 @@ void LexicographicalSort(std::vector<std::string>& dict)
 {
     std::sort(dict.begin(), dict.end(), [](const std::string& a, const std::string& b) {
         return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
-                                            [](const char& a, const char& b) { return tolower(a) < tolower(b); });
+                                            [](unsigned char a, unsigned char b) { return tolower(a) < tolower(b); });
     });
 }

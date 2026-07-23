@@ -4,6 +4,8 @@
 #define GET_KEY_MODIFIER(bundle) ((bundle >> 16) & 0xFFFF)
 #define GET_KEY_VKCODE(bundle) (bundle & 0xFFFF)
 #define MAKE_KEY_BUNDLE(vkCode, mods) (vkCode | (mods << 16))
+#define PROFILE_SPEED_MIN 10
+#define PROFILE_SPEED_MAX 200
 
 enum Action {
     Action_None,
@@ -64,6 +66,8 @@ inline void from_json(const nlohmann::json& json, Profile& value)
     JSON_READ_FIELD(name);
     JSON_READ_FIELD(apps);
     JSON_READ_FIELD(speed);
+    if (value.speed < PROFILE_SPEED_MIN) value.speed = PROFILE_SPEED_MIN;
+    if (value.speed > PROFILE_SPEED_MAX) value.speed = PROFILE_SPEED_MAX;
     JSON_READ_FIELD(vkPause);
     JSON_READ_FIELD(disableAltF4);
     JSON_READ_FIELD(disableWin);
@@ -74,8 +78,10 @@ inline void from_json(const nlohmann::json& json, Profile& value)
             if (auto key = item.at("key"); key.is_number_unsigned()) {
                 if (auto action = item.at("action"); action.is_number_unsigned()) {
                     unsigned bundle = key.get<unsigned>();
-                    value.keys[GET_KEY_VKCODE(bundle)][GET_KEY_MODIFIER(bundle)].action =
-                        (Action)action.get<unsigned>();
+                    unsigned vkCode = GET_KEY_VKCODE(bundle);
+                    unsigned mods = GET_KEY_MODIFIER(bundle);
+                    if (vkCode < KEYBOARD_KEYS_COUNT && mods < KEYBOARD_KEYMOD_COUNT)
+                        value.keys[vkCode][mods].action = (Action)action.get<unsigned>();
                 }
             }
         }

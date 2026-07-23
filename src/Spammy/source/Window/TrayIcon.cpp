@@ -37,7 +37,7 @@ int TrayIconMenu::Append(UINT flags, LPCWSTR newItem)
 
 void TrayIconMenu::Fire(UINT id)
 {
-    if (id > std::size(_funcs)) return;
+    if (id >= std::size(_funcs)) return;
     Callback_t& func = _funcs[id];
     if (func) func();
 }

@@ -192,18 +192,18 @@ void Window::SetName(const wchar_t* name)
     if (_hwnd) SetWindowTextW(_hwnd, name);
 }
 
-Window::Vec2D<size_t> Window::GetSize()
+Window::Vec2D<int> Window::GetSize()
 {
     return _size;
 }
 
-void Window::SetSize(const Vec2D<size_t>& size)
+void Window::SetSize(const Vec2D<int>& size)
 {
     _size = size;
     if (_hwnd) MoveWindow(_hwnd, _position.x, _position.y, _size.x, _size.y, FALSE);
 }
 
-void Window::SetPosition(const Vec2D<size_t>& position)
+void Window::SetPosition(const Vec2D<int>& position)
 {
     _position = position;
     if (_hwnd) MoveWindow(_hwnd, _position.x, _position.y, _size.x, _size.y, FALSE);
@@ -211,7 +211,7 @@ void Window::SetPosition(const Vec2D<size_t>& position)
 
 void Window::ResetPosition()
 {
-    Vec2D<size_t> pos = GetScreenSize();
+    Vec2D<int> pos = GetScreenSize();
     pos.x -= _size.x;
     pos.y -= _size.y;
     pos.x /= 2;
@@ -219,11 +219,11 @@ void Window::ResetPosition()
     SetPosition(pos);
 }
 
-Window::Vec2D<size_t> Window::GetScreenSize()
+Window::Vec2D<int> Window::GetScreenSize()
 {
     RECT rect;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &rect, 0);
-    return {size_t(rect.right - rect.left), size_t(rect.bottom - rect.top)};
+    return {rect.right - rect.left, rect.bottom - rect.top};
 }
 
 void Window::EnableMoving(bool state)
@@ -394,7 +394,7 @@ void Window::StartMove()
     GetCursorPos(&point);
     RECT rect;
     GetWindowRect(_hwnd, &rect);
-    _movePos = {size_t(point.x - rect.left), size_t(point.y - rect.top)};
+    _movePos = {point.x - rect.left, point.y - rect.top};
     _moving = true;
 }
 
@@ -433,7 +433,7 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
         Update();
         *result = TRUE;
         return true;
-    case WM_MOVE: _position = {LOWORD(lParam), HIWORD(lParam)}; return true;
+    case WM_MOVE: _position = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; return true;
     case WM_SIZE:
         _size = {LOWORD(lParam), HIWORD(lParam)};
         if (wParam != SIZE_MINIMIZED && _d3dDevice) {

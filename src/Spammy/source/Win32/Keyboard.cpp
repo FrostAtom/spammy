@@ -175,7 +175,8 @@ const char* Keyboard::GetKeyName(unsigned short vkCode)
     case VK_XBUTTON1: return "Mouse 4";
     case VK_XBUTTON2: return "Mouse 5";
     }
-    static char buf[64] = {0};
+    static char buf[64];
+    buf[0] = '\0';
     GetKeyNameTextA(MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC) << 16, buf, std::size(buf));
     return buf;
 }

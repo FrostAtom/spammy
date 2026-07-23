@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "App.h"
+#include "Config.h"
 #include "Modes.h"
 #include "Resources.h"
 #include "Updater.h"
@@ -48,7 +49,7 @@ bool MainWindow::Initialize()
     trayIcon->SetOnClick(std::bind_front(&MainWindow::OnTrayClick, this));
     trayIcon->SetMenu(std::bind_front(&MainWindow::OnTrayMenu, this));
     SetTrayIcon(trayIcon);
-    if (!sApp.IsShowTrayIcon()) ShowTrayIcon(false);
+    if (!sConfig.showTrayIcon) ShowTrayIcon(false);
 
     LoadStyle();
 
@@ -74,7 +75,10 @@ bool MainWindow::HandleKeyRelease(unsigned short vkCode, bool)
 {
     if (Keyboard::IsMouseButton(vkCode)) return false;
     if (_editPause) {
-        if (auto profile = sApp.EditingProfile()) profile->vkPause = MAKE_KEY_BUNDLE(vkCode, sKeyboard.TestModifiers());
+        if (auto profile = sConfig.editingProfile) {
+            profile->vkPause = MAKE_KEY_BUNDLE(vkCode, sKeyboard.TestModifiers());
+            sConfig.MarkDirty();
+        }
         _editPause = false;
         return true;
     }
@@ -117,7 +121,7 @@ bool MainWindow::BeginFrame()
 
 void MainWindow::Draw()
 {
-    auto profile = sApp.EditingProfile();
+    auto profile = sConfig.editingProfile;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 o = ImGui::GetWindowPos();
 
@@ -145,7 +149,7 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     if (UiGhostButton("##min", ImVec2(o.x + 1188.f, o.y + 17.f), 30.f, UiGlyph_Minimize))
         ShowWindow(Native(), SW_MINIMIZE);
     if (UiGhostButton("##close", ImVec2(o.x + 1224.f, o.y + 17.f), 30.f, UiGlyph_Close)) {
-        if (sApp.IsMinimizeToTray())
+        if (sConfig.minimizeToTray)
             Hide();
         else
             Close();
@@ -193,18 +197,23 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
         DrawAppsPopup(o, profile);
 
         if (UiLockChip("##winkey", ImVec2(o.x + 700.f, o.y + 66.f), ImVec2(110.f, 46.f), "WIN KEY",
-                       profile->disableWin))
+                       profile->disableWin)) {
             profile->disableWin = !profile->disableWin;
+            sConfig.MarkDirty();
+        }
 
         if (UiLockChip("##altf4", ImVec2(o.x + 824.f, o.y + 66.f), ImVec2(120.f, 46.f), "ALT + F4",
-                       profile->disableAltF4))
+                       profile->disableAltF4)) {
             profile->disableAltF4 = !profile->disableAltF4;
+            sConfig.MarkDirty();
+        }
 
         if (UiChipFrame("##pause", ImVec2(o.x + 958.f, o.y + 66.f), ImVec2(150.f, 46.f))) {
             if (_editPause) {
                 _editPause = false;
             } else {
                 profile->vkPause = 0;
+                sConfig.MarkDirty();
                 sKeyboard.Attach();
                 _editPause = true;
             }
@@ -246,14 +255,14 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     AddPanel(dl, panelMin, panelMax, 16.f);
 
     const float gap = 7.f;
-    const MouseForm mouseForm = sApp.Mouse();
+    const MouseForm mouseForm = sConfig.mouse;
     const float mouseW = 190.f;
     const float mouseLeft = panelMax.x - 16.f - mouseW;
     const ImVec2 start = ImVec2(panelMin.x + 16.f, panelMin.y + 16.f);
     const ImVec2 avail = ImVec2((mouseForm != MouseForm_Off ? mouseLeft - 24.f : panelMax.x - 16.f) - start.x,
                                 panelMax.y - panelMin.y - 32.f);
 
-    const std::vector<KeyboardKey>& layout = GetKeyboardLayout(sApp.Form(), sApp.Variant());
+    const std::vector<KeyboardKey>& layout = GetKeyboardLayout(sConfig.form, sConfig.variant);
 
     float gridW = 0.f;
     float gridH = 0.f;
@@ -352,11 +361,18 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
         if (profile && !desc.locked) {
             if (pressedHere && profile->keys[vkCode][mods].action == _brushAction) s_brushErase = true;
 
-            if (brushing && hoverKey) profile->keys[vkCode][mods].action = s_brushErase ? Action_None : _brushAction;
+            if (brushing && hoverKey) {
+                Action next = s_brushErase ? Action_None : _brushAction;
+                if (profile->keys[vkCode][mods].action != next) {
+                    profile->keys[vkCode][mods].action = next;
+                    sConfig.MarkDirty();
+                }
+            }
 
             if (releasedLeft && !s_leftDismiss && !s_brushMoved && hoverKey && s_pressVk == vkCode) {
                 KeyConfig& config = profile->keys[vkCode][mods];
                 config.action = config.action == _brushAction ? Action_None : _brushAction;
+                sConfig.MarkDirty();
             }
 
             if (s_rightInPanel && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverKey) s_rightVk = vkCode;
@@ -471,7 +487,7 @@ void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
         status = "ACTIVE";
         statusCol = UiCol::Ok;
         glow = true;
-        detail = "hooked ?? " + sApp.ActiveAppName();
+        detail = "hooked -> " + sApp.ActiveAppName();
     } else {
         status = "READY";
         statusCol = UiCol::SpamText;
@@ -483,7 +499,7 @@ void MainWindow::DrawFooter(ImDrawList* dl, const ImVec2& o)
     dl->AddText(UiFonts::Mono, 13.f, ImVec2(o.x + 50.f + statusSize.x + 16.f, o.y + 683.f), UiCol::Mute,
                 detail.c_str());
 
-    auto editing = sApp.EditingProfile();
+    auto editing = sConfig.editingProfile;
     if (!editing) return;
 
     unsigned mins = (unsigned)(editing->activeMs / 60000);
@@ -518,14 +534,15 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
     }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    auto editing = sApp.EditingProfile();
+    auto editing = sConfig.editingProfile;
     const char* pendingDelete = NULL;
     int idx = 0;
-    for (const std::shared_ptr<Profile>& item : sApp.GetProfiles()) {
+    for (const std::shared_ptr<Profile>& item : sConfig.profiles) {
         ImGui::PushID(idx++);
         ImVec2 p = ImGui::GetCursorScreenPos();
         bool selected = item == editing;
-        if (ImGui::Selectable("##prow", selected, 0, ImVec2(200.f, 24.f))) sApp.EditingProfile(item->name.c_str());
+        if (ImGui::Selectable("##prow", selected, 0, ImVec2(200.f, 24.f)))
+            sConfig.SetEditingProfile(item->name.c_str());
         dl->AddText(UiFonts::Semi, 18.f, ImVec2(p.x + 8.f, p.y + 4.f), selected ? UiCol::SpamText : UiCol::Text,
                     item->name.c_str());
         char count[16];
@@ -560,13 +577,13 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
         }
         bool enter = ImGui::InputTextWithHint("##newname", "profile name", s_newName, sizeof(s_newName),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
-        bool valid = strlen(s_newName) >= 3 && !sApp.IsProfileExists(s_newName);
+        bool valid = strlen(s_newName) >= 3 && !sConfig.IsProfileExists(s_newName);
         ImGui::SameLine(0.f, 6.f);
         ImGui::BeginDisabled(!valid);
         bool ok = ImGui::Button("OK", ImVec2(-FLT_MIN, 0.f));
         ImGui::EndDisabled();
         if ((enter || ok) && valid) {
-            sApp.CreateProfile(s_newName);
+            sConfig.CreateProfile(s_newName);
             ImGui::CloseCurrentPopup();
         }
     }
@@ -625,7 +642,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
             if (UiGhostButton("##unbind", ImVec2(p.x + w - 24.f, p.y), 24.f, UiGlyph_Close)) unbindApp = app.c_str();
             ImGui::PopID();
         }
-        if (unbindApp) sApp.UnbindProfile(profile->name.c_str(), unbindApp);
+        if (unbindApp) sConfig.UnbindProfile(profile->name.c_str(), unbindApp);
         ImGui::Separator();
     }
 
@@ -635,10 +652,10 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     for (const std::string& app : s_appList) {
         if (!MatchesFilter(app, s_search)) continue;
         if (std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) continue;
-        auto appProfile = sApp.FindProfileByApp(app.c_str());
+        auto appProfile = sConfig.FindProfileByApp(app.c_str());
         bool boundElsewhere = appProfile && appProfile != profile;
         ImGui::PushID(idx++);
-        if (UiMenuRow(app.c_str(), 0, boundElsewhere, true)) sApp.BindProfile(profile->name.c_str(), app.c_str());
+        if (UiMenuRow(app.c_str(), 0, boundElsewhere, true)) sConfig.BindProfile(profile->name.c_str(), app.c_str());
         ImGui::PopID();
         shown++;
     }
@@ -661,24 +678,37 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     if (UiToggleRow("##autostart", "AUTO START", s_autoStart)) {
         if (sApp.EnableAutoStart(!s_autoStart)) s_autoStart = !s_autoStart;
     }
-    if (UiToggleRow("##tray", "HIDE ON CLOSE", sApp.IsMinimizeToTray()))
-        sApp.SetMinimizeToTray(!sApp.IsMinimizeToTray());
-    if (UiToggleRow("##trayicon", "SHOW TRAY ICON", sApp.IsShowTrayIcon()))
-        sApp.SetShowTrayIcon(!sApp.IsShowTrayIcon());
-    if (UiToggleRow("##sounds", "ENABLE SOUNDS", sApp.IsSoundsEnabled()))
-        sApp.SetSoundsEnabled(!sApp.IsSoundsEnabled());
+    if (UiToggleRow("##tray", "HIDE ON CLOSE", sConfig.minimizeToTray)) {
+        sConfig.minimizeToTray = !sConfig.minimizeToTray;
+        sConfig.MarkDirty();
+    }
+    if (UiToggleRow("##trayicon", "SHOW TRAY ICON", sConfig.showTrayIcon)) {
+        sConfig.showTrayIcon = !sConfig.showTrayIcon;
+        ShowTrayIcon(sConfig.showTrayIcon);
+        sConfig.MarkDirty();
+    }
+    if (UiToggleRow("##sounds", "ENABLE SOUNDS", sConfig.soundsEnabled)) {
+        sConfig.soundsEnabled = !sConfig.soundsEnabled;
+        sConfig.MarkDirty();
+    }
 
     ImGui::Separator();
 
-    int form = (int)sApp.Form();
-    if (UiStepperRow("##form", "LAYOUT", KeyboardFormName(sApp.Form()), KeyboardForm_Count, form))
-        sApp.SetForm((KeyboardForm)form);
-    int variant = (int)sApp.Variant();
-    if (UiStepperRow("##variant", "VARIANT", KeyboardVariantName(sApp.Variant()), KeyboardVariant_Count, variant))
-        sApp.SetVariant((KeyboardVariant)variant);
-    int mouse = (int)sApp.Mouse();
-    if (UiStepperRow("##mouse", "MOUSE", MouseFormName(sApp.Mouse()), MouseForm_Count, mouse))
-        sApp.SetMouse((MouseForm)mouse);
+    int form = (int)sConfig.form;
+    if (UiStepperRow("##form", "LAYOUT", KeyboardFormName(sConfig.form), KeyboardForm_Count, form)) {
+        sConfig.form = (KeyboardForm)form;
+        sConfig.MarkDirty();
+    }
+    int variant = (int)sConfig.variant;
+    if (UiStepperRow("##variant", "VARIANT", KeyboardVariantName(sConfig.variant), KeyboardVariant_Count, variant)) {
+        sConfig.variant = (KeyboardVariant)variant;
+        sConfig.MarkDirty();
+    }
+    int mouse = (int)sConfig.mouse;
+    if (UiStepperRow("##mouse", "MOUSE", MouseFormName(sConfig.mouse), MouseForm_Count, mouse)) {
+        sConfig.mouse = (MouseForm)mouse;
+        sConfig.MarkDirty();
+    }
 
     ImGui::Separator();
     if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
@@ -707,9 +737,11 @@ void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsig
     }
     if (apply) _brushAction = action;
     if (UiMenuRow("CLEAR", UiCol::Mute)) action = Action_None, apply = true;
-    if (apply)
+    if (apply) {
         for (UINT vk : _selection)
             profile->keys[vk][popupMods].action = action;
+        sConfig.MarkDirty();
+    }
 
     ImGui::Separator();
     ImGui::PushFont(UiFonts::Semi, 14.f);
@@ -723,9 +755,12 @@ void MainWindow::DrawKeyMenuPopup(const std::shared_ptr<Profile>& profile, unsig
     if (UiGhostButton("##ratedec", ImVec2(p.x, p.y + pad), 24.f, UiGlyph_Minus)) speed--, changed = true;
     ImGui::SetCursorScreenPos(ImVec2(p.x + 28.f, p.y));
     ImGui::SetNextItemWidth(w - 56.f);
-    if (ImGui::SliderInt("##rate", &speed, 10, 200, "%d ms")) changed = true;
+    if (ImGui::SliderInt("##rate", &speed, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX, "%d ms")) changed = true;
     if (UiGhostButton("##rateinc", ImVec2(p.x + w - 24.f, p.y + pad), 24.f, UiGlyph_Plus)) speed++, changed = true;
-    if (changed) profile->speed = (unsigned)ImClamp(speed, 10, 200);
+    if (changed) {
+        profile->speed = (unsigned)ImClamp(speed, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX);
+        sConfig.MarkDirty();
+    }
 
     ImGui::UiEndPopup();
 }
