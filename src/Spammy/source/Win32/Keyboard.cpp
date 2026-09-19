@@ -37,8 +37,15 @@ void Keyboard::Detach()
 void Keyboard::SyncState()
 {
     DWORD now = GetTickCount();
-    for (unsigned short vkCode = 1; vkCode < _state.size(); ++vkCode)
+    for (unsigned short vkCode = 1; vkCode < _state.size(); ++vkCode) {
+        // LL hooks only ever deliver left/right modifier codes, so a generic VK_SHIFT/VK_CONTROL/VK_MENU
+        // captured here (e.g. Alt still held during Alt+Tab) would never be released and stick forever
+        if (vkCode == VK_SHIFT || vkCode == VK_CONTROL || vkCode == VK_MENU) {
+            _state[vkCode] = 0;
+            continue;
+        }
         _state[vkCode] = (GetAsyncKeyState(vkCode) & 0x8000) ? now : 0;
+    }
 }
 
 void Keyboard::ThreadProc(std::stop_token stop, std::promise<bool>& ready)
@@ -81,9 +88,9 @@ bool Keyboard::TestModifiers(unsigned mods)
 unsigned Keyboard::TestModifiers()
 {
     DWORD result = KeyMod_None;
-    if (_state[VK_LSHIFT] || _state[VK_RSHIFT] || _state[VK_SHIFT]) result |= KeyMod_Shift;
-    if (_state[VK_LMENU] || _state[VK_RMENU] || _state[VK_MENU]) result |= KeyMod_Alt;
-    if (_state[VK_LCONTROL] || _state[VK_RCONTROL] || _state[VK_CONTROL]) result |= KeyMod_Ctrl;
+    if (_state[VK_LSHIFT] || _state[VK_RSHIFT]) result |= KeyMod_Shift;
+    if (_state[VK_LMENU] || _state[VK_RMENU]) result |= KeyMod_Alt;
+    if (_state[VK_LCONTROL] || _state[VK_RCONTROL]) result |= KeyMod_Ctrl;
     return result;
 }
 
