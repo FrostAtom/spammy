@@ -31,6 +31,7 @@ Window::Window(const wchar_t* className, const wchar_t* wndName)
       _inFrame(false),
       _d3d(NULL),
       _d3dDevice(NULL),
+      _lastError(0),
       _trayIcon(NULL),
       _position(CW_USEDEFAULT, CW_USEDEFAULT),
       _size(512, 512)
@@ -62,6 +63,7 @@ Window::ErrorCode Window::Initialize()
     if (!_imCtx) return ErrorCode_ImGuiError;
 
     if (!CreateWnd()) {
+        _lastError = HRESULT_FROM_WIN32(GetLastError());
         Cleanup();
         return ErrorCode_WinError;
     }
@@ -407,12 +409,26 @@ void Window::CleanupWnd()
 
 bool Window::CreateDevice()
 {
+    _lastError = 0;
     _d3d = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!_d3d) return false;
+    if (!_d3d) {
+        _lastError = HRESULT_FROM_WIN32(GetLastError());
+        return false;
+    }
 
-    HRESULT hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, D3DCREATE_HARDWARE_VERTEXPROCESSING,
-                                      &_d3dParams, &_d3dDevice);
-    if (hRes < 0) {
+    // hardware T&L is missing on basic display adapters, RDP sessions, VMs and some old iGPUs — fall back gracefully
+    static const DWORD s_behaviorFlags[] = {
+        D3DCREATE_HARDWARE_VERTEXPROCESSING,
+        D3DCREATE_MIXED_VERTEXPROCESSING,
+        D3DCREATE_SOFTWARE_VERTEXPROCESSING,
+    };
+    HRESULT hRes = E_FAIL;
+    for (DWORD flags : s_behaviorFlags) {
+        hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, flags, &_d3dParams, &_d3dDevice);
+        if (SUCCEEDED(hRes)) break;
+    }
+    if (FAILED(hRes)) {
+        _lastError = hRes;
         _d3d->Release();
         _d3d = NULL;
         return false;

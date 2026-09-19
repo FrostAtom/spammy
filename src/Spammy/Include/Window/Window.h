@@ -46,6 +46,7 @@ private:
     LPDIRECT3D9 _d3d;
     LPDIRECT3DDEVICE9 _d3dDevice;
     D3DPRESENT_PARAMETERS _d3dParams;
+    HRESULT _lastError;
     TrayIcon* _trayIcon;
     static const char* _errorCodeNames[];
 
@@ -87,6 +88,8 @@ public:
 
     static Vec2D<int> GetScreenSize();
     static const char* FormatError(ErrorCode code);
+    // HRESULT of the last failed Initialize() step (0 if none)
+    HRESULT LastError() const { return _lastError; }
 
 protected:
     bool IsReady();

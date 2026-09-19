@@ -37,7 +37,9 @@ bool MainWindow::Initialize()
 
     ErrorCode ec = Window::Initialize();
     if (ec != ErrorCode_OK) {
-        MessageBoxA(NULL, FormatError(ec), APP_NAME, MB_ICONERROR | MB_OK);
+        char msg[256];
+        snprintf(msg, std::size(msg), "%s (0x%08lX)", FormatError(ec), (unsigned long)LastError());
+        MessageBoxA(NULL, msg, APP_NAME, MB_ICONERROR | MB_OK);
         return false;
     }
 
