@@ -30,6 +30,18 @@ struct Profile {
     unsigned vkPause;
     bool disableAltF4;
     bool disableWin;
+
+    // true if any mouse button is bound (or is the pause key) — decides whether the mouse hook is installed
+    inline bool UsesMouse() const
+    {
+        if (Keyboard::IsMouseButton(GET_KEY_VKCODE(vkPause))) return true;
+        for (unsigned short vk = VK_LBUTTON; vk <= VK_XBUTTON2; vk++) {
+            if (!Keyboard::IsMouseButton(vk)) continue;
+            for (const KeyConfig& cfg : keys[vk])
+                if (cfg.action != Action_None) return true;
+        }
+        return false;
+    }
 };
 
 #define JSON_READ_FIELD(field) value.field = json.at(_CRT_STRINGIZE(field)).get<decltype(value.field)>()

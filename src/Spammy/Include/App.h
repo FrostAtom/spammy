@@ -27,19 +27,45 @@ public:
     void DeleteProfile(const char* name);
 
 private:
+    // a physical key event the hook decided to swallow, handed off to the input worker
+    struct InputEvent {
+        enum Kind : unsigned char { Kind_Press, Kind_Release, Kind_TogglePause };
+        Kind kind;
+        bool repeat;
+        unsigned short vkCode;
+        unsigned mods;
+        HWND hwnd;
+        std::shared_ptr<Profile> profile;
+    };
+
     void CheckIsFocusChanged();
     void OnFocusChanged();
+    std::pair<std::shared_ptr<Profile>, HWND> ActiveTarget();
+
+    // hook thread: decide + enqueue only
     bool OnKeyEvent(bool down, UINT vkCode, bool repeat);
+    void PostInput(InputEvent&& ev);
+
+    // input worker thread: injection + autofire ticking, decoupled from rendering
+    void StartInputWorker();
+    void StopInputWorker();
+    void InputWorkerProc(std::stop_token stop);
+    void HandleInput(const InputEvent& ev);
+    void TickAutofire(const Profile& profile, HWND hwnd);
 
 private:
     MainWindow* _mainWindow = NULL;
     bool _isRunning = false;
     bool _autoStartEnabled = false;
-    DWORD _lastUpdate = 0;
     HWND _activeHwnd = NULL;
 
     std::shared_ptr<Profile> _activeProfile;
     std::string _activeApp;
-    // guards _activeProfile/_activeHwnd between the keyboard-hook thread (callbacks) and the main thread (OnFocusChanged)
+    // guards _activeProfile/_activeHwnd between the hook thread, the input worker and the main thread (OnFocusChanged)
     std::mutex _callbackMutex;
+
+    std::jthread _inputThread;
+    HANDLE _inputWake = NULL;
+    std::mutex _inputMutex;
+    std::vector<InputEvent> _inputQueue;
 };

@@ -1,8 +1,8 @@
-#include "Win32/Keyboard.h"
+﻿#include "Win32/Keyboard.h"
 
-Keyboard::Keyboard() : _hhook(NULL), _mouseHook(NULL), _threadId(0)
+Keyboard::Keyboard() : _hhook(NULL), _mouseHook(NULL), _withMouse(false), _threadId(0)
 {
-    memset(&_state, NULL, sizeof(_state));
+    for (auto& s : _state) s = 0;
 }
 
 Keyboard::~Keyboard()
@@ -16,9 +16,13 @@ Keyboard& Keyboard::Instance()
     return *keyboard;
 }
 
-bool Keyboard::Attach()
+bool Keyboard::Attach(bool withMouse)
 {
-    if (_thread.joinable()) return _hhook != NULL;
+    if (_thread.joinable()) {
+        if (_withMouse == withMouse) return _hhook != NULL;
+        Detach();
+    }
+    _withMouse = withMouse;
     std::promise<bool> ready;
     std::future<bool> result = ready.get_future();
     _thread = std::jthread([this, &ready](std::stop_token stop) { ThreadProc(stop, ready); });
@@ -31,7 +35,7 @@ void Keyboard::Detach()
     _thread.request_stop();
     _thread.join();
     _threadId = 0;
-    _state.fill(0);
+    for (auto& s : _state) s = 0;
 }
 
 void Keyboard::SyncState()
@@ -51,13 +55,15 @@ void Keyboard::SyncState()
 void Keyboard::ThreadProc(std::stop_token stop, std::promise<bool>& ready)
 {
     _threadId = GetCurrentThreadId();
+    // the RIT blocks on every hook call; make sure we're never starved by rendering or the input worker
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     // force message-queue creation so Detach's WM_QUIT can never race ahead of it
     MSG msg;
     PeekMessageW(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
 
     _hhook = SetWindowsHookExW(WH_KEYBOARD_LL, &LowLevelKeyboardProc, NULL, 0);
     if (_hhook) {
-        _mouseHook = SetWindowsHookExW(WH_MOUSE_LL, &LowLevelMouseProc, NULL, 0);
+        if (_withMouse) _mouseHook = SetWindowsHookExW(WH_MOUSE_LL, &LowLevelMouseProc, NULL, 0);
         SyncState();
     }
     ready.set_value(_hhook != NULL);
@@ -127,40 +133,55 @@ DWORD Keyboard::IsPressed(unsigned short vkCode)
     return _state[vkCode];
 }
 
-void Keyboard::Press(HWND hwnd, unsigned short vkCode)
+// fills a single INPUT for a key/button transition
+static void MakeInput(INPUT& in, unsigned short vkCode, bool down)
 {
-    if (IsMouseButton(vkCode)) {
-        SetState(vkCode, true);
-        SetState(vkCode, false);
+    memset(&in, 0, sizeof(in));
+    if (Keyboard::IsMouseButton(vkCode)) {
+        in.type = INPUT_MOUSE;
+        switch (vkCode) {
+        case VK_LBUTTON: in.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP; break;
+        case VK_RBUTTON: in.mi.dwFlags = down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP; break;
+        case VK_MBUTTON: in.mi.dwFlags = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP; break;
+        case VK_XBUTTON1:
+            in.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
+            in.mi.mouseData = XBUTTON1;
+            break;
+        case VK_XBUTTON2:
+            in.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
+            in.mi.mouseData = XBUTTON2;
+            break;
+        }
+        in.mi.dwExtraInfo = INPUT_EXTRA_FLAGS_EMULATED;
         return;
     }
+    in.type = INPUT_KEYBOARD;
+    in.ki.wVk = vkCode;
+    in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
+    // games read scancodes; arrows/Ins/Del/RCtrl/... are extended (0xE0xx) and become numpad keys without the flag
     UINT scCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX);
-    keybd_event(vkCode, scCode, 0, INPUT_EXTRA_FLAGS_EMULATED);
-    keybd_event(vkCode, scCode, KEYEVENTF_KEYUP, INPUT_EXTRA_FLAGS_EMULATED);
+    if (scCode) {
+        in.ki.wScan = (WORD)(scCode & 0xFF);
+        in.ki.dwFlags |= KEYEVENTF_SCANCODE;
+        if (scCode & 0xE000) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    in.ki.dwExtraInfo = INPUT_EXTRA_FLAGS_EMULATED;
+}
+
+void Keyboard::Press(HWND hwnd, unsigned short vkCode)
+{
+    // one SendInput call: down+up land in the input stream back-to-back, nothing can interleave
+    INPUT in[2];
+    MakeInput(in[0], vkCode, true);
+    MakeInput(in[1], vkCode, false);
+    SendInput(2, in, sizeof(INPUT));
 }
 
 void Keyboard::SetState(unsigned short vkCode, bool down)
 {
-    if (IsMouseButton(vkCode)) {
-        DWORD flags = 0, data = 0;
-        switch (vkCode) {
-        case VK_LBUTTON: flags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP; break;
-        case VK_RBUTTON: flags = down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP; break;
-        case VK_MBUTTON: flags = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP; break;
-        case VK_XBUTTON1:
-            flags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
-            data = XBUTTON1;
-            break;
-        case VK_XBUTTON2:
-            flags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
-            data = XBUTTON2;
-            break;
-        }
-        mouse_event(flags, 0, 0, data, INPUT_EXTRA_FLAGS_EMULATED);
-        return;
-    }
-    UINT scCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX);
-    keybd_event(vkCode, scCode, down ? 0 : KEYEVENTF_KEYUP, INPUT_EXTRA_FLAGS_EMULATED);
+    INPUT in;
+    MakeInput(in, vkCode, down);
+    SendInput(1, &in, sizeof(INPUT));
 }
 
 void Keyboard::OnPress(Callback_t&& func)

@@ -14,14 +14,18 @@ enum KeyMod {
 
 class Keyboard {
 public:
+    // runs on the hook thread: must only decide whether to swallow the event and return immediately —
+    // any blocking here (locks, input injection, I/O) stalls global input and gets the hook silently dropped
     using Callback_t = std::function<bool(UINT vkCode, bool repeat)>;
 
 private:
     HHOOK _hhook;
     HHOOK _mouseHook;
+    bool _withMouse;
     std::jthread _thread;
     DWORD _threadId;
-    std::array<DWORD, KEYBOARD_KEYS_COUNT> _state;
+    // written by the hook thread, read by the input worker
+    std::array<std::atomic<DWORD>, KEYBOARD_KEYS_COUNT> _state;
     Callback_t _onPress, _onRelease;
 
     Keyboard();
@@ -29,8 +33,11 @@ private:
 public:
     ~Keyboard();
     static Keyboard& Instance();
-    bool Attach();
+    // withMouse: also install WH_MOUSE_LL — it sees every mouse move, so only ask for it when buttons matter.
+    // Re-attaches (and resyncs state) if already attached with a different mouse setting.
+    bool Attach(bool withMouse);
     void Detach();
+    bool IsAttached() const { return _thread.joinable(); }
 
     // key total number
     static constexpr size_t Count() { return KEYBOARD_KEYS_COUNT; }

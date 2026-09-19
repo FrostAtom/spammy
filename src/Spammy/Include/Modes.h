@@ -16,8 +16,10 @@ struct KeyMode {
     const char* desc;
     ImGui::UiKeyStyle keyStyle;
     ImU32 menuColor;
-    bool (*onPress)(const KeyModeContext& ctx);
-    bool (*onRelease)(const KeyModeContext& ctx);
+    // a non-NULL handler means the physical event is swallowed by the hook; the handler itself
+    // runs later on the input worker thread, never on the hook thread
+    void (*onPress)(const KeyModeContext& ctx);
+    void (*onRelease)(const KeyModeContext& ctx);
     void (*onTick)(const KeyModeContext& ctx);
 };
 

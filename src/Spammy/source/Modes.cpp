@@ -1,15 +1,12 @@
 #include "Modes.h"
 #include "Win32/Keyboard.h"
 
-static bool Swallow(const KeyModeContext&)
-{
-    return true;
-}
+// swallow the physical event and do nothing else
+static void Swallow(const KeyModeContext&) {}
 
-static bool PressOnce(const KeyModeContext& ctx)
+static void PressOnce(const KeyModeContext& ctx)
 {
     if (!ctx.repeat) sKeyboard.Press(ctx.hwnd, ctx.vkCode);
-    return true;
 }
 
 static void Autofire(const KeyModeContext& ctx)

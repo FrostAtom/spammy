@@ -37,6 +37,7 @@ bool App::Init(int argc, char** argv)
         _mainWindow->Show();
     }
 
+    StartInputWorker();
     sKeyboard.OnPress([this](UINT vkCode, bool repeat) { return OnKeyEvent(true, vkCode, repeat); });
     sKeyboard.OnRelease([this](UINT vkCode, bool repeat) { return OnKeyEvent(false, vkCode, repeat); });
 
@@ -49,6 +50,7 @@ bool App::Init(int argc, char** argv)
 void App::Uninit()
 {
     sKeyboard.Detach();
+    StopInputWorker();
     sConfig.Save();
     if (_mainWindow) {
         delete _mainWindow;
@@ -75,28 +77,7 @@ bool App::Run()
         if (_mainWindow->IsWndNormalized()) _mainWindow->Update();
 
         CheckIsFocusChanged();
-
-        std::shared_ptr<Profile> profile;
-        HWND activeHwnd;
-        {
-            std::lock_guard lock(_callbackMutex);
-            profile = _activeProfile;
-            activeHwnd = _activeHwnd;
-        }
-        DWORD ticks = GetTickCount();
-        sConfig.SaveIfDirty(ticks);
-
-        if (sConfig.enabled && profile) {
-            if (ticks - _lastUpdate >= profile->speed) {
-                unsigned mods = sKeyboard.TestModifiers();
-                for (unsigned short i = 0; i < sKeyboard.Count(); i++) {
-                    if (!sKeyboard.IsPressed(i)) continue;
-                    const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, i, mods));
-                    if (mode && mode->onTick) mode->onTick({activeHwnd, i, false, *profile});
-                }
-                _lastUpdate = ticks;
-            }
-        }
+        sConfig.SaveIfDirty(GetTickCount());
 
         Sleep(10); // don't abuse cpu X_x
     }
@@ -169,39 +150,145 @@ static void PlayEnabledSound(bool enabled)
     PlaySoundW(path, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
 }
 
+std::pair<std::shared_ptr<Profile>, HWND> App::ActiveTarget()
+{
+    std::lock_guard lock(_callbackMutex);
+    return {_activeProfile, _activeHwnd};
+}
+
 bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
 {
-    if (_mainWindow &&
-        (down ? _mainWindow->HandleKeyPress(vkCode, repeat) : _mainWindow->HandleKeyRelease(vkCode, repeat)))
-        return true;
-
-    std::shared_ptr<Profile> profile;
-    HWND activeHwnd;
-    {
-        std::lock_guard lock(_callbackMutex);
-        profile = _activeProfile;
-        activeHwnd = _activeHwnd;
+    auto [profile, activeHwnd] = ActiveTarget();
+    if (_mainWindow) {
+        bool selfFocused = activeHwnd == _mainWindow->Native();
+        if (down ? _mainWindow->HandleKeyPress(vkCode, repeat, selfFocused) : _mainWindow->HandleKeyRelease(vkCode))
+            return true;
     }
     if (!profile) return false;
 
     unsigned mods = sKeyboard.TestModifiers();
     if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
-        if (!down) {
-            sConfig.enabled = !sConfig.enabled;
-            sConfig.MarkDirty();
-            if (sConfig.soundsEnabled) PlayEnabledSound(sConfig.enabled);
-        }
+        if (!down) PostInput({InputEvent::Kind_TogglePause});
         return true;
     }
     if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-    if (profile->disableAltF4 && (vkCode == VK_F4 && sKeyboard.TestModifiers(KeyMod_Alt))) return true;
+    if (profile->disableAltF4 && (vkCode == VK_F4 && (mods & KeyMod_Alt))) return true;
     if (!sConfig.enabled) return false;
 
     const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods));
-    if (!mode) return false;
-    KeyModeContext ctx = {activeHwnd, (unsigned short)vkCode, repeat, *profile};
-    bool (*handler)(const KeyModeContext&) = down ? mode->onPress : mode->onRelease;
-    return handler && handler(ctx);
+    if (!mode || !(down ? mode->onPress : mode->onRelease)) return false;
+    // typematic auto-repeat of a swallowed key: nothing to do, don't wake the worker for it
+    if (repeat) return true;
+    PostInput({down ? InputEvent::Kind_Press : InputEvent::Kind_Release, repeat, (unsigned short)vkCode, mods,
+               activeHwnd, std::move(profile)});
+    return true;
+}
+
+void App::PostInput(InputEvent&& ev)
+{
+    {
+        std::lock_guard lock(_inputMutex);
+        _inputQueue.push_back(std::move(ev));
+    }
+    SetEvent(_inputWake);
+}
+
+void App::StartInputWorker()
+{
+    _inputWake = CreateEventW(NULL, FALSE, FALSE, NULL);
+    _inputThread = std::jthread([this](std::stop_token stop) { InputWorkerProc(stop); });
+}
+
+void App::StopInputWorker()
+{
+    if (_inputThread.joinable()) {
+        _inputThread.request_stop();
+        SetEvent(_inputWake);
+        _inputThread.join();
+    }
+    if (_inputWake) {
+        CloseHandle(_inputWake);
+        _inputWake = NULL;
+    }
+    _inputQueue.clear();
+}
+
+void App::InputWorkerProc(std::stop_token stop)
+{
+    using Clock = std::chrono::steady_clock;
+    using Ms = std::chrono::milliseconds;
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+    timeBeginPeriod(1); // 1ms granularity for the legacy-timer fallback (and Sleep elsewhere)
+
+    // sub-millisecond wakeups on Win10 1803+, plain waitable timer otherwise
+    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!timer) timer = CreateWaitableTimerW(NULL, TRUE, NULL);
+    HANDLE waitables[] = {_inputWake, timer};
+
+    std::vector<InputEvent> batch;
+    Clock::time_point lastTick = Clock::now();
+    while (!stop.stop_requested()) {
+        auto [profile, hwnd] = ActiveTarget();
+
+        if (profile) {
+            Ms period(profile->speed);
+            Clock::time_point due = lastTick + period;
+            Clock::time_point now = Clock::now();
+            // fell behind by more than a period (stall, speed change): resync instead of firing a burst
+            if (now - due > period) due = lastTick = now;
+            auto rel = std::chrono::duration_cast<std::chrono::nanoseconds>(due - now).count();
+            LARGE_INTEGER dueTime;
+            dueTime.QuadPart = rel > 0 ? -(rel / 100) : 0; // negative = relative, 100ns units
+            SetWaitableTimer(timer, &dueTime, 0, NULL, NULL, FALSE);
+        } else {
+            CancelWaitableTimer(timer);
+        }
+        WaitForMultipleObjects(std::size(waitables), waitables, FALSE, INFINITE);
+        if (stop.stop_requested()) break;
+
+        {
+            std::lock_guard lock(_inputMutex);
+            batch.swap(_inputQueue);
+        }
+        for (const InputEvent& ev : batch) HandleInput(ev);
+        batch.clear();
+
+        if (profile) {
+            Ms period(profile->speed);
+            if (Clock::now() - lastTick >= period) {
+                if (sConfig.enabled) TickAutofire(*profile, hwnd);
+                lastTick += period; // phase-locked: wakeup jitter doesn't accumulate into drift
+            }
+        }
+    }
+
+    CloseHandle(timer);
+    timeEndPeriod(1);
+}
+
+void App::HandleInput(const InputEvent& ev)
+{
+    if (ev.kind == InputEvent::Kind_TogglePause) {
+        sConfig.enabled = !sConfig.enabled;
+        sConfig.MarkDirty();
+        if (sConfig.soundsEnabled) PlayEnabledSound(sConfig.enabled);
+        return;
+    }
+    // re-resolve against the profile snapshot taken at hook time so press/release always pair up
+    const KeyMode* mode = FindKeyMode(ResolveKeyAction(*ev.profile, ev.vkCode, ev.mods));
+    if (!mode) return;
+    void (*handler)(const KeyModeContext&) = ev.kind == InputEvent::Kind_Press ? mode->onPress : mode->onRelease;
+    if (handler) handler({ev.hwnd, ev.vkCode, ev.repeat, *ev.profile});
+}
+
+void App::TickAutofire(const Profile& profile, HWND hwnd)
+{
+    unsigned mods = sKeyboard.TestModifiers();
+    for (unsigned short i = 1; i < sKeyboard.Count(); i++) {
+        if (!sKeyboard.IsPressed(i)) continue;
+        const KeyMode* mode = FindKeyMode(ResolveKeyAction(profile, i, mods));
+        if (mode && mode->onTick) mode->onTick({hwnd, i, false, profile});
+    }
 }
 
 std::shared_ptr<Profile> App::ActiveProfile()
@@ -264,9 +351,15 @@ void App::OnFocusChanged()
         _activeHwnd = newHwnd;
         _activeApp = newProfile ? newApp : std::string();
     }
+    // presses queued for the previous window must not be injected into the new one
+    {
+        std::lock_guard lock(_inputMutex);
+        _inputQueue.clear();
+    }
 
-    if (newProfile || (_mainWindow && newHwnd == _mainWindow->Native()))
-        sKeyboard.Attach();
+    bool selfFocused = _mainWindow && newHwnd == _mainWindow->Native();
+    if (newProfile || selfFocused)
+        sKeyboard.Attach(selfFocused || newProfile->UsesMouse()); // own window logs mouse presses for the key editor
     else
         sKeyboard.Detach();
 }

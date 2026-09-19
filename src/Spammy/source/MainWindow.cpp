@@ -61,10 +61,9 @@ bool MainWindow::Initialize()
     return true;
 }
 
-bool MainWindow::HandleKeyPress(unsigned short vkCode, bool repeat)
+bool MainWindow::HandleKeyPress(unsigned short vkCode, bool repeat, bool focused)
 {
-    if (!repeat && vkCode < KEYBOARD_KEYS_COUNT && GetForegroundWindow() == Native())
-        LogKeyPress(vkCode, GetTickCount());
+    if (!repeat && focused && vkCode < KEYBOARD_KEYS_COUNT) LogKeyPress(vkCode, GetTickCount());
     if (Keyboard::IsMouseButton(vkCode)) return false;
     if (_editPause) return true;
     return false;
@@ -76,7 +75,7 @@ void MainWindow::LogKeyPress(unsigned short vkCode, DWORD ticks)
     _pressTick[vkCode] = ticks;
 }
 
-bool MainWindow::HandleKeyRelease(unsigned short vkCode, bool)
+bool MainWindow::HandleKeyRelease(unsigned short vkCode)
 {
     if (Keyboard::IsMouseButton(vkCode)) return false;
     if (_editPause) {
@@ -218,7 +217,7 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
             } else {
                 profile->vkPause = 0;
                 sConfig.MarkDirty();
-                sKeyboard.Attach();
+                sKeyboard.Attach(true);
                 _editPause = true;
             }
         }

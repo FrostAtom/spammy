@@ -24,8 +24,9 @@ public:
     static MainWindow& Instance();
     bool Initialize();
 
-    bool HandleKeyPress(unsigned short vkCode, bool repeat);
-    bool HandleKeyRelease(unsigned short vkCode, bool repeat);
+    // hook-thread callbacks; focused = our own window is the foreground one
+    bool HandleKeyPress(unsigned short vkCode, bool repeat, bool focused);
+    bool HandleKeyRelease(unsigned short vkCode);
 
 protected:
     void OnTrayClick();
