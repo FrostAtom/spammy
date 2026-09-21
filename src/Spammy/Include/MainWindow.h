@@ -11,6 +11,7 @@ class MainWindow : public Window {
     std::atomic<bool> _editPause = false;
     Action _brushAction = Action_Spammy;
     unsigned _editMods = 0;
+    bool _askClose = false; // close requested while the user still has to pick hide vs exit
     std::array<PressLog, kKeyboardKeysCount> _pressLog = {};
     std::array<unsigned, kKeyboardKeysCount> _pressHead = {};
     std::array<DWORD, kKeyboardKeysCount> _pressTick = {};
@@ -19,6 +20,8 @@ class MainWindow : public Window {
 public:
     MainWindow(const wchar_t* className, const wchar_t* wndName = NULL);
     bool Initialize();
+    // close button / Alt+F4 / WM_CLOSE: hides, exits or asks, depending on the remembered choice
+    void RequestClose();
 
     // hook-thread callbacks; focused = our own window is the foreground one
     bool HandleKeyPress(unsigned short vkCode, bool repeat, bool focused);
@@ -43,4 +46,5 @@ private:
     void DrawProfilesPopup(const ImVec2& o);
     void DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile);
     void DrawSettingsPopup(const ImVec2& o);
+    void DrawClosePopup(const ImVec2& o);
 };

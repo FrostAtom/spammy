@@ -179,21 +179,39 @@ ImU32 ImGui::UiHsvColor(float hue, float sat, float val)
     return IM_COL32((int)(r * 255.f), (int)(g * 255.f), (int)(b * 255.f), 255);
 }
 
-bool ImGui::UiBeginPopup(const char* str_id)
+static bool BeginPopupAnimated(const char* str_id, bool modal)
 {
+    using namespace ImGui;
+    auto begin = [&] {
+        if (!modal) return BeginPopup(str_id);
+        return BeginPopupModal(str_id, NULL,
+                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_AlwaysAutoResize);
+    };
     const ImGuiID animId = SubId(GetID(str_id), 0x506F5055);
     if (!IsPopupOpen(str_id)) {
         s_animStorage.SetFloat(animId, 0.f);
-        return BeginPopup(str_id);
+        return begin();
     }
     const float t = UiAnim(animId, 1.f, 18.f, 0.f);
     const float e = 1.f - (1.f - t) * (1.f - t);
     ImGuiContext& g = *GImGui;
     if (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasPos) g.NextWindowData.PosVal.y -= 8.f * (1.f - e);
     PushStyleVar(ImGuiStyleVar_Alpha, e);
-    if (BeginPopup(str_id)) return true;
+    if (begin()) return true;
     PopStyleVar();
     return false;
+}
+
+bool ImGui::UiBeginPopup(const char* str_id)
+{
+    return BeginPopupAnimated(str_id, false);
+}
+
+// dims and blocks everything underneath; the caller decides how it gets dismissed
+bool ImGui::UiBeginModal(const char* str_id)
+{
+    return BeginPopupAnimated(str_id, true);
 }
 
 void ImGui::UiEndPopup()
@@ -282,7 +300,7 @@ void ImGui::LoadUiStyle()
         {ImGuiCol_SeparatorActive, UiCol::Sub},
         {ImGuiCol_TextSelectedBg, UiWithAlpha(UiCol::Spam, 0.35f)},
         {ImGuiCol_NavHighlight, UiWithAlpha(UiCol::Spam, 0.8f)},
-        {ImGuiCol_ModalWindowDimBg, UiWithAlpha(UiCol::Bg0, 0.6f)},
+        {ImGuiCol_ModalWindowDimBg, UiWithAlpha(UiCol::Bg0, 0.72f)},
     };
     for (const auto& [idx, col] : s_colors)
         style.Colors[idx] = ColorConvertU32ToFloat4(col);
@@ -611,26 +629,48 @@ bool ImGui::UiBrushChip(const char* id, const ImVec2& pos, const ImVec2& size, c
     return hit.clicked;
 }
 
-bool ImGui::UiToggleRow(const char* id, const char* label, bool on)
+bool ImGui::UiDialogButton(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, ImU32 accent)
+{
+    const HitBox hit = PlaceInvisibleButton(id, pos, size);
+    const float hoverT = ItemAnim(hit.id, 1, IsItemHovered(), 18.f);
+    const float pressT = ItemAnim(hit.id, 2, IsItemActive(), 28.f);
+
+    ImDrawList* dl = GetWindowDrawList();
+    const ImVec2 max = pos + size;
+    const ImU32 fill =
+        UiMixColor(UiMixColor(UiCol::Bg2, accent, 0.10f), UiMixColor(UiCol::Bg1, accent, 0.28f), hoverT);
+    if (hoverT > 0.01f) AddGlow(dl, pos, max, accent, 8.f, 5, 0.18f * hoverT);
+    dl->AddRectFilled(pos, max, UiMixColor(fill, UiCol::PressFill, pressT * .5f), 8.f);
+    dl->AddRect(pos, max, UiMixColor(UiWithAlpha(accent, 0.45f), accent, hoverT), 8.f);
+    const ImVec2 textSize = CalcTrackedTextSize(UiFonts::Semi, 13.f, label, 1.f);
+    AddTrackedText(dl, UiFonts::Semi, 13.f, pos + (size - ImVec2(textSize.x, 13.f)) * .5f,
+                   UiMixColor(UiMixColor(accent, UiCol::Text, .25f), UiCol::Text, hoverT * .5f), label, 1.f);
+    return hit.clicked;
+}
+
+bool ImGui::UiToggleRow(const char* id, const char* label, bool on, float width)
 {
     const ImVec2 pos = GetCursorScreenPos();
-    Dummy(ImVec2(210.f, 28.f));
     GetWindowDrawList()->AddText(UiFonts::Semi, 18.f, pos + ImVec2(8.f, 6.f), UiCol::Text, label);
-    const bool clicked = UiToggle(id, pos + ImVec2(164.f, 4.f), on);
-    SetCursorScreenPos(ImVec2(pos.x, pos.y + 34.f));
+    const bool clicked = UiToggle(id, pos + ImVec2(width - 46.f, 4.f), on);
+    // the row-sized dummy goes last so the window extent is validated by an item, not by a bare cursor move
+    SetCursorScreenPos(pos);
+    Dummy(ImVec2(width, 28.f));
     return clicked;
 }
 
-bool ImGui::UiStepperRow(const char* id, const char* label, const char* value, int count, int& index)
+bool ImGui::UiStepperRow(const char* id, const char* label, const char* value, int count, int& index,
+                         bool* deactivated)
 {
     const ImVec2 pos = GetCursorScreenPos();
-    Dummy(ImVec2(210.f, 24.f));
     ImDrawList* dl = GetWindowDrawList();
     dl->AddText(UiFonts::Semi, 18.f, pos + ImVec2(8.f, 3.f), UiCol::Text, label);
     const ImVec2 valueSize = UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, value);
     dl->AddText(UiFonts::Semi, 18.f, ImVec2(pos.x + 202.f - valueSize.x, pos.y + 3.f), UiCol::SpamText, value);
     const bool changed = UiStepper(id, pos + ImVec2(8.f, 26.f), 194.f, count, index);
-    SetCursorScreenPos(ImVec2(pos.x, pos.y + 54.f));
+    if (deactivated) *deactivated = IsItemDeactivated(); // the trailing dummy would otherwise be the "last item"
+    SetCursorScreenPos(pos);
+    Dummy(ImVec2(210.f, 48.f));
     return changed;
 }
 

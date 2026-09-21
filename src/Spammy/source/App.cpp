@@ -62,12 +62,7 @@ void App::Run()
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        if (_mainWindow->WantQuit()) {
-            if (sConfig.minimizeToTray)
-                _mainWindow->Hide();
-            else
-                _mainWindow->Close();
-        }
+        if (_mainWindow->WantQuit()) _mainWindow->RequestClose();
         if (_mainWindow->IsWndNormalized()) _mainWindow->Update();
 
         UpdateActiveTarget();

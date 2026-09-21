@@ -79,6 +79,19 @@ bool MainWindow::Initialize()
     return true;
 }
 
+void MainWindow::RequestClose()
+{
+    switch (sConfig.closeAction) {
+    case CloseAction_Hide: Hide(); break;
+    case CloseAction_Exit: Close(); break;
+    default:
+        // the popup is drawn inside the ImGui frame, so the window has to be up for the user to see it
+        if (!IsWndNormalized()) Show();
+        Focus();
+        _askClose = true;
+    }
+}
+
 bool MainWindow::HandleKeyPress(unsigned short vkCode, bool repeat, bool focused)
 {
     if (!repeat && focused && vkCode < kKeyboardKeysCount) LogKeyPress(vkCode, GetTickCount());
@@ -154,6 +167,9 @@ void MainWindow::Draw()
     DrawTitleBar(dl, o);
     DrawHeader(dl, o, profile);
     DrawKeyboard(dl, o, profile);
+
+    if (std::exchange(_askClose, false)) OpenPopup("##close");
+    DrawClosePopup(o);
 }
 
 void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
@@ -172,12 +188,7 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
 
     if (UiGhostButton("##gear", o + ImVec2(1152.f, 17.f), 30.f, UiGlyph_Gear)) OpenPopup("##settings");
     if (UiGhostButton("##min", o + ImVec2(1188.f, 17.f), 30.f, UiGlyph_Minimize)) ShowWindow(Native(), SW_MINIMIZE);
-    if (UiGhostButton("##close", o + ImVec2(1224.f, 17.f), 30.f, UiGlyph_Close)) {
-        if (sConfig.minimizeToTray)
-            Hide();
-        else
-            Close();
-    }
+    if (UiGhostButton("##close", o + ImVec2(1224.f, 17.f), 30.f, UiGlyph_Close)) RequestClose();
 
     DrawSettingsPopup(o);
 }
@@ -687,8 +698,8 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
 
     if (UiToggleRow("##autostart", "AUTO START", s_autoStart) && sApp.EnableAutoStart(!s_autoStart))
         s_autoStart = !s_autoStart;
-    toggleSetting("##tray", "HIDE ON CLOSE", sConfig.minimizeToTray);
     toggleSetting("##sounds", "ENABLE SOUNDS", sConfig.soundsEnabled);
+    stepEnum("##close", "ON CLOSE", CloseActionName, CloseAction_Count, sConfig.closeAction);
 
     Separator();
 
@@ -696,8 +707,9 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     stepEnum("##variant", "VARIANT", KeyboardVariantName, KeyboardVariant_Count, sConfig.variant);
     stepEnum("##mouse", "MOUSE", MouseFormName, MouseForm_Count, sConfig.mouse);
     // rescaling the window mid-drag would fight the stepper, so apply on release
-    UiStepperRow("##uisize", "UI SIZE", UiSizeName((UiSize)s_uiSize), UiSize_Count, s_uiSize);
-    if (IsItemDeactivated() && (UiSize)s_uiSize != sConfig.uiSize) {
+    bool released = false;
+    UiStepperRow("##uisize", "UI SIZE", UiSizeName((UiSize)s_uiSize), UiSize_Count, s_uiSize, &released);
+    if (released && (UiSize)s_uiSize != sConfig.uiSize) {
         sConfig.uiSize = (UiSize)s_uiSize;
         sConfig.MarkDirty();
         SetScaleFactor(UiSizeFactor(sConfig.uiSize));
@@ -706,6 +718,53 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     Separator();
     if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
 
+    UiEndPopup();
+}
+
+void MainWindow::DrawClosePopup(const ImVec2& o)
+{
+    const float contentW = 300.f;
+    SetNextWindowPos(o + kWindowSize * .5f, ImGuiCond_Always, ImVec2(.5f, .5f));
+    SetNextWindowSize(ImVec2(contentW + 20.f, 0.f));
+    if (!UiBeginModal("##close")) return;
+
+    static bool s_remember = false;
+    if (IsWindowAppearing()) s_remember = false;
+
+    ImDrawList* dl = GetWindowDrawList();
+    const ImVec2 p = GetCursorScreenPos();
+    AddTrackedText(dl, UiFonts::Semi, 12.f, p + ImVec2(8.f, 4.f), UiCol::Sub, "CLOSE WINDOW", 1.5f);
+    dl->AddText(UiFonts::Semi, 20.f, p + ImVec2(8.f, 20.f), UiCol::Text, "Hide to tray or exit?");
+    dl->AddText(UiFonts::Mono, 13.f, p + ImVec2(8.f, 46.f), UiCol::Mute, "hidden, spammy keeps running");
+
+    const ImVec2 btnSize((contentW - 12.f) * .5f, 36.f);
+    CloseAction chosen = CloseAction_Ask;
+    if (UiDialogButton("##hide", p + ImVec2(0.f, 74.f), btnSize, "HIDE TO TRAY", UiCol::Spam))
+        chosen = CloseAction_Hide;
+    if (UiDialogButton("##exit", p + ImVec2(btnSize.x + 12.f, 74.f), btnSize, "EXIT", UiCol::Danger))
+        chosen = CloseAction_Exit;
+
+    SetCursorScreenPos(p + ImVec2(0.f, 122.f));
+    Separator();
+    if (UiToggleRow("##remember", "REMEMBER CHOICE", s_remember, contentW)) s_remember = !s_remember;
+
+    // a modal ignores clicks outside and Escape by itself, so dismiss it the same way the other popups go away;
+    // AllowWhenBlockedByActiveItem, or pressing any control inside would count as "outside" on the press frame
+    const bool clickedOutside = IsMouseClicked(ImGuiMouseButton_Left) && !IsWindowAppearing() &&
+                                !IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    if (clickedOutside || IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
+
+    if (chosen != CloseAction_Ask) {
+        if (s_remember) {
+            sConfig.closeAction = chosen;
+            sConfig.MarkDirty();
+        }
+        CloseCurrentPopup();
+        if (chosen == CloseAction_Hide)
+            Hide();
+        else
+            Close();
+    }
     UiEndPopup();
 }
 

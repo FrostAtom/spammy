@@ -89,7 +89,8 @@ constexpr ImU32 UiWithAlpha(ImU32 col, float alpha)
     return (col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
 }
 bool UiBeginPopup(const char* str_id);
-void UiEndPopup();
+bool UiBeginModal(const char* str_id);
+void UiEndPopup(); // closes both UiBeginPopup and UiBeginModal
 
 ImVec2 CalcTrackedTextSize(ImFont* font, float size, const char* text, float tracking);
 void AddTrackedText(ImDrawList* dl, ImFont* font, float size, const ImVec2& pos, ImU32 col, const char* text,
@@ -109,8 +110,10 @@ bool UiLockChip(const char* id, const ImVec2& pos, const ImVec2& size, const cha
 bool UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, bool enabled);
 bool UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const UiKeyDesc& desc);
 bool UiBrushChip(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, ImU32 accent, bool active);
-bool UiToggleRow(const char* id, const char* label, bool on);
-bool UiStepperRow(const char* id, const char* label, const char* value, int count, int& index);
+bool UiDialogButton(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, ImU32 accent);
+bool UiToggleRow(const char* id, const char* label, bool on, float width = 210.f);
+bool UiStepperRow(const char* id, const char* label, const char* value, int count, int& index,
+                  bool* deactivated = nullptr);
 bool UiMenuRow(const char* label, ImU32 dotCol = 0, bool disabled = false, bool keepOpen = false,
                bool allowOverlap = false);
 } // namespace ImGui

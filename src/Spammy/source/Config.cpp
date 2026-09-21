@@ -12,6 +12,12 @@ float UiSizeFactor(UiSize size)
     return s_factors[size];
 }
 
+const char* CloseActionName(CloseAction action)
+{
+    static constexpr const char* s_names[CloseAction_Count] = {"ASK", "HIDE", "EXIT"};
+    return s_names[action];
+}
+
 Config& Config::GetInstance()
 {
     static Config s_config;
@@ -43,7 +49,10 @@ bool Config::Load()
     try {
         const nlohmann::json json = nlohmann::json::parse(file);
         ReadBool(json, "enabled", enabled);
-        ReadBool(json, "minimizeToTray", minimizeToTray);
+        // older builds stored the close behaviour as a plain "hide on close" flag
+        if (auto it = json.find("minimizeToTray"); it != json.end() && it->is_boolean())
+            closeAction = it->get<bool>() ? CloseAction_Hide : CloseAction_Exit;
+        ReadEnum(json, "closeAction", closeAction, CloseAction_Count);
         ReadBool(json, "soundsEnabled", soundsEnabled);
         ReadEnum(json, "form", form, KeyboardForm_Count);
         ReadEnum(json, "variant", variant, KeyboardVariant_Count);
@@ -66,7 +75,7 @@ void Config::Save()
     // defaults are omitted so the file only contains what the user changed
     nlohmann::json json = nlohmann::json::object();
     if (!enabled) json["enabled"] = false;
-    if (!minimizeToTray) json["minimizeToTray"] = false;
+    if (closeAction != CloseAction_Ask) json["closeAction"] = (int)closeAction;
     if (!soundsEnabled) json["soundsEnabled"] = false;
     if (form != KeyboardForm_75) json["form"] = (int)form;
     if (variant != KeyboardVariant_Ansi) json["variant"] = (int)variant;

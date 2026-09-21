@@ -14,15 +14,23 @@ enum UiSize {
     UiSize_Count,
 };
 
+enum CloseAction {
+    CloseAction_Ask,
+    CloseAction_Hide,
+    CloseAction_Exit,
+    CloseAction_Count,
+};
+
 const char* UiSizeName(UiSize size);
 float UiSizeFactor(UiSize size);
+const char* CloseActionName(CloseAction action);
 
 struct Config {
     using ProfileList_t = boost::container::small_vector<std::shared_ptr<Profile>, 4>;
 
     // toggled from the input worker, read on the hook thread — hence atomic
     std::atomic<bool> enabled = true;
-    bool minimizeToTray = true;
+    CloseAction closeAction = CloseAction_Ask;
     std::atomic<bool> soundsEnabled = true;
     KeyboardForm form = KeyboardForm_75;
     KeyboardVariant variant = KeyboardVariant_Ansi;
