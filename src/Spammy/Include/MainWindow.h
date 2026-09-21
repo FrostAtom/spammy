@@ -1,27 +1,23 @@
 #pragma once
 #include "ImGui.h"
-#include "KeyboardLayout.h"
 #include "Profile.h"
-#include "Utils.h"
 #include "Window/Window.h"
-#define WM_USER_FOCUS (WM_APP + 0x20)
-#define sMainWindow MainWindow::Instance()
 
 class MainWindow : public Window {
-    static MainWindow* _self;
+    // one ring buffer of press timestamps per VK, sized for a full second at the fastest autofire rate
+    using PressLog = std::array<DWORD, 128>;
+
     std::filesystem::path _appFilePath;
-    std::atomic<bool> _editPause;
+    std::atomic<bool> _editPause = false;
     Action _brushAction = Action_Spammy;
     unsigned _editMods = 0;
-    std::array<std::array<DWORD, 128>, KEYBOARD_KEYS_COUNT> _pressLog = {};
-    std::array<unsigned, KEYBOARD_KEYS_COUNT> _pressHead = {};
-    std::array<DWORD, KEYBOARD_KEYS_COUNT> _pressTick = {};
-    std::array<DWORD, KEYBOARD_KEYS_COUNT> _spamTick = {};
+    std::array<PressLog, kKeyboardKeysCount> _pressLog = {};
+    std::array<unsigned, kKeyboardKeysCount> _pressHead = {};
+    std::array<DWORD, kKeyboardKeysCount> _pressTick = {};
+    std::array<DWORD, kKeyboardKeysCount> _spamTick = {};
 
 public:
     MainWindow(const wchar_t* className, const wchar_t* wndName = NULL);
-    ~MainWindow();
-    static MainWindow& Instance();
     bool Initialize();
 
     // hook-thread callbacks; focused = our own window is the foreground one
@@ -32,15 +28,17 @@ protected:
     void OnTrayClick();
     void OnTrayMenu(TrayIconMenu& menu);
 
-    void LoadStyle();
-    bool BeginFrame() final;
     void Draw() final;
     bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result) final;
 
 private:
     void LogKeyPress(unsigned short vkCode, DWORD ticks);
+    unsigned PressRate(unsigned short vkCode, DWORD nowTicks) const;
+    void TickSimulatedPresses(unsigned short vkCode, DWORD nowTicks, unsigned speed, bool firing);
+
     void DrawTitleBar(ImDrawList* dl, const ImVec2& o);
     void DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile);
+    void DrawPauseKeyChip(ImDrawList* dl, const ImVec2& pos, Profile& profile);
     void DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile);
     void DrawProfilesPopup(const ImVec2& o);
     void DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile);

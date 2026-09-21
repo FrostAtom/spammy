@@ -9,15 +9,16 @@ class TrayIconMenu {
 
 public:
     using Callback_t = std::function<void()>;
+    static constexpr size_t MaxItems = 16;
 
 private:
-    HWND _hwnd;
-    HMENU _menu;
-    UINT _count;
-    Callback_t _funcs[16];
+    HWND _hwnd = NULL;
+    HMENU _menu = NULL;
+    // menu item id == index; ids are handed to WM_COMMAND by the shell
+    boost::container::static_vector<Callback_t, MaxItems> _items;
 
 public:
-    TrayIconMenu();
+    TrayIconMenu() = default;
     ~TrayIconMenu();
 
     void Button(const wchar_t* text, Callback_t&& cb);
@@ -25,7 +26,7 @@ public:
     void Disabled(const wchar_t* text);
 
 private:
-    int Append(UINT flags, LPCWSTR newItem);
+    void Append(UINT flags, const wchar_t* text, Callback_t&& cb = {});
     void Fire(UINT id);
     bool Create(HWND hwnd);
     void Track(int x, int y);
@@ -43,7 +44,6 @@ public:
 private:
     static UINT s_idCounter;
     NOTIFYICONDATAW _data;
-    bool _added;
     ClickCallback_t _clickFunc;
     MenuCallback_t _menuFunc;
     TrayIconMenu _menu;
@@ -56,13 +56,13 @@ public:
     void SetOnClick(ClickCallback_t&& func);
     void SetMenu(MenuCallback_t&& func);
     void ShowMenu(int x, int y);
-    void SetVisible(bool visible);
 
 private:
+    bool IsCreated() const { return _data.hWnd != NULL; }
     void UpdateIcon(HICON icon);
     bool HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
     bool Create(HWND hwnd, HICON icon);
     void Cleanup();
-    bool Update(DWORD dwMessage);
+    bool Notify(DWORD message);
     void Reset();
 };

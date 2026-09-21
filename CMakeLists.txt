@@ -13,6 +13,21 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE}
 # before project() — the runtime library is picked during compiler/language init.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# vcpkg toolchain (Boost). VCPKG_ROOT env wins, C:/vcpkg is the fallback.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+	if(DEFINED ENV{VCPKG_ROOT})
+		set(VCPKG_ROOT "$ENV{VCPKG_ROOT}")
+	elseif(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
+		set(VCPKG_ROOT "C:/vcpkg")
+	else()
+		message(FATAL_ERROR "vcpkg not found: set VCPKG_ROOT or pass -DCMAKE_TOOLCHAIN_FILE")
+	endif()
+	set(CMAKE_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "")
+endif()
+if(NOT DEFINED VCPKG_TARGET_TRIPLET)
+	set(VCPKG_TARGET_TRIPLET "x86-windows-static" CACHE STRING "")
+endif()
+
 project(Spammy LANGUAGES C CXX)
 
 # x86-only: the window-proc userdata and other Win32 code target a 32-bit process

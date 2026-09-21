@@ -6,12 +6,12 @@ static void Swallow(const KeyModeContext&) {}
 
 static void PressOnce(const KeyModeContext& ctx)
 {
-    if (!ctx.repeat) sKeyboard.Press(ctx.hwnd, ctx.vkCode);
+    if (!ctx.repeat) sKeyboard.Press(ctx.vkCode);
 }
 
 static void Autofire(const KeyModeContext& ctx)
 {
-    sKeyboard.Press(ctx.hwnd, ctx.vkCode);
+    sKeyboard.Press(ctx.vkCode);
 }
 
 static const KeyMode s_modes[] = {
@@ -30,20 +30,16 @@ std::span<const KeyMode> KeyModes()
 
 const KeyMode* FindKeyMode(Action action)
 {
-    for (const KeyMode& mode : s_modes)
-        if (mode.action == action) return &mode;
-    return NULL;
+    auto it = std::ranges::find(s_modes, action, &KeyMode::action);
+    return it != std::end(s_modes) ? it : NULL;
 }
 
+// a modifier layer without its own binding falls back to the unmodified key's binding
 Action ResolveKeyAction(const Profile& profile, size_t vkCode, unsigned mods, bool* inherited)
 {
     Action action = profile.keys[vkCode][mods].action;
-    if (action == Action_None && mods != KeyMod_None) {
-        Action base = profile.keys[vkCode][KeyMod_None].action;
-        if (base != Action_None) {
-            action = base;
-            if (inherited) *inherited = true;
-        }
-    }
-    return action;
+    if (action != Action_None || mods == KeyMod_None) return action;
+    Action base = profile.keys[vkCode][KeyMod_None].action;
+    if (base != Action_None && inherited) *inherited = true;
+    return base;
 }

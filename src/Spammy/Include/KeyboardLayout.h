@@ -1,6 +1,6 @@
 #pragma once
 #include <Windows.h>
-#include <vector>
+#include <span>
 
 struct KeyboardKey {
     const char* name;
@@ -31,7 +31,7 @@ enum MouseForm {
     MouseForm_Count,
 };
 
-const std::vector<KeyboardKey>& GetKeyboardLayout(KeyboardForm form, KeyboardVariant variant);
+std::span<const KeyboardKey> GetKeyboardLayout(KeyboardForm form, KeyboardVariant variant);
 const char* KeyboardFormName(KeyboardForm form);
 const char* KeyboardVariantName(KeyboardVariant variant);
 const char* MouseFormName(MouseForm form);

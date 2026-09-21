@@ -2,9 +2,10 @@
 #include "Headers.h"
 #include "KeyboardLayout.h"
 #include "Profile.h"
-#define CONFIG_FILE "Spammy.json"
-#define CONFIG_SAVE_DELAY_MS 10000
 #define sConfig Config::GetInstance()
+
+inline constexpr const char* CONFIG_FILE = "Spammy.json";
+inline constexpr DWORD CONFIG_SAVE_DELAY_MS = 10000;
 
 enum UiSize {
     UiSize_Small,
@@ -17,6 +18,9 @@ const char* UiSizeName(UiSize size);
 float UiSizeFactor(UiSize size);
 
 struct Config {
+    using ProfileList_t = boost::container::small_vector<std::shared_ptr<Profile>, 4>;
+
+    // toggled from the input worker, read on the hook thread — hence atomic
     std::atomic<bool> enabled = true;
     bool minimizeToTray = true;
     std::atomic<bool> soundsEnabled = true;
@@ -24,7 +28,7 @@ struct Config {
     KeyboardVariant variant = KeyboardVariant_Ansi;
     MouseForm mouse = MouseForm_5;
     UiSize uiSize = UiSize_Medium;
-    std::list<std::shared_ptr<Profile>> profiles;
+    ProfileList_t profiles;
     std::shared_ptr<Profile> editingProfile;
 
     static Config& GetInstance();
@@ -32,15 +36,16 @@ struct Config {
     bool Load();
     void Save();
     void MarkDirty();
-    void SaveIfDirty(DWORD ticks);
+    void SaveIfDirty();
 
-    std::shared_ptr<Profile> FindProfile(const char* name);
-    std::shared_ptr<Profile> FindProfileByApp(const char* app);
-    bool IsProfileExists(const char* name);
+    std::shared_ptr<Profile> FindProfile(const char* name) const;
+    std::shared_ptr<Profile> FindProfileByApp(const char* app) const;
+    std::shared_ptr<Profile> FindGlobalProfile() const;
+    bool IsProfileExists(const char* name) const;
     void CreateProfile(const char* name);
     void SetEditingProfile(const char* name);
     void DeleteProfile(const char* name);
-    bool IsProfileBinded(const char* name, const char* app);
+    bool IsProfileBinded(const char* name, const char* app) const;
     void BindProfile(const char* name, const char* app);
     void UnbindProfile(const char* name, const char* app);
 

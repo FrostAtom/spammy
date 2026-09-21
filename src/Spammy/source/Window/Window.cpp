@@ -1,53 +1,32 @@
 #include "Window/Window.h"
 #include "ImGui.h"
 
-const char* Window::_errorCodeNames[] = {
-    "OK", "Invalid call", "Windows error", "Renderer error", "ImGui errror",
+static constexpr std::array<const char*, Window::ErrorCode_COUNT> s_errorCodeNames = {
+    "OK", "Invalid call", "Windows error", "Renderer error", "ImGui error",
 };
+
+static constexpr DWORD ImGuiWindowDisableScrollMask = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+static constexpr DWORD ImGuiWindowNoTitleBarMask = ImGuiWindowFlags_NoTitleBar;
 
 const char* Window::FormatError(ErrorCode code)
 {
-    return _errorCodeNames[code];
+    return s_errorCodeNames[code];
 }
 
-static const DWORD ImGuiWindowDisableScrollMask = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-static const DWORD ImGuiWindowMenuBarMask = ImGuiWindowFlags_MenuBar;
-static const DWORD ImGuiWindowNoTitleBarMask = ImGuiWindowFlags_NoTitleBar;
-
-Window::Window(const wchar_t* className, const wchar_t* wndName)
-    : _icon(NULL),
-      _atom(NULL),
-      _hwnd(NULL),
-      _imCtx(NULL),
-      _wantQuit(false),
-      _mustQuit(false),
-      _imWndFlags(ImGuiWindowDisableScrollMask),
-      _movable(false),
-      _moving(false),
-      _dpi(96),
-      _scaleFactor(1.f),
-      _scale(1.f),
-      _scalePending(false),
-      _inFrame(false),
-      _d3d(NULL),
-      _d3dDevice(NULL),
-      _lastError(0),
-      _trayIcon(NULL),
-      _position(CW_USEDEFAULT, CW_USEDEFAULT),
-      _size(512, 512)
+Window::Window(const wchar_t* className, const wchar_t* wndName) : _imWndFlags(ImGuiWindowDisableScrollMask)
 {
-    if (!wndName) wndName = className;
     wcsncpy_s(_className, className, std::size(_className));
-    SetName(wndName);
+    SetName(wndName ? wndName : className);
 
-    memset(&_d3dParams, NULL, sizeof(_d3dParams));
-    _d3dParams.Windowed = TRUE;
-    _d3dParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    _d3dParams.BackBufferFormat =
-        D3DFMT_UNKNOWN; // Need to use an explicit format with alpha if needing per-pixel alpha composition.
-    _d3dParams.EnableAutoDepthStencil = TRUE;
-    _d3dParams.AutoDepthStencilFormat = D3DFMT_D16;
-    _d3dParams.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE; // Present without vsync
+    _d3dParams = {
+        // D3DFMT_UNKNOWN: an explicit format with alpha is needed only for per-pixel alpha composition
+        .BackBufferFormat = D3DFMT_UNKNOWN,
+        .SwapEffect = D3DSWAPEFFECT_DISCARD,
+        .Windowed = TRUE,
+        .EnableAutoDepthStencil = TRUE,
+        .AutoDepthStencilFormat = D3DFMT_D16,
+        .PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE, // no vsync
+    };
 }
 
 Window::~Window()
@@ -85,21 +64,15 @@ Window::ErrorCode Window::Initialize()
     return ErrorCode_OK;
 }
 
-void Window::SetTrayIcon(TrayIcon* icon)
+void Window::SetTrayIcon(std::unique_ptr<TrayIcon> icon)
 {
-    if (_trayIcon) {
-        delete _trayIcon;
-    }
-    _trayIcon = icon;
-    if (_hwnd) _trayIcon->Create(_hwnd, _icon);
+    _trayIcon = std::move(icon);
+    if (_hwnd && _trayIcon) _trayIcon->Create(_hwnd, _icon);
 }
 
 void Window::Cleanup()
 {
-    if (_trayIcon) {
-        delete _trayIcon;
-        _trayIcon = NULL;
-    }
+    _trayIcon.reset();
     CleanupDevice();
     CleanupWnd();
     if (_imCtx) {
@@ -108,39 +81,23 @@ void Window::Cleanup()
     }
 }
 
-void Window::Close()
+void Window::ApplyWndIcon()
 {
-    _mustQuit = true;
+    SendMessageW(_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)_icon);
+    SendMessageW(_hwnd, WM_SETICON, ICON_BIG, (LPARAM)_icon);
 }
 
 void Window::SetIcon(HICON icon)
 {
     _icon = icon;
-    if (_hwnd) {
-        SendMessageW(_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)_icon);
-        SendMessageW(_hwnd, WM_SETICON, ICON_BIG, (LPARAM)_icon);
-        if (_trayIcon) _trayIcon->UpdateIcon(_icon);
-    }
+    if (!_hwnd) return;
+    ApplyWndIcon();
+    if (_trayIcon) _trayIcon->UpdateIcon(_icon);
 }
 
 void Window::SetIcon(unsigned id)
 {
-    HICON icon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(id));
-    SetIcon(icon);
-}
-
-bool Window::MustQuit()
-{
-    return _mustQuit;
-}
-
-bool Window::WantQuit()
-{
-    if (_wantQuit) {
-        _wantQuit = false;
-        return true;
-    }
-    return false;
+    SetIcon(LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(id)));
 }
 
 void Window::Focus()
@@ -148,25 +105,12 @@ void Window::Focus()
     if (_hwnd) SetForegroundWindow(_hwnd);
 }
 
-static int GetShowCmd(HWND hwnd)
+int Window::ShowCmd() const
 {
-    WINDOWPLACEMENT wPos = {sizeof(wPos)};
-    GetWindowPlacement(hwnd, &wPos);
-    return wPos.showCmd;
-}
-
-bool Window::IsWndMaximized()
-{
-    if (!_hwnd) return false;
-    int cmd = GetShowCmd(_hwnd);
-    return cmd == SW_MAXIMIZE;
-}
-
-bool Window::IsWndNormalized()
-{
-    if (!_hwnd) return false;
-    int cmd = GetShowCmd(_hwnd);
-    return cmd == SW_NORMAL;
+    if (!_hwnd) return SW_HIDE;
+    WINDOWPLACEMENT placement = {sizeof(placement)};
+    GetWindowPlacement(_hwnd, &placement);
+    return placement.showCmd;
 }
 
 void Window::Show()
@@ -179,10 +123,9 @@ void Window::Hide()
     if (_hwnd) ShowWindow(_hwnd, SW_HIDE);
 }
 
-bool Window::IsShown()
+bool Window::IsShown() const
 {
-    if (!_hwnd) return false;
-    return (bool)(GetWindowStyle(_hwnd) & WS_VISIBLE);
+    return _hwnd && IsWindowVisible(_hwnd);
 }
 
 void Window::SetName(const wchar_t* name)
@@ -193,39 +136,33 @@ void Window::SetName(const wchar_t* name)
     if (_hwnd) SetWindowTextW(_hwnd, name);
 }
 
-Window::Vec2D<int> Window::GetSize()
+void Window::MoveToStoredRect()
 {
-    return _size;
+    if (!_hwnd) return;
+    Vec2D<int> scaled = ScaledSize();
+    MoveWindow(_hwnd, _position.x, _position.y, scaled.x, scaled.y, FALSE);
 }
 
 void Window::SetSize(const Vec2D<int>& size)
 {
     _size = size;
-    if (_hwnd) {
-        Vec2D<int> scaled = ScaledSize();
-        MoveWindow(_hwnd, _position.x, _position.y, scaled.x, scaled.y, FALSE);
-    }
+    MoveToStoredRect();
 }
 
 void Window::SetPosition(const Vec2D<int>& position)
 {
     _position = position;
-    if (_hwnd) {
-        Vec2D<int> scaled = ScaledSize();
-        MoveWindow(_hwnd, _position.x, _position.y, scaled.x, scaled.y, FALSE);
-    }
+    MoveToStoredRect();
 }
 
 void Window::ResetPosition()
 {
-    Vec2D<int> pos = GetScreenSize();
+    Vec2D<int> screen = GetScreenSize();
     Vec2D<int> size = ScaledSize();
-    pos.x = (pos.x - size.x) / 2;
-    pos.y = (pos.y - size.y) / 2;
-    SetPosition(pos);
+    SetPosition({(screen.x - size.x) / 2, (screen.y - size.y) / 2});
 }
 
-Window::Vec2D<int> Window::ScaledSize()
+Window::Vec2D<int> Window::ScaledSize() const
 {
     return {(int)lroundf(_size.x * _scale), (int)lroundf(_size.y * _scale)};
 }
@@ -233,6 +170,7 @@ Window::Vec2D<int> Window::ScaledSize()
 void Window::SetScaleFactor(float factor)
 {
     _scaleFactor = factor;
+    // resizing mid-frame would desync ImGui's display size from the backbuffer
     if (_inFrame)
         _scalePending = true;
     else
@@ -244,9 +182,10 @@ void Window::ApplyScale(bool keepCenter)
     float scale = _scaleFactor * (float)_dpi / 96.f;
     MONITORINFO monitor = {sizeof(monitor)};
     bool hasMonitor = _hwnd && GetMonitorInfoW(MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST), &monitor);
+    const RECT& work = monitor.rcWork;
     if (hasMonitor && _size.x > 0 && _size.y > 0) {
-        float fitW = (float)(monitor.rcWork.right - monitor.rcWork.left) / (float)_size.x;
-        float fitH = (float)(monitor.rcWork.bottom - monitor.rcWork.top) / (float)_size.y;
+        float fitW = (float)(work.right - work.left) / (float)_size.x;
+        float fitH = (float)(work.bottom - work.top) / (float)_size.y;
         scale = ImMin(scale, ImMin(fitW, fitH));
     }
     _scale = ImMax(scale, 0.5f);
@@ -258,17 +197,16 @@ void Window::ApplyScale(bool keepCenter)
     }
 
     if (!_hwnd) return;
-    RECT rect;
-    GetWindowRect(_hwnd, &rect);
     Vec2D<int> size = ScaledSize();
     Vec2D<int> pos = _position;
-    if (keepCenter)
+    if (keepCenter) {
+        RECT rect;
+        GetWindowRect(_hwnd, &rect);
         pos = {((int)rect.left + (int)rect.right - size.x) / 2, ((int)rect.top + (int)rect.bottom - size.y) / 2};
+    }
     if (hasMonitor) {
-        pos.x = ImClamp(pos.x, (int)monitor.rcWork.left,
-                        ImMax((int)monitor.rcWork.left, (int)monitor.rcWork.right - size.x));
-        pos.y = ImClamp(pos.y, (int)monitor.rcWork.top,
-                        ImMax((int)monitor.rcWork.top, (int)monitor.rcWork.bottom - size.y));
+        pos.x = ImClamp(pos.x, (int)work.left, ImMax((int)work.left, (int)work.right - size.x));
+        pos.y = ImClamp(pos.y, (int)work.top, ImMax((int)work.top, (int)work.bottom - size.y));
     }
     MoveWindow(_hwnd, pos.x, pos.y, size.x, size.y, TRUE);
 }
@@ -280,29 +218,12 @@ Window::Vec2D<int> Window::GetScreenSize()
     return {rect.right - rect.left, rect.bottom - rect.top};
 }
 
-void Window::EnableMoving(bool state)
-{
-    _movable = state;
-}
-
 void Window::Update()
 {
-    if (_scalePending) {
-        _scalePending = false;
-        ApplyScale(true);
-    }
-    if (IsReady()) {
-        if (Window::BeginFrame()) Draw();
-        Window::EndFrame();
-    }
-}
-
-void Window::EnableMenuBar(bool state)
-{
-    if (state)
-        _imWndFlags |= ImGuiWindowMenuBarMask;
-    else
-        _imWndFlags &= ~ImGuiWindowMenuBarMask;
+    if (std::exchange(_scalePending, false)) ApplyScale(true);
+    if (!IsReady()) return;
+    if (BeginFrame()) Draw();
+    EndFrame();
 }
 
 void Window::EnableTitleBar(bool state)
@@ -313,16 +234,6 @@ void Window::EnableTitleBar(bool state)
         _imWndFlags |= ImGuiWindowNoTitleBarMask;
 }
 
-HWND Window::Native()
-{
-    return _hwnd;
-}
-
-bool Window::IsReady()
-{
-    return _hwnd && _d3dDevice;
-}
-
 bool Window::BeginFrame()
 {
     _inFrame = true;
@@ -331,6 +242,7 @@ bool Window::BeginFrame()
     ImGuiIO& io = ImGui::GetIO();
     io.DisplayFramebufferScale = ImVec2(_scale, _scale);
     if (_scale != 1.f) {
+        // ImGui runs in unscaled logical units; the backend reports physical pixels
         io.DisplaySize = ImVec2(io.DisplaySize.x / _scale, io.DisplaySize.y / _scale);
         for (ImGuiInputEvent& event : GImGui->InputEventsQueue)
             if (event.Type == ImGuiInputEventType_MousePos && event.MousePos.PosX != -FLT_MAX) {
@@ -345,7 +257,6 @@ bool Window::BeginFrame()
     ImGui::SetNextWindowSize(viewport->Size);
     DWORD flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
     bool result = ImGui::Begin(_u8wndName, &isShown, flags | _imWndFlags);
-    if (!isShown) _wantQuit = true;
 
     ImGuiContext* ctx = ImGui::GetCurrentContext();
     if (ctx->CurrentWindow && ctx->MovingWindow == ctx->CurrentWindow)
@@ -353,7 +264,10 @@ bool Window::BeginFrame()
     else
         StopMove();
 
-    if (!isShown) PostMessageW(_hwnd, WM_QUIT, NULL, NULL);
+    if (!isShown) {
+        _wantQuit = true;
+        PostMessageW(_hwnd, WM_QUIT, NULL, NULL);
+    }
     return result;
 }
 
@@ -372,18 +286,16 @@ bool Window::CreateWnd()
     _atom = RegisterClassExW(&wc);
     if (!_atom) return false;
 
-    DWORD dwStyle = WS_POPUP | WS_THICKFRAME;
-    _hwnd = CreateWindowExW(0, wc.lpszClassName, _wndName, dwStyle, _position.x, _position.y, _size.x, _size.y, NULL,
+    DWORD style = WS_POPUP | WS_THICKFRAME;
+    _hwnd = CreateWindowExW(0, wc.lpszClassName, _wndName, style, _position.x, _position.y, _size.x, _size.y, NULL,
                             NULL, wc.hInstance, this);
     if (!_hwnd) {
         CleanupWnd();
         return false;
     }
-    if (_icon) {
-        SendMessageW(_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)_icon);
-        SendMessageW(_hwnd, WM_SETICON, ICON_BIG, (LPARAM)_icon);
-    }
+    if (_icon) ApplyWndIcon();
 
+    // a 1px DWM frame gives the borderless popup the system drop shadow
     MARGINS shadowMargins = {1, 1, 1, 1};
     DwmExtendFrameIntoClientArea(_hwnd, &shadowMargins);
 
@@ -402,7 +314,7 @@ void Window::CleanupWnd()
         _hwnd = NULL;
     }
     if (_atom) {
-        UnregisterClassW((LPCWSTR)(_atom & 0xFFFF), NULL);
+        UnregisterClassW(MAKEINTATOM(_atom), NULL);
         _atom = NULL;
     }
 }
@@ -417,7 +329,7 @@ bool Window::CreateDevice()
     }
 
     // hardware T&L is missing on basic display adapters, RDP sessions, VMs and some old iGPUs — fall back gracefully
-    static const DWORD s_behaviorFlags[] = {
+    static constexpr DWORD s_behaviorFlags[] = {
         D3DCREATE_HARDWARE_VERTEXPROCESSING,
         D3DCREATE_MIXED_VERTEXPROCESSING,
         D3DCREATE_SOFTWARE_VERTEXPROCESSING,
@@ -463,12 +375,12 @@ void Window::Render()
     _d3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
     _d3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
     _d3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-    D3DCOLOR clearCol = D3DCOLOR_RGBA(10, 13, 19, 255);
-    _d3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, clearCol, 1.0f, 0);
+    _d3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_RGBA(10, 13, 19, 255), 1.0f, 0);
     if (_d3dDevice->BeginScene() >= 0) {
         ImGui::Render();
         ImDrawData* drawData = ImGui::GetDrawData();
         if (_scale != 1.f) {
+            // scale the logical-unit draw data back to physical pixels (see BeginFrame)
             drawData->DisplaySize = ImVec2(drawData->DisplaySize.x * _scale, drawData->DisplaySize.y * _scale);
             drawData->FramebufferScale = ImVec2(1.f, 1.f);
             for (ImDrawList* cmdList : drawData->CmdLists) {
@@ -487,53 +399,48 @@ void Window::Render()
         ImGui_ImplDX9_RenderDrawData(drawData);
         _d3dDevice->EndScene();
     }
-    HRESULT result = _d3dDevice->Present(NULL, NULL, NULL, NULL);
-    if (result == D3DERR_DEVICELOST && _d3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET) ResetDevice();
+    if (_d3dDevice->Present(NULL, NULL, NULL, NULL) == D3DERR_DEVICELOST &&
+        _d3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
+        ResetDevice();
 }
 
 void Window::StartMove()
 {
     if (!_movable || _moving) return;
-    POINT point;
-    GetCursorPos(&point);
+    POINT cursor;
+    GetCursorPos(&cursor);
     RECT rect;
     GetWindowRect(_hwnd, &rect);
-    _movePos = {point.x - rect.left, point.y - rect.top};
+    _movePos = {cursor.x - rect.left, cursor.y - rect.top};
     _moving = true;
-}
-
-void Window::StopMove()
-{
-    if (!_moving) return;
-    _moving = false;
 }
 
 void Window::UpdateMove()
 {
     if (!_moving) return;
     if (!_movable) return StopMove();
-    POINT cursorPos;
-    GetCursorPos(&cursorPos);
+    POINT cursor;
+    GetCursorPos(&cursor);
     RECT rect;
     GetWindowRect(_hwnd, &rect);
-    LONG h = rect.bottom - rect.top;
-    LONG w = rect.right - rect.left;
-    int x = cursorPos.x - _movePos.x;
-    int y = cursorPos.y - _movePos.y;
-    MoveWindow(_hwnd, x, y, w, h, TRUE);
+    MoveWindow(_hwnd, cursor.x - _movePos.x, cursor.y - _movePos.y, rect.right - rect.left, rect.bottom - rect.top,
+               TRUE);
 }
 
+// imgui_impl_win32.h keeps this declaration in '#if 0' to avoid including <windows.h>
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
 {
-    *result = 0;
-    if (*result = ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam)) return true;
+    *result = ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam);
+    if (*result) return true;
     if (_trayIcon && _trayIcon->HandleMessage(msg, wParam, lParam)) return true;
 
     switch (msg) {
     case WM_CLOSE: _wantQuit = true; return true;
     case WM_ENDSESSION: _mustQuit = true; return true;
     case WM_SIZING:
+        // keep rendering while the modal size loop blocks the message pump
         Update();
         *result = TRUE;
         return true;
@@ -547,20 +454,24 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
         return true;
     case WM_DPICHANGED: {
         _dpi = HIWORD(wParam);
-        RECT* suggested = (RECT*)lParam;
+        const RECT* suggested = (const RECT*)lParam;
         _position = {(int)suggested->left, (int)suggested->top};
         ApplyScale(false);
         return true;
     }
-    case WM_MOUSEMOVE: {
+    case WM_MOUSEMOVE:
         if (wParam & MK_LBUTTON) UpdateMove();
         return true;
-    }
     case WM_SYSCOMMAND:
+        // Alt alone would otherwise open the (non-existent) system menu and steal focus
         if ((wParam & 0xfff0) == SC_KEYMENU) return true;
         break;
-    case WM_NCACTIVATE: *result = DefWindowProcW(_hwnd, msg, wParam, -1); return true;
+    case WM_NCACTIVATE:
+        // lParam=-1 tells DefWindowProc not to repaint the non-client area, which we don't have
+        *result = DefWindowProcW(_hwnd, msg, wParam, -1);
+        return true;
     case WM_NCCALCSIZE:
+        // returning 0 keeps the whole WS_THICKFRAME window as client area (no visible frame)
         if (wParam && !IsWndMaximized()) return true;
         break;
     case WM_NCHITTEST: *result = HTCLIENT; return true;
@@ -570,16 +481,12 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
 
 LRESULT __stdcall Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    Window* self = NULL;
     if (msg == WM_CREATE) {
-        CREATESTRUCTA* createStruct = (CREATESTRUCTA*)lParam;
-        self = (Window*)createStruct->lpCreateParams;
+        Window* self = (Window*)((const CREATESTRUCTW*)lParam)->lpCreateParams;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)self);
         return 0;
-    } else {
-        self = (Window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     }
-
+    Window* self = (Window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     LRESULT result;
     if (self && self->HandleWndProc(msg, wParam, lParam, &result)) return result;
     return DefWindowProcW(hwnd, msg, wParam, lParam);

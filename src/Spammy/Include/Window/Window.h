@@ -15,65 +15,61 @@ public:
 
     template <typename T>
     struct Vec2D {
-        Vec2D() : x(0), y(0) {}
-        Vec2D(T x, T y) : x(x), y(y) {}
-        T x, y;
+        T x = 0, y = 0;
     };
 
 private:
     wchar_t _wndName[64], _className[64];
-    char _u8wndName[64];
-    HICON _icon;
-    ATOM _atom;
-    HWND _hwnd;
-    ImGuiContext* _imCtx;
-    bool _wantQuit, _mustQuit;
+    char _u8wndName[64 * 4];
+    HICON _icon = NULL;
+    ATOM _atom = NULL;
+    HWND _hwnd = NULL;
+    ImGuiContext* _imCtx = NULL;
+    bool _wantQuit = false, _mustQuit = false;
 
     DWORD _imWndFlags;
-    bool _movable;
-    Vec2D<int> _size;
-    Vec2D<int> _position;
+    bool _movable = false;
+    Vec2D<int> _size = {512, 512};
+    Vec2D<int> _position = {CW_USEDEFAULT, CW_USEDEFAULT};
 
-    bool _moving;
+    bool _moving = false;
     Vec2D<int> _movePos;
 
-    unsigned _dpi;
-    float _scaleFactor;
-    float _scale;
-    bool _scalePending;
-    bool _inFrame;
+    unsigned _dpi = 96;
+    float _scaleFactor = 1.f;
+    float _scale = 1.f;
+    bool _scalePending = false;
+    bool _inFrame = false;
 
-    LPDIRECT3D9 _d3d;
-    LPDIRECT3DDEVICE9 _d3dDevice;
+    LPDIRECT3D9 _d3d = NULL;
+    LPDIRECT3DDEVICE9 _d3dDevice = NULL;
     D3DPRESENT_PARAMETERS _d3dParams;
-    HRESULT _lastError;
-    TrayIcon* _trayIcon;
-    static const char* _errorCodeNames[];
+    HRESULT _lastError = 0;
+    std::unique_ptr<TrayIcon> _trayIcon;
 
 public:
     Window(const wchar_t* className, const wchar_t* wndName = NULL);
     virtual ~Window();
 
     ErrorCode Initialize();
-    void SetTrayIcon(TrayIcon* icon);
-    HWND Native();
+    void SetTrayIcon(std::unique_ptr<TrayIcon> icon);
+    HWND Native() const { return _hwnd; }
     void Update();
 
-    void Close();
+    void Close() { _mustQuit = true; }
     void Cleanup();
-    bool MustQuit();
-    bool WantQuit();
+    bool MustQuit() const { return _mustQuit; }
+    bool WantQuit() { return std::exchange(_wantQuit, false); }
 
-    bool IsWndMaximized();
-    bool IsWndNormalized();
+    bool IsWndMaximized() const { return ShowCmd() == SW_MAXIMIZE; }
+    bool IsWndNormalized() const { return ShowCmd() == SW_NORMAL; }
     void Show();
     void Hide();
-    bool IsShown();
+    bool IsShown() const;
     void Focus();
 
-    void EnableMenuBar(bool v = true);
     void EnableTitleBar(bool v = true);
-    void EnableMoving(bool v = true);
+    void EnableMoving(bool v = true) { _movable = v; }
 
     void SetIcon(HICON icon);
     void SetIcon(unsigned id);
@@ -81,7 +77,6 @@ public:
     void SetName(const wchar_t* name);
 
     void SetSize(const Vec2D<int>& v);
-    Vec2D<int> GetSize();
     void SetScaleFactor(float factor);
     void SetPosition(const Vec2D<int>& pos);
     void ResetPosition();
@@ -92,10 +87,10 @@ public:
     HRESULT LastError() const { return _lastError; }
 
 protected:
-    bool IsReady();
+    bool IsReady() const { return _hwnd && _d3dDevice; }
     virtual void Draw() = 0;
-    virtual bool BeginFrame();
-    virtual void EndFrame();
+    bool BeginFrame();
+    void EndFrame();
 
     bool CreateWnd();
     void CleanupWnd();
@@ -106,13 +101,18 @@ protected:
     void Render();
 
     void StartMove();
-    void StopMove();
+    void StopMove() { _moving = false; }
     void UpdateMove();
 
     void ApplyScale(bool keepCenter);
-    Vec2D<int> ScaledSize();
+    Vec2D<int> ScaledSize() const;
 
     virtual bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result);
 
     static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+private:
+    int ShowCmd() const;
+    void ApplyWndIcon();
+    void MoveToStoredRect();
 };

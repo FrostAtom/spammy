@@ -1,6 +1,5 @@
 #include "Window/TrayIcon.h"
 
-TrayIconMenu::TrayIconMenu() : _hwnd(NULL), _menu(NULL), _count(0) {}
 TrayIconMenu::~TrayIconMenu()
 {
     if (_hwnd) Cleanup();
@@ -9,7 +8,8 @@ TrayIconMenu::~TrayIconMenu()
 bool TrayIconMenu::Create(HWND hwnd)
 {
     _hwnd = hwnd;
-    return (_menu = CreatePopupMenu());
+    _menu = CreatePopupMenu();
+    return _menu != NULL;
 }
 
 void TrayIconMenu::Cleanup()
@@ -17,43 +17,37 @@ void TrayIconMenu::Cleanup()
     DestroyMenu(_menu);
     _menu = NULL;
     _hwnd = NULL;
-    _count = 0;
+    _items.clear();
 }
 
 void TrayIconMenu::Track(int x, int y)
 {
+    // without a foreground window the popup won't close when the user clicks elsewhere
     SetForegroundWindow(_hwnd);
-    UINT uFlags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN;
-    TrackPopupMenuEx(_menu, uFlags, x, y, _hwnd, NULL);
+    UINT flags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN;
+    TrackPopupMenuEx(_menu, flags, x, y, _hwnd, NULL);
 }
 
-int TrayIconMenu::Append(UINT flags, LPCWSTR newItem)
+void TrayIconMenu::Append(UINT flags, const wchar_t* text, Callback_t&& cb)
 {
-    UINT id = _count++;
-    if (id >= std::size(_funcs)) return -1;
-    AppendMenuW(_menu, flags, id, newItem);
-    return id;
+    if (_items.size() >= MaxItems) return;
+    AppendMenuW(_menu, flags, _items.size(), text);
+    _items.push_back(std::move(cb));
 }
 
 void TrayIconMenu::Fire(UINT id)
 {
-    if (id >= std::size(_funcs)) return;
-    Callback_t& func = _funcs[id];
-    if (func) func();
+    if (id < _items.size() && _items[id]) _items[id]();
 }
 
 void TrayIconMenu::Button(const wchar_t* text, Callback_t&& cb)
 {
-    int idx = Append(MF_STRING, text);
-    if (idx >= 0) _funcs[idx] = std::forward<Callback_t>(cb);
+    Append(MF_STRING, text, std::move(cb));
 }
 
 void TrayIconMenu::Toggle(const wchar_t* text, bool state, Callback_t&& cb)
 {
-    UINT flags = MF_STRING;
-    if (state) flags |= MF_CHECKED;
-    int idx = Append(flags, text);
-    if (idx >= 0) _funcs[idx] = std::forward<Callback_t>(cb);
+    Append(MF_STRING | (state ? MF_CHECKED : 0), text, std::move(cb));
 }
 
 void TrayIconMenu::Disabled(const wchar_t* text)
@@ -70,42 +64,29 @@ TrayIcon::TrayIcon()
 
 TrayIcon::~TrayIcon()
 {
-    if (_data.uID) Cleanup();
+    Cleanup();
 }
 
 void TrayIcon::SetTip(const wchar_t* tip)
 {
-    wcsncpy(_data.szTip, tip, std::size(_data.szTip));
-    _data.uFlags |= (NIF_TIP | NIF_SHOWTIP);
-    if (_data.uID) Update(NIM_MODIFY);
+    wcsncpy_s(_data.szTip, tip, _TRUNCATE);
+    _data.uFlags |= NIF_TIP | NIF_SHOWTIP;
+    if (IsCreated()) Notify(NIM_MODIFY);
 }
 
 void TrayIcon::SetOnClick(ClickCallback_t&& func)
 {
-    _clickFunc = std::forward<ClickCallback_t>(func);
+    _clickFunc = std::move(func);
 }
 
 void TrayIcon::SetMenu(MenuCallback_t&& func)
 {
-    _menuFunc = std::forward<MenuCallback_t>(func);
-}
-
-void TrayIcon::SetVisible(bool visible)
-{
-    if (!_data.hWnd || visible == _added) return;
-    if (visible) {
-        _added = Update(NIM_ADD);
-        if (_added) Update(NIM_SETVERSION);
-    } else {
-        Update(NIM_DELETE);
-        _added = false;
-    }
+    _menuFunc = std::move(func);
 }
 
 void TrayIcon::ShowMenu(int x, int y)
 {
-    if (!_menuFunc) return;
-    if (!_menu.Create(_data.hWnd)) return;
+    if (!_menuFunc || !_menu.Create(_data.hWnd)) return;
     _menuFunc(_menu);
     _menu.Track(x, y);
     _menu.Cleanup();
@@ -113,75 +94,69 @@ void TrayIcon::ShowMenu(int x, int y)
 
 void TrayIcon::UpdateIcon(HICON icon)
 {
-    if (!_data.uID) return;
+    if (!IsCreated()) return;
     _data.hIcon = icon;
     if (icon)
         _data.uFlags |= NIF_ICON;
     else
         _data.uFlags &= ~NIF_ICON;
-    Update(NIM_MODIFY);
+    Notify(NIM_MODIFY);
 }
 
 bool TrayIcon::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg) {
-    case WM_TRAYCMD: {
-        WORD hi = HIWORD(lParam), lo = LOWORD(lParam);
-        if (hi != _data.uID) return false;
-        switch (lo) {
-        case NIN_SELECT: {
+    case WM_TRAYCMD:
+        // NOTIFYICON_VERSION_4: HIWORD(lParam) = icon id, LOWORD(lParam) = event, wParam = cursor position
+        if (HIWORD(lParam) != _data.uID) return false;
+        switch (LOWORD(lParam)) {
+        case NIN_SELECT:
             if (_clickFunc) _clickFunc();
             return true;
+        case WM_CONTEXTMENU: ShowMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam)); return true;
         }
-        case WM_CONTEXTMENU: {
-            ShowMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam));
-            return true;
-        }
-        }
-        break;
-    }
-    case WM_COMMAND: {
-        if (HIWORD(wParam) == 0) {
-            _menu.Fire(LOWORD(wParam));
-            return true;
-        }
-        break;
-    }
+        return false;
+    case WM_COMMAND:
+        if (HIWORD(wParam) != 0) return false;
+        _menu.Fire(LOWORD(wParam));
+        return true;
     }
     return false;
 }
 
 bool TrayIcon::Create(HWND hwnd, HICON icon)
 {
-    if (_data.hWnd) return false;
+    if (IsCreated()) return false;
     _data.hWnd = hwnd;
     _data.hIcon = icon;
     _data.uFlags |= NIF_ICON;
-    bool added = Update(NIM_ADD);
-    if (!added || !Update(NIM_SETVERSION)) {
-        if (added) Update(NIM_DELETE);
+    if (!Notify(NIM_ADD)) {
+        _data.hWnd = NULL;
         return false;
     }
-    _added = true;
+    if (!Notify(NIM_SETVERSION)) {
+        Notify(NIM_DELETE);
+        _data.hWnd = NULL;
+        return false;
+    }
     return true;
 }
 
-bool TrayIcon::Update(DWORD dwMessage)
+bool TrayIcon::Notify(DWORD message)
 {
-    return Shell_NotifyIconW(dwMessage, &_data);
+    return Shell_NotifyIconW(message, &_data);
 }
 
 void TrayIcon::Cleanup()
 {
-    if (!_data.uID) return;
-    Update(NIM_DELETE);
+    if (!IsCreated()) return;
+    Notify(NIM_DELETE);
     Reset();
 }
 
 void TrayIcon::Reset()
 {
-    memset(&_data, NULL, sizeof(_data));
-    _added = false;
+    _data = {};
     _data.cbSize = sizeof(_data);
     _data.uFlags = NIF_MESSAGE;
     _data.uVersion = NOTIFYICON_VERSION_4;

@@ -1,25 +1,14 @@
 #pragma once
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
-#define _USE_MATH_DEFINES
-#include <cmath>
 
 namespace ImGui {
 void Tip(const char* fmt, ...);
 
-// Flashes alpha every f seconds
-ImVec4 FlashColor(float r, float g, float b, float f = 8.f, float min = 0.f, float max = 1.f);
-
+ImVec4 FlashColor(float r, float g, float b, float periodSec = 8.f, float minAlpha = 0.f, float maxAlpha = 1.f);
 ImU32 UiFlashDanger();
-
 ImU32 UiFlashWarn();
-
-void PushStyleColorTriplet(ImGuiCol idx, ImVec4 col);
-
-inline void PopStyleColorTriplet()
-{
-    ImGui::PopStyleColor(3);
-}
 
 namespace UiCol {
 inline constexpr ImU32 Bg0 = IM_COL32(0x0A, 0x0D, 0x13, 0xFF);
@@ -93,6 +82,12 @@ void LoadUiStyle();
 
 float UiAnim(ImGuiID id, float target, float speed = 14.f, float initial = FLT_MAX);
 ImU32 UiMixColor(ImU32 a, ImU32 b, float t);
+ImU32 UiHsvColor(float hue, float sat, float val);
+constexpr ImU32 UiWithAlpha(ImU32 col, float alpha)
+{
+    const ImU32 a = (ImU32)(((col >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
+    return (col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+}
 bool UiBeginPopup(const char* str_id);
 void UiEndPopup();
 
@@ -101,7 +96,6 @@ void AddTrackedText(ImDrawList* dl, ImFont* font, float size, const ImVec2& pos,
                     float tracking);
 void AddGlow(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col, float rounding, int spread, float alpha);
 void AddLogoMark(ImDrawList* dl, const ImVec2& pos, float size);
-void AddStatusDot(ImDrawList* dl, const ImVec2& center, float radius, ImU32 col, bool glow);
 void AddAccentHairline(ImDrawList* dl, const ImVec2& pos, float width, float height);
 void AddPanel(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float rounding);
 void AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col, float flip = 0.f);
@@ -114,9 +108,7 @@ void UiChipLabel(const ImVec2& pos, const char* text);
 bool UiLockChip(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, bool locked);
 bool UiEnablePill(const char* id, const ImVec2& pos, const ImVec2& size, bool enabled);
 bool UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const UiKeyDesc& desc);
-bool UiToggle(const char* id, const ImVec2& pos, bool on);
 bool UiBrushChip(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, ImU32 accent, bool active);
-bool UiStepper(const char* id, const ImVec2& pos, float width, int count, int& value);
 bool UiToggleRow(const char* id, const char* label, bool on);
 bool UiStepperRow(const char* id, const char* label, const char* value, int count, int& index);
 bool UiMenuRow(const char* label, ImU32 dotCol = 0, bool disabled = false, bool keepOpen = false,

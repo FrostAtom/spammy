@@ -1,15 +1,14 @@
 #include "Config.h"
-#include "Utils.h"
 
 const char* UiSizeName(UiSize size)
 {
-    static const char* s_names[UiSize_Count] = {"SMALL", "MEDIUM", "LARGE"};
+    static constexpr const char* s_names[UiSize_Count] = {"SMALL", "MEDIUM", "LARGE"};
     return s_names[size];
 }
 
 float UiSizeFactor(UiSize size)
 {
-    static const float s_factors[UiSize_Count] = {0.8f, 1.f, 1.25f};
+    static constexpr float s_factors[UiSize_Count] = {0.8f, 1.f, 1.25f};
     return s_factors[size];
 }
 
@@ -19,6 +18,22 @@ Config& Config::GetInstance()
     return s_config;
 }
 
+// silently keeps the default on a missing or mistyped field
+template <class Bool>
+static void ReadBool(const nlohmann::json& json, const char* key, Bool& out)
+{
+    if (auto it = json.find(key); it != json.end() && it->is_boolean()) out = it->get<bool>();
+}
+
+template <class Enum>
+static void ReadEnum(const nlohmann::json& json, const char* key, Enum& out, int count)
+{
+    if (auto it = json.find(key); it != json.end() && it->is_number_integer()) {
+        int value = it->get<int>();
+        if (value >= 0 && value < count) out = (Enum)value;
+    }
+}
+
 bool Config::Load()
 {
     _lastSaveTicks = GetTickCount();
@@ -26,29 +41,17 @@ bool Config::Load()
     std::ifstream file(CONFIG_FILE);
     if (!file) return false;
     try {
-        nlohmann::json json = nlohmann::json::parse(file);
-        if (auto item = json["enabled"]; item.is_boolean()) enabled = item.get<bool>();
-        if (auto item = json["minimizeToTray"]; item.is_boolean()) minimizeToTray = item.get<bool>();
-        if (auto item = json["soundsEnabled"]; item.is_boolean()) soundsEnabled = item.get<bool>();
-        if (auto item = json["form"]; item.is_number_integer()) {
-            int value = item.get<int>();
-            if (value >= 0 && value < KeyboardForm_Count) form = (KeyboardForm)value;
-        }
-        if (auto item = json["variant"]; item.is_number_integer()) {
-            int value = item.get<int>();
-            if (value >= 0 && value < KeyboardVariant_Count) variant = (KeyboardVariant)value;
-        }
-        if (auto item = json["mouse"]; item.is_number_integer()) {
-            int value = item.get<int>();
-            if (value >= 0 && value < MouseForm_Count) mouse = (MouseForm)value;
-        }
-        if (auto item = json["uiSize"]; item.is_number_integer()) {
-            int value = item.get<int>();
-            if (value >= 0 && value < UiSize_Count) uiSize = (UiSize)value;
-        }
-        if (auto item = json["profiles"]; item.is_array()) profiles = item.get<std::list<std::shared_ptr<Profile>>>();
-        if (auto item = json["editingProfile"]; item.is_string())
-            editingProfile = FindProfile(item.get_ref<const std::string&>().c_str());
+        const nlohmann::json json = nlohmann::json::parse(file);
+        ReadBool(json, "enabled", enabled);
+        ReadBool(json, "minimizeToTray", minimizeToTray);
+        ReadBool(json, "soundsEnabled", soundsEnabled);
+        ReadEnum(json, "form", form, KeyboardForm_Count);
+        ReadEnum(json, "variant", variant, KeyboardVariant_Count);
+        ReadEnum(json, "mouse", mouse, MouseForm_Count);
+        ReadEnum(json, "uiSize", uiSize, UiSize_Count);
+        if (auto it = json.find("profiles"); it != json.end() && it->is_array()) it->get_to(profiles);
+        if (auto it = json.find("editingProfile"); it != json.end() && it->is_string())
+            editingProfile = FindProfile(it->get_ref<const std::string&>().c_str());
     } catch (nlohmann::json::exception&) {
         return false;
     }
@@ -60,6 +63,7 @@ void Config::Save()
     std::ofstream file(CONFIG_FILE);
     if (!file) return;
 
+    // defaults are omitted so the file only contains what the user changed
     nlohmann::json json = nlohmann::json::object();
     if (!enabled) json["enabled"] = false;
     if (!minimizeToTray) json["minimizeToTray"] = false;
@@ -81,38 +85,40 @@ void Config::MarkDirty()
     _dirty = true;
 }
 
-void Config::SaveIfDirty(DWORD ticks)
+void Config::SaveIfDirty()
 {
-    if (_dirty && ticks - _lastSaveTicks >= CONFIG_SAVE_DELAY_MS) Save();
+    if (_dirty && GetTickCount() - _lastSaveTicks >= CONFIG_SAVE_DELAY_MS) Save();
 }
 
-std::shared_ptr<Profile> Config::FindProfile(const char* name)
+std::shared_ptr<Profile> Config::FindProfile(const char* name) const
 {
-    auto it = std::find_if(profiles.begin(), profiles.end(),
-                           [=](const std::shared_ptr<Profile>& item) { return item->name == name; });
-    return it != profiles.end() ? *it : NULL;
+    auto it =
+        std::ranges::find_if(profiles, [name](const std::shared_ptr<Profile>& item) { return item->name == name; });
+    return it != profiles.end() ? *it : nullptr;
 }
 
-std::shared_ptr<Profile> Config::FindProfileByApp(const char* app)
+std::shared_ptr<Profile> Config::FindProfileByApp(const char* app) const
 {
-    auto it = std::find_if(profiles.begin(), profiles.end(), [app](const std::shared_ptr<Profile>& item) {
-        return std::find(item->apps.begin(), item->apps.end(), app) != item->apps.end();
-    });
-    return it != profiles.end() ? *it : NULL;
+    auto it = std::ranges::find_if(
+        profiles, [app](const std::shared_ptr<Profile>& item) { return item->apps.contains(std::string_view(app)); });
+    return it != profiles.end() ? *it : nullptr;
 }
 
-bool Config::IsProfileExists(const char* name)
+std::shared_ptr<Profile> Config::FindGlobalProfile() const
 {
-    return (bool)FindProfile(name);
+    auto it = std::ranges::find_if(profiles, [](const std::shared_ptr<Profile>& item) { return item->IsGlobal(); });
+    return it != profiles.end() ? *it : nullptr;
+}
+
+bool Config::IsProfileExists(const char* name) const
+{
+    return FindProfile(name) != nullptr;
 }
 
 void Config::CreateProfile(const char* name)
 {
-    std::shared_ptr<Profile> profile = std::make_shared<Profile>();
-    profile->name = name;
-
-    profiles.emplace_back(profile);
-    editingProfile = profile;
+    editingProfile = profiles.emplace_back(std::make_shared<Profile>());
+    editingProfile->name = name;
     MarkDirty();
 }
 
@@ -124,36 +130,31 @@ void Config::SetEditingProfile(const char* name)
 
 void Config::DeleteProfile(const char* name)
 {
-    auto it = std::find_if(profiles.begin(), profiles.end(),
-                           [name](const std::shared_ptr<Profile>& item) { return item->name == name; });
-    if (it == profiles.end()) return;
-    if (*it == editingProfile) editingProfile = NULL;
-    profiles.erase(it);
+    std::shared_ptr<Profile> profile = FindProfile(name);
+    if (!profile) return;
+    if (profile == editingProfile) editingProfile = nullptr;
+    profiles.erase(std::ranges::find(profiles, profile));
     MarkDirty();
 }
 
-bool Config::IsProfileBinded(const char* name, const char* app)
+bool Config::IsProfileBinded(const char* name, const char* app) const
 {
-    if (std::shared_ptr<Profile> profile = FindProfile(name))
-        return std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end();
-    return false;
+    std::shared_ptr<Profile> profile = FindProfile(name);
+    return profile && profile->apps.contains(std::string_view(app));
 }
 
 void Config::BindProfile(const char* name, const char* app)
 {
     std::shared_ptr<Profile> profile = FindProfile(name);
-    if (!profile || std::find(profile->apps.begin(), profile->apps.end(), app) != profile->apps.end()) return;
-    profile->apps.emplace_back(app);
-    LexicographicalSort(profile->apps);
-    MarkDirty();
+    if (profile && profile->apps.emplace(app).second) MarkDirty();
 }
 
 void Config::UnbindProfile(const char* name, const char* app)
 {
     std::shared_ptr<Profile> profile = FindProfile(name);
     if (!profile) return;
-    auto removed = std::remove(profile->apps.begin(), profile->apps.end(), app);
-    if (removed == profile->apps.end()) return;
-    profile->apps.erase(removed, profile->apps.end());
+    auto it = profile->apps.find(std::string_view(app));
+    if (it == profile->apps.end()) return;
+    profile->apps.erase(it);
     MarkDirty();
 }

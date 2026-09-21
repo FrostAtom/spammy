@@ -4,7 +4,6 @@
 #include <span>
 
 struct KeyModeContext {
-    HWND hwnd;
     unsigned short vkCode;
     bool repeat;
     const Profile& profile;

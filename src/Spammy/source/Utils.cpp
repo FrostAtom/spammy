@@ -1,47 +1,48 @@
 #include "Utils.h"
 
+bool CaseInsensitiveLess::operator()(std::string_view a, std::string_view b) const noexcept
+{
+    auto lower = [](unsigned char c) { return std::tolower(c); };
+    return std::ranges::lexicographical_compare(a, b, {}, lower, lower);
+}
+
 void LaunchUrl(const wchar_t* url)
 {
     ShellExecuteW(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
 }
 
-HANDLE OpenProcessByWindow(HWND hwnd, DWORD access)
+std::filesystem::path GetModulePath()
 {
-    DWORD id;
-    GetWindowThreadProcessId(hwnd, &id);
-    return OpenProcess(access, FALSE, id);
-}
-
-std::filesystem::path GetProcessPath(HANDLE hProcess)
-{
-    wchar_t filePath[MAX_PATH] = {0};
-    if (!GetModuleFileNameExW(hProcess, NULL, filePath, std::size(filePath))) return {};
-    return filePath;
+    wchar_t buf[MAX_PATH] = {0};
+    GetModuleFileNameW(NULL, buf, std::size(buf));
+    return buf;
 }
 
 std::filesystem::path GetProcessPath(HWND hwnd)
 {
-    std::filesystem::path result;
-    HANDLE hProc = OpenProcessByWindow(hwnd, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ);
-    if (hProc) {
-        result = GetProcessPath(hProc);
-        CloseHandle(hProc);
-    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    // LIMITED_INFORMATION is granted for elevated/protected processes where VM_READ (GetModuleFileNameEx) is denied
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return {};
+
+    wchar_t buf[MAX_PATH] = {0};
+    DWORD size = std::size(buf);
+    std::filesystem::path result = QueryFullProcessImageNameW(process, 0, buf, &size) ? buf : L"";
+    CloseHandle(process);
     return result;
+}
+
+std::string Utf8FileName(const std::filesystem::path& path)
+{
+    std::u8string name = path.filename().u8string();
+    return std::string(name.begin(), name.end());
 }
 
 BOOL EnumWindows(EnumWindowsProc_t&& func)
 {
-    struct Dummy {
-        static BOOL CALLBACK EnumWindowProc(HWND hwnd, LPARAM lParam) { return (*(EnumWindowsProc_t*)lParam)(hwnd); }
+    struct Thunk {
+        static BOOL CALLBACK Call(HWND hwnd, LPARAM lParam) { return (*(EnumWindowsProc_t*)lParam)(hwnd); }
     };
-    return EnumWindows(&Dummy::EnumWindowProc, (LPARAM)&func);
-}
-
-void LexicographicalSort(std::vector<std::string>& dict)
-{
-    std::sort(dict.begin(), dict.end(), [](const std::string& a, const std::string& b) {
-        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
-                                            [](unsigned char a, unsigned char b) { return tolower(a) < tolower(b); });
-    });
+    return EnumWindows(&Thunk::Call, (LPARAM)&func);
 }

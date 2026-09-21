@@ -3,6 +3,8 @@ include(${CMAKE_SOURCE_DIR}/cmake/FetchFilesInFolder.cmake)
 project(Spammy LANGUAGES C CXX)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO")
 
+find_package(Boost CONFIG REQUIRED COMPONENTS container)
+
 FetchFilesInFolder(HDRS "Include")
 FetchFilesInFolder(SRCS "Source")
 
@@ -26,6 +28,7 @@ target_compile_definitions(
 target_link_libraries(
 	${PROJECT_NAME} PRIVATE
 		imgui
+		Boost::container
 )
 
 target_include_directories(

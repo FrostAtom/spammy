@@ -14,7 +14,7 @@ public:
     void Uninit();
 
     static App& Instance();
-    bool Run();
+    void Run();
 
     void Enable(bool state = true);
     bool IsEnabled();
@@ -29,17 +29,19 @@ public:
 private:
     // a physical key event the hook decided to swallow, handed off to the input worker
     struct InputEvent {
-        enum Kind : unsigned char { Kind_Press, Kind_Release, Kind_TogglePause };
+        enum Kind : unsigned char {
+            Kind_Press,
+            Kind_Release,
+            Kind_TogglePause
+        };
         Kind kind;
         bool repeat;
         unsigned short vkCode;
         unsigned mods;
-        HWND hwnd;
         std::shared_ptr<Profile> profile;
     };
 
-    void CheckIsFocusChanged();
-    void OnFocusChanged();
+    void UpdateActiveTarget();
     std::pair<std::shared_ptr<Profile>, HWND> ActiveTarget();
 
     // hook thread: decide + enqueue only
@@ -51,17 +53,15 @@ private:
     void StopInputWorker();
     void InputWorkerProc(std::stop_token stop);
     void HandleInput(const InputEvent& ev);
-    void TickAutofire(const Profile& profile, HWND hwnd);
+    void TickAutofire(const Profile& profile);
 
 private:
-    MainWindow* _mainWindow = NULL;
-    bool _isRunning = false;
-    bool _autoStartEnabled = false;
+    std::unique_ptr<MainWindow> _mainWindow;
     HWND _activeHwnd = NULL;
 
     std::shared_ptr<Profile> _activeProfile;
     std::string _activeApp;
-    // guards _activeProfile/_activeHwnd between the hook thread, the input worker and the main thread (OnFocusChanged)
+    // guards _activeProfile/_activeHwnd between the hook thread, the input worker and the main thread (UpdateActiveTarget)
     std::mutex _callbackMutex;
 
     std::jthread _inputThread;
