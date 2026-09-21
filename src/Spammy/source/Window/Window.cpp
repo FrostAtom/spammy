@@ -59,7 +59,7 @@ Window::ErrorCode Window::Initialize()
 
     ImGui::LoadUiFonts();
 
-    if (_trayIcon) _trayIcon->Create(_hwnd, _icon);
+    if (_trayIcon) _trayIcon->Create(_hwnd, TrayIconImage());
 
     return ErrorCode_OK;
 }
@@ -67,7 +67,14 @@ Window::ErrorCode Window::Initialize()
 void Window::SetTrayIcon(std::unique_ptr<TrayIcon> icon)
 {
     _trayIcon = std::move(icon);
-    if (_hwnd && _trayIcon) _trayIcon->Create(_hwnd, _icon);
+    if (_hwnd && _trayIcon) _trayIcon->Create(_hwnd, TrayIconImage());
+}
+
+void Window::SetTrayIconOverride(HICON icon)
+{
+    if (_trayIconOverride == icon) return;
+    _trayIconOverride = icon;
+    if (_trayIcon) _trayIcon->UpdateIcon(TrayIconImage());
 }
 
 void Window::Cleanup()
@@ -92,7 +99,7 @@ void Window::SetIcon(HICON icon)
     _icon = icon;
     if (!_hwnd) return;
     ApplyWndIcon();
-    if (_trayIcon) _trayIcon->UpdateIcon(_icon);
+    if (_trayIcon) _trayIcon->UpdateIcon(TrayIconImage());
 }
 
 void Window::SetIcon(unsigned id)

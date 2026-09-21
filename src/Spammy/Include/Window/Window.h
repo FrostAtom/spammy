@@ -22,6 +22,7 @@ private:
     wchar_t _wndName[64], _className[64];
     char _u8wndName[64 * 4];
     HICON _icon = NULL;
+    HICON _trayIconOverride = NULL; // shown in the tray instead of _icon while set
     ATOM _atom = NULL;
     HWND _hwnd = NULL;
     ImGuiContext* _imCtx = NULL;
@@ -73,6 +74,8 @@ public:
 
     void SetIcon(HICON icon);
     void SetIcon(unsigned id);
+    // NULL restores the window icon in the tray; the caller keeps ownership of the HICON
+    void SetTrayIconOverride(HICON icon);
 
     void SetName(const wchar_t* name);
 
@@ -113,6 +116,7 @@ protected:
 
 private:
     int ShowCmd() const;
+    HICON TrayIconImage() const { return _trayIconOverride ? _trayIconOverride : _icon; }
     void ApplyWndIcon();
     void MoveToStoredRect();
 };

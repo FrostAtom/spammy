@@ -8,6 +8,7 @@ class MainWindow : public Window {
     using PressLog = std::array<DWORD, 128>;
 
     std::filesystem::path _appFilePath;
+    HICON _pausedIcon = NULL; // grayscale copy of the app icon, shown in the tray while disabled
     std::atomic<bool> _editPause = false;
     Action _brushAction = Action_Spammy;
     unsigned _editMods = 0;
@@ -19,9 +20,12 @@ class MainWindow : public Window {
 
 public:
     MainWindow(const wchar_t* className, const wchar_t* wndName = NULL);
+    ~MainWindow() override;
     bool Initialize();
     // close button / Alt+F4 / WM_CLOSE: hides, exits or asks, depending on the remembered choice
     void RequestClose();
+    // swaps the tray icon for its grayscale twin while spamming is paused; cheap enough to call every loop
+    void SyncTrayIcon();
 
     // hook-thread callbacks; focused = our own window is the foreground one
     bool HandleKeyPress(unsigned short vkCode, bool repeat, bool focused);

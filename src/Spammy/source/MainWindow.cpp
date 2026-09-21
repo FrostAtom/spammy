@@ -48,6 +48,11 @@ MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName)
 {
 }
 
+MainWindow::~MainWindow()
+{
+    if (_pausedIcon) DestroyIcon(_pausedIcon);
+}
+
 bool MainWindow::Initialize()
 {
     if (HWND running = FindWindowW(L"" APP_NAME, L"" APP_NAME)) {
@@ -62,7 +67,9 @@ bool MainWindow::Initialize()
         return false;
     }
 
-    SetIcon(IDI_ICON1);
+    HICON icon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDI_ICON1));
+    SetIcon(icon);
+    _pausedIcon = CreateGrayscaleIcon(icon);
     EnableMoving();
     EnableTitleBar(false);
     SetSize({(int)kWindowSize.x, (int)kWindowSize.y});
@@ -77,6 +84,11 @@ bool MainWindow::Initialize()
 
     LoadUiStyle();
     return true;
+}
+
+void MainWindow::SyncTrayIcon()
+{
+    SetTrayIconOverride(sApp.IsEnabled() ? NULL : _pausedIcon);
 }
 
 void MainWindow::RequestClose()

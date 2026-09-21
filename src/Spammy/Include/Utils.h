@@ -10,6 +10,8 @@ struct CaseInsensitiveLess {
 };
 
 void LaunchUrl(const wchar_t* url);
+// desaturated copy of an icon (alpha preserved); the caller owns the result, NULL on failure
+HICON CreateGrayscaleIcon(HICON source);
 
 std::filesystem::path GetModulePath();
 std::filesystem::path GetProcessPath(HWND hwnd);

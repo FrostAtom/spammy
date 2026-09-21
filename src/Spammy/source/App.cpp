@@ -64,6 +64,7 @@ void App::Run()
         }
         if (_mainWindow->WantQuit()) _mainWindow->RequestClose();
         if (_mainWindow->IsWndNormalized()) _mainWindow->Update();
+        _mainWindow->SyncTrayIcon(); // pause can flip on the input worker, so poll it here on the UI thread
 
         UpdateActiveTarget();
         sConfig.SaveIfDirty();
