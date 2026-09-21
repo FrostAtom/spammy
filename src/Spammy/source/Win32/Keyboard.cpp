@@ -149,10 +149,34 @@ const char* Keyboard::GetKeyName(unsigned short vkCode)
     case VK_MBUTTON: return "Mouse Middle";
     case VK_XBUTTON1: return "Mouse 4";
     case VK_XBUTTON2: return "Mouse 5";
+    // keyboard layouts carry no names for these
+    case VK_SLEEP: return "Sleep";
+    case VK_VOLUME_MUTE: return "Mute";
+    case VK_VOLUME_DOWN: return "Volume -";
+    case VK_VOLUME_UP: return "Volume +";
+    case VK_MEDIA_PLAY_PAUSE: return "Play";
+    case VK_MEDIA_PREV_TRACK: return "Prev Track";
+    case VK_MEDIA_NEXT_TRACK: return "Next Track";
+    case VK_MEDIA_STOP: return "Media Stop";
+    case VK_LAUNCH_MEDIA_SELECT: return "Media";
+    case VK_LAUNCH_MAIL: return "Mail";
+    case VK_LAUNCH_APP1: return "App 1";
+    case VK_LAUNCH_APP2: return "App 2";
+    case VK_BROWSER_BACK: return "Web Back";
+    case VK_BROWSER_FORWARD: return "Web Fwd";
+    case VK_BROWSER_HOME: return "Web Home";
+    case VK_BROWSER_REFRESH: return "Web Reload";
+    case VK_BROWSER_STOP: return "Web Stop";
+    case VK_BROWSER_SEARCH: return "Web Search";
+    case VK_BROWSER_FAVORITES: return "Web Fav";
     }
     static char buf[64];
     buf[0] = '\0';
-    GetKeyNameTextA(MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC) << 16, buf, std::size(buf));
+    // extended keys (arrows, nav, RCtrl, ...) need bit 24 set or they're named as their numpad twins
+    const UINT scCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX);
+    LONG lParam = (LONG)((scCode & 0xFF) << 16);
+    if (scCode & 0xE000) lParam |= 1 << 24;
+    GetKeyNameTextA(lParam, buf, std::size(buf));
     return buf;
 }
 

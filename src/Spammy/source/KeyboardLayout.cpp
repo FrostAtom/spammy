@@ -1,10 +1,11 @@
 #include "KeyboardLayout.h"
 #include <boost/container/static_vector.hpp>
+#include <iterator>
 
 namespace {
 
-// the full 100% layout is ~110 keys
-using KeyList = boost::container::static_vector<KeyboardKey, 128>;
+// the full 100% layout is ~110 keys, EXTRA adds another ~35
+using KeyList = boost::container::static_vector<KeyboardKey, 160>;
 
 // single-character key labels; VK codes of digits and latin letters equal their ASCII codes
 struct CharLabels {
@@ -161,19 +162,59 @@ void AddCore(Grid& g, float oy, KeyboardVariant v, bool compact)
     AddSpaceRow(g, oy + 4.f, v, compact);
 }
 
-// compact: F-keys packed without the 0.5u gaps between F4|F5 and F8|F9
-void AddFunctionRow(Grid& g, bool compact)
+// column of the i-th F-key; compact: packed without the 0.5u gaps between F4|F5 and F8|F9
+float FKeyX(int i, bool compact)
+{
+    return compact ? 1.f + i : 2.f + i + 0.5f * (i / 4);
+}
+
+void AddFunctionRow(Grid& g, float oy, bool compact)
 {
     static constexpr const char* kNames[] = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"};
-    g.Put("ESC", VK_ESCAPE, 0.f, 0.f);
-    for (int i = 0; i < 12; i++) {
-        const float x = compact ? 1.f + i : 2.f + i + 0.5f * (i / 4);
-        g.Put(kNames[i], VK_F1 + i, x, 0.f);
-    }
+    g.Put("ESC", VK_ESCAPE, 0.f, oy);
+    for (int i = 0; i < 12; i++)
+        g.Put(kNames[i], VK_F1 + i, FKeyX(i, compact), oy);
     const float sys = compact ? 13.f : 15.5f;
-    g.Put("PRT", VK_SNAPSHOT, sys, 0.f);
-    g.Put("SLK", VK_SCROLL, sys + 1.f, 0.f);
-    g.Put("PSE", VK_PAUSE, sys + 2.f, 0.f);
+    g.Put("PRT", VK_SNAPSHOT, sys, oy);
+    g.Put("SLK", VK_SCROLL, sys + 1.f, oy);
+    g.Put("PSE", VK_PAUSE, sys + 2.f, oy);
+}
+
+// two rows on top of a full-size board for keys Windows maps to scancodes but no 100% board carries:
+// F13-F24 sit above F1-F12, browser keys above the nav cluster / numpad, media, launch, Sleep, Clear
+// (numpad 5 with NumLock off) and Break (Ctrl+Pause arrives as its own VK) fill the second row
+void AddExtraRows(Grid& g)
+{
+    struct Extra {
+        const char* name;
+        UINT vk;
+    };
+    static constexpr const char* kFNames[] = {"F13", "F14", "F15", "F16", "F17", "F18",
+                                              "F19", "F20", "F21", "F22", "F23", "F24"};
+    static constexpr Extra kMedia[] = {
+        {"MUTE", VK_VOLUME_MUTE},      {"VOL-", VK_VOLUME_DOWN},         {"VOL+", VK_VOLUME_UP},
+        {"PLAY", VK_MEDIA_PLAY_PAUSE}, {"PREV", VK_MEDIA_PREV_TRACK},    {"NEXT", VK_MEDIA_NEXT_TRACK},
+        {"STOP", VK_MEDIA_STOP},       {"MSEL", VK_LAUNCH_MEDIA_SELECT}, {"MAIL", VK_LAUNCH_MAIL},
+        {"APP1", VK_LAUNCH_APP1},      {"APP2", VK_LAUNCH_APP2},
+    };
+    static constexpr Extra kBrowser[] = {
+        {"W<", VK_BROWSER_BACK},        {"W>", VK_BROWSER_FORWARD}, {"WHOM", VK_BROWSER_HOME},
+        {"WRLD", VK_BROWSER_REFRESH},   {"WSTP", VK_BROWSER_STOP},  {"WSRC", VK_BROWSER_SEARCH},
+        {"WFAV", VK_BROWSER_FAVORITES},
+    };
+
+    g.Put("SLP", VK_SLEEP, 0.f, 0.f);
+    for (int i = 0; i < 12; i++)
+        g.Put(kFNames[i], VK_F13 + i, FKeyX(i, false), 0.f);
+    for (int i = 0; i < 3; i++)
+        g.Put(kBrowser[i].name, kBrowser[i].vk, 15.5f + i, 0.f);
+    for (int i = 3; i < 7; i++)
+        g.Put(kBrowser[i].name, kBrowser[i].vk, 18.75f + (i - 3), 0.f);
+
+    g.Put("CLR", VK_CLEAR, 0.f, 1.f);
+    for (int i = 0; i < (int)std::size(kMedia); i++)
+        g.Put(kMedia[i].name, kMedia[i].vk, FKeyX(i, false), 1.f);
+    g.Put("BRK", VK_CANCEL, 17.5f, 1.f); // above PSE
 }
 
 void AddNavCluster(Grid& g, float ox, float oy)
@@ -217,16 +258,20 @@ KeyList Build(KeyboardForm form, KeyboardVariant variant)
     switch (form) {
     case KeyboardForm_65: AddCore(g, 0.f, variant, true); break;
     case KeyboardForm_75:
-        AddFunctionRow(g, true);
+        AddFunctionRow(g, 0.f, true);
         AddCore(g, 1.f, variant, true);
         break;
     case KeyboardForm_Tkl:
     case KeyboardForm_Full:
-        AddFunctionRow(g, false);
-        AddCore(g, 1.25f, variant, false);
-        AddNavCluster(g, 15.5f, 1.25f);
-        if (form == KeyboardForm_Full) AddNumpad(g, 18.75f, 1.25f);
+    case KeyboardForm_Extra: {
+        const float oy = form == KeyboardForm_Extra ? 2.f : 0.f;
+        if (form == KeyboardForm_Extra) AddExtraRows(g);
+        AddFunctionRow(g, oy, false);
+        AddCore(g, oy + 1.25f, variant, false);
+        AddNavCluster(g, 15.5f, oy + 1.25f);
+        if (form != KeyboardForm_Tkl) AddNumpad(g, 18.75f, oy + 1.25f);
         break;
+    }
     default: AddCore(g, 0.f, variant, false); break;
     }
     return g.keys;
@@ -252,7 +297,7 @@ std::span<const KeyboardKey> GetKeyboardLayout(KeyboardForm form, KeyboardVarian
 
 const char* KeyboardFormName(KeyboardForm form)
 {
-    static constexpr const char* kNames[KeyboardForm_Count] = {"60%", "65%", "75%", "TKL 80%", "FULL 100%"};
+    static constexpr const char* kNames[KeyboardForm_Count] = {"60%", "65%", "75%", "TKL 80%", "FULL 100%", "EXTRA"};
     return NameOf(form, kNames);
 }
 

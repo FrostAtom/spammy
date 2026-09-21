@@ -14,6 +14,7 @@ enum KeyboardForm {
     KeyboardForm_75,
     KeyboardForm_Tkl,
     KeyboardForm_Full,
+    KeyboardForm_Extra, // full + F13-F24, media/browser/launch and other keys Windows knows but no board carries
     KeyboardForm_Count,
 };
 
