@@ -14,7 +14,7 @@ public:
 private:
     HWND _hwnd = NULL;
     HMENU _menu = NULL;
-    // menu item id == index; ids are handed to WM_COMMAND by the shell
+    // menu item id == index + 1, returned by TrackPopupMenuEx
     boost::container::static_vector<Callback_t, MaxItems> _items;
 
 public:
@@ -27,7 +27,7 @@ public:
 
 private:
     void Append(UINT flags, const wchar_t* text, Callback_t&& cb = {});
-    void Fire(UINT id);
+    void Fire(size_t index);
     bool Create(HWND hwnd);
     void Track(int x, int y);
     void Cleanup();

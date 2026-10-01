@@ -24,20 +24,27 @@ void TrayIconMenu::Track(int x, int y)
 {
     // without a foreground window the popup won't close when the user clicks elsewhere
     SetForegroundWindow(_hwnd);
-    UINT flags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN;
-    TrackPopupMenuEx(_menu, flags, x, y, _hwnd, NULL);
+    // TPM_RETURNCMD hands the pick back right here; a posted WM_COMMAND would only arrive after Cleanup()
+    // has already dropped the callbacks
+    UINT flags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN |
+                 TPM_RETURNCMD | TPM_NONOTIFY;
+    UINT id = (UINT)TrackPopupMenuEx(_menu, flags, x, y, _hwnd, NULL);
+    // forces the task switch the menu needs to dismiss properly next time (KB135788)
+    PostMessageW(_hwnd, WM_NULL, 0, 0);
+    if (id) Fire(id - 1);
 }
 
 void TrayIconMenu::Append(UINT flags, const wchar_t* text, Callback_t&& cb)
 {
     if (_items.size() >= MaxItems) return;
-    AppendMenuW(_menu, flags, _items.size(), text);
+    // 0 means "nothing picked" to TPM_RETURNCMD, so ids are index + 1
+    AppendMenuW(_menu, flags, _items.size() + 1, text);
     _items.push_back(std::move(cb));
 }
 
-void TrayIconMenu::Fire(UINT id)
+void TrayIconMenu::Fire(size_t index)
 {
-    if (id < _items.size() && _items[id]) _items[id]();
+    if (index < _items.size() && _items[index]) _items[index]();
 }
 
 void TrayIconMenu::Button(const wchar_t* text, Callback_t&& cb)
@@ -116,10 +123,6 @@ bool TrayIcon::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_CONTEXTMENU: ShowMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam)); return true;
         }
         return false;
-    case WM_COMMAND:
-        if (HIWORD(wParam) != 0) return false;
-        _menu.Fire(LOWORD(wParam));
-        return true;
     }
     return false;
 }
