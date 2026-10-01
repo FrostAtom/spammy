@@ -130,11 +130,20 @@ bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
         if (down ? _mainWindow->HandleKeyPress(vkCode, repeat, selfFocused) : _mainWindow->HandleKeyRelease(vkCode))
             return true;
     }
+    // the pause key is decided on its down edge and that decision sticks until its up: letting go of a modifier
+    // first (or grabbing one mid-hold) must neither drop the toggle nor leak the up to the game
+    if (vkCode == _heldPauseVk) {
+        if (!down) _heldPauseVk = 0;
+        return true;
+    }
     if (!profile) return false;
 
     unsigned mods = sKeyboard.TestModifiers();
-    if (profile->vkPause == MAKE_KEY_BUNDLE(vkCode, mods)) {
-        if (!down) PostInput({InputEvent::Kind_TogglePause});
+    // extra held modifiers (sprint on Shift, crouch on Ctrl, ...) don't get in the way, only the bound ones are required
+    const unsigned pauseMods = GET_KEY_MODIFIER(profile->vkPause);
+    if (down && !repeat && GET_KEY_VKCODE(profile->vkPause) == vkCode && (mods & pauseMods) == pauseMods) {
+        _heldPauseVk = (unsigned short)vkCode;
+        PostInput({InputEvent::Kind_TogglePause});
         return true;
     }
     if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
@@ -298,10 +307,10 @@ void App::UpdateActiveTarget()
         _activeHwnd = hwnd;
         _activeApp = profile ? std::move(app) : std::string();
     }
-    // presses queued for the previous window must not be injected into the new one
+    // presses queued for the previous window must not be injected into the new one; a pending pause toggle still counts
     {
         std::lock_guard lock(_inputMutex);
-        _inputQueue.clear();
+        std::erase_if(_inputQueue, [](const InputEvent& ev) { return ev.kind != InputEvent::Kind_TogglePause; });
     }
 
     bool selfFocused = _mainWindow && hwnd == _mainWindow->Native();

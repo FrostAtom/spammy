@@ -63,6 +63,8 @@ private:
     std::string _activeApp;
     // guards _activeProfile/_activeHwnd between the hook thread, the input worker and the main thread (UpdateActiveTarget)
     std::mutex _callbackMutex;
+    // pause key whose down toggled and whose up/repeats are still to be swallowed; hook thread only
+    unsigned short _heldPauseVk = 0;
 
     std::jthread _inputThread;
     HANDLE _inputWake = NULL;
