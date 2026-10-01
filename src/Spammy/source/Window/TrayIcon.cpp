@@ -1,37 +1,28 @@
 #include "Window/TrayIcon.h"
 
+static constexpr UINT WM_TRAYCMD = WM_APP + 0x10;
+
+TrayIconMenu::TrayIconMenu(HWND hwnd) : _hwnd(hwnd), _menu(CreatePopupMenu())
+{
+}
+
 TrayIconMenu::~TrayIconMenu()
 {
-    if (_hwnd) Cleanup();
-}
-
-bool TrayIconMenu::Create(HWND hwnd)
-{
-    _hwnd = hwnd;
-    _menu = CreatePopupMenu();
-    return _menu != NULL;
-}
-
-void TrayIconMenu::Cleanup()
-{
-    DestroyMenu(_menu);
-    _menu = NULL;
-    _hwnd = NULL;
-    _items.clear();
+    if (_menu) DestroyMenu(_menu);
 }
 
 void TrayIconMenu::Track(int x, int y)
 {
     // without a foreground window the popup won't close when the user clicks elsewhere
     SetForegroundWindow(_hwnd);
-    // TPM_RETURNCMD hands the pick back right here; a posted WM_COMMAND would only arrive after Cleanup()
-    // has already dropped the callbacks
-    UINT flags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN |
-                 TPM_RETURNCMD | TPM_NONOTIFY;
-    UINT id = (UINT)TrackPopupMenuEx(_menu, flags, x, y, _hwnd, NULL);
+    // TPM_RETURNCMD hands the pick back right here; a posted WM_COMMAND would only arrive after the menu and its
+    // callbacks are gone
+    const UINT flags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN |
+                       TPM_RETURNCMD | TPM_NONOTIFY;
+    const UINT id = (UINT)TrackPopupMenuEx(_menu, flags, x, y, _hwnd, nullptr);
     // forces the task switch the menu needs to dismiss properly next time (KB135788)
     PostMessageW(_hwnd, WM_NULL, 0, 0);
-    if (id) Fire(id - 1);
+    if (id && id <= _items.size() && _items[id - 1]) _items[id - 1]();
 }
 
 void TrayIconMenu::Append(UINT flags, const wchar_t* text, Callback_t&& cb)
@@ -40,11 +31,6 @@ void TrayIconMenu::Append(UINT flags, const wchar_t* text, Callback_t&& cb)
     // 0 means "nothing picked" to TPM_RETURNCMD, so ids are index + 1
     AppendMenuW(_menu, flags, _items.size() + 1, text);
     _items.push_back(std::move(cb));
-}
-
-void TrayIconMenu::Fire(size_t index)
-{
-    if (index < _items.size() && _items[index]) _items[index]();
 }
 
 void TrayIconMenu::Button(const wchar_t* text, Callback_t&& cb)
@@ -61,8 +47,6 @@ void TrayIconMenu::Disabled(const wchar_t* text)
 {
     Append(MF_STRING | MF_GRAYED, text);
 }
-
-UINT TrayIcon::s_idCounter = 0;
 
 TrayIcon::TrayIcon()
 {
@@ -93,10 +77,11 @@ void TrayIcon::SetMenu(MenuCallback_t&& func)
 
 void TrayIcon::ShowMenu(int x, int y)
 {
-    if (!_menuFunc || !_menu.Create(_data.hWnd)) return;
-    _menuFunc(_menu);
-    _menu.Track(x, y);
-    _menu.Cleanup();
+    if (!_menuFunc) return;
+    TrayIconMenu menu(_data.hWnd);
+    if (!menu._menu) return;
+    _menuFunc(menu);
+    menu.Track(x, y);
 }
 
 void TrayIcon::UpdateIcon(HICON icon)
@@ -112,17 +97,13 @@ void TrayIcon::UpdateIcon(HICON icon)
 
 bool TrayIcon::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    switch (msg) {
-    case WM_TRAYCMD:
-        // NOTIFYICON_VERSION_4: HIWORD(lParam) = icon id, LOWORD(lParam) = event, wParam = cursor position
-        if (HIWORD(lParam) != _data.uID) return false;
-        switch (LOWORD(lParam)) {
-        case NIN_SELECT:
-            if (_clickFunc) _clickFunc();
-            return true;
-        case WM_CONTEXTMENU: ShowMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam)); return true;
-        }
-        return false;
+    // NOTIFYICON_VERSION_4: HIWORD(lParam) = icon id, LOWORD(lParam) = event, wParam = cursor position
+    if (msg != WM_TRAYCMD || HIWORD(lParam) != _data.uID) return false;
+    switch (LOWORD(lParam)) {
+    case NIN_SELECT:
+        if (_clickFunc) _clickFunc();
+        return true;
+    case WM_CONTEXTMENU: ShowMenu(GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam)); return true;
     }
     return false;
 }
@@ -133,16 +114,12 @@ bool TrayIcon::Create(HWND hwnd, HICON icon)
     _data.hWnd = hwnd;
     _data.hIcon = icon;
     _data.uFlags |= NIF_ICON;
-    if (!Notify(NIM_ADD)) {
-        _data.hWnd = NULL;
-        return false;
-    }
-    if (!Notify(NIM_SETVERSION)) {
+    if (Notify(NIM_ADD)) {
+        if (Notify(NIM_SETVERSION)) return true;
         Notify(NIM_DELETE);
-        _data.hWnd = NULL;
-        return false;
     }
-    return true;
+    _data.hWnd = nullptr;
+    return false;
 }
 
 bool TrayIcon::Notify(DWORD message)

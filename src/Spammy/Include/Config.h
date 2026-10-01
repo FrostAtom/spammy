@@ -2,10 +2,9 @@
 #include "Headers.h"
 #include "KeyboardLayout.h"
 #include "Profile.h"
-#define sConfig Config::GetInstance()
+#define sConfig Config::Instance()
 
 inline constexpr const char* CONFIG_FILE = "Spammy.json";
-inline constexpr DWORD CONFIG_SAVE_DELAY_MS = 10000;
 
 enum UiSize {
     UiSize_Small,
@@ -39,7 +38,7 @@ struct Config {
     ProfileList_t profiles;
     std::shared_ptr<Profile> editingProfile;
 
-    static Config& GetInstance();
+    static Config& Instance();
 
     bool Load();
     void Save();
@@ -53,7 +52,6 @@ struct Config {
     void CreateProfile(const char* name);
     void SetEditingProfile(const char* name);
     void DeleteProfile(const char* name);
-    bool IsProfileBinded(const char* name, const char* app) const;
     void BindProfile(const char* name, const char* app);
     void UnbindProfile(const char* name, const char* app);
 

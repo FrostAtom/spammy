@@ -1,9 +1,7 @@
 #pragma once
 #include "Headers.h"
-#ifndef WM_TRAYCMD
-#define WM_TRAYCMD (WM_APP + 0x10)
-#endif
 
+// popup menu built from scratch every time the tray icon is right-clicked
 class TrayIconMenu {
     friend class TrayIcon;
 
@@ -12,13 +10,14 @@ public:
     static constexpr size_t MaxItems = 16;
 
 private:
-    HWND _hwnd = NULL;
-    HMENU _menu = NULL;
+    HWND _hwnd;
+    HMENU _menu;
     // menu item id == index + 1, returned by TrackPopupMenuEx
     boost::container::static_vector<Callback_t, MaxItems> _items;
 
 public:
-    TrayIconMenu() = default;
+    TrayIconMenu(const TrayIconMenu&) = delete;
+    TrayIconMenu& operator=(const TrayIconMenu&) = delete;
     ~TrayIconMenu();
 
     void Button(const wchar_t* text, Callback_t&& cb);
@@ -26,11 +25,9 @@ public:
     void Disabled(const wchar_t* text);
 
 private:
+    explicit TrayIconMenu(HWND hwnd);
     void Append(UINT flags, const wchar_t* text, Callback_t&& cb = {});
-    void Fire(size_t index);
-    bool Create(HWND hwnd);
     void Track(int x, int y);
-    void Cleanup();
 };
 
 class Window;
@@ -42,11 +39,10 @@ public:
     using ClickCallback_t = std::function<void()>;
 
 private:
-    static UINT s_idCounter;
+    inline static UINT s_idCounter = 0;
     NOTIFYICONDATAW _data;
     ClickCallback_t _clickFunc;
     MenuCallback_t _menuFunc;
-    TrayIconMenu _menu;
 
 public:
     TrayIcon();
@@ -55,14 +51,14 @@ public:
 
     void SetOnClick(ClickCallback_t&& func);
     void SetMenu(MenuCallback_t&& func);
-    void ShowMenu(int x, int y);
 
 private:
-    bool IsCreated() const { return _data.hWnd != NULL; }
-    void UpdateIcon(HICON icon);
-    bool HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
+    bool IsCreated() const { return _data.hWnd != nullptr; }
     bool Create(HWND hwnd, HICON icon);
     void Cleanup();
-    bool Notify(DWORD message);
     void Reset();
+    bool Notify(DWORD message);
+    void UpdateIcon(HICON icon);
+    bool HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
+    void ShowMenu(int x, int y);
 };

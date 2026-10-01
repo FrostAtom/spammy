@@ -32,7 +32,7 @@ INPUT MakeInput(unsigned short vkCode, bool down)
     in.ki.wVk = vkCode;
     in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
     // games read scancodes; arrows/Ins/Del/RCtrl/... are extended (0xE0xx) and become numpad keys without the flag
-    if (UINT scCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX)) {
+    if (const UINT scCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX)) {
         in.ki.wScan = (WORD)(scCode & 0xFF);
         in.ki.dwFlags |= KEYEVENTF_SCANCODE;
         if (scCode & 0xE000) in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
@@ -57,14 +57,15 @@ Keyboard& Keyboard::Instance()
 bool Keyboard::Attach(bool withMouse)
 {
     if (_thread.joinable()) {
-        if (_withMouse == withMouse) return _hhook != NULL;
+        if (_withMouse == withMouse) return _keyboardHook != nullptr;
         Detach();
     }
     _withMouse = withMouse;
     std::promise<bool> ready;
-    std::future<bool> result = ready.get_future();
-    _thread = std::jthread([this, &ready](std::stop_token stop) { ThreadProc(stop, ready); });
-    return result.get();
+    std::future<bool> installed = ready.get_future();
+    _thread = std::jthread(
+        [this, ready = std::move(ready)](std::stop_token stop) mutable { ThreadProc(stop, std::move(ready)); });
+    return installed.get();
 }
 
 void Keyboard::Detach()
@@ -77,62 +78,60 @@ void Keyboard::Detach()
 
 void Keyboard::ResetState()
 {
-    for (auto& s : _state)
-        s = 0;
-    for (auto& s : _swallowed)
-        s = false;
+    for (auto& pressed : _pressed)
+        pressed = false;
+    _swallowed.fill(false);
 }
 
 void Keyboard::SyncState()
 {
-    const DWORD now = GetTickCount();
-    for (unsigned short vkCode = 1; vkCode < _state.size(); ++vkCode) {
+    for (unsigned short vkCode = 1; vkCode < _pressed.size(); ++vkCode) {
         // LL hooks only ever deliver left/right modifier codes, so a generic VK_SHIFT/VK_CONTROL/VK_MENU
         // captured here (e.g. Alt still held during Alt+Tab) would never be released and stick forever
         const bool generic = vkCode == VK_SHIFT || vkCode == VK_CONTROL || vkCode == VK_MENU;
-        _state[vkCode] = !generic && (GetAsyncKeyState(vkCode) & 0x8000) ? now : 0;
+        _pressed[vkCode] = !generic && (GetAsyncKeyState(vkCode) & 0x8000);
     }
 }
 
-void Keyboard::ThreadProc(std::stop_token stop, std::promise<bool>& ready)
+void Keyboard::ThreadProc(std::stop_token stop, std::promise<bool> ready)
 {
     const DWORD threadId = GetCurrentThreadId();
     // the RIT blocks on every hook call; make sure we're never starved by rendering or the input worker
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     // force message-queue creation so Detach's WM_QUIT can never race ahead of it
     MSG msg;
-    PeekMessageW(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
+    PeekMessageW(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 
-    _hhook = SetWindowsHookExW(WH_KEYBOARD_LL, &LowLevelKeyboardProc, NULL, 0);
-    if (_hhook) {
-        if (_withMouse) _mouseHook = SetWindowsHookExW(WH_MOUSE_LL, &LowLevelMouseProc, NULL, 0);
-        SyncState();
+    _keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, &LowLevelKeyboardProc, nullptr, 0);
+    if (!_keyboardHook) {
+        ready.set_value(false);
+        return;
     }
-    ready.set_value(_hhook != NULL);
-    if (!_hhook) return;
+    if (_withMouse) _mouseHook = SetWindowsHookExW(WH_MOUSE_LL, &LowLevelMouseProc, nullptr, 0);
+    SyncState();
+    ready.set_value(true);
 
     // wakes the blocking GetMessage the instant Detach() requests a stop
     std::stop_callback onStop(stop, [threadId]() { PostThreadMessageW(threadId, WM_QUIT, 0, 0); });
-
-    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 
     if (_mouseHook) {
         UnhookWindowsHookEx(_mouseHook);
-        _mouseHook = NULL;
+        _mouseHook = nullptr;
     }
-    UnhookWindowsHookEx(_hhook);
-    _hhook = NULL;
+    UnhookWindowsHookEx(_keyboardHook);
+    _keyboardHook = nullptr;
 }
 
 unsigned Keyboard::TestModifiers() const noexcept
 {
     unsigned result = KeyMod_None;
-    if (_state[VK_LSHIFT] || _state[VK_RSHIFT]) result |= KeyMod_Shift;
-    if (_state[VK_LMENU] || _state[VK_RMENU]) result |= KeyMod_Alt;
-    if (_state[VK_LCONTROL] || _state[VK_RCONTROL]) result |= KeyMod_Ctrl;
+    if (_pressed[VK_LSHIFT] || _pressed[VK_RSHIFT]) result |= KeyMod_Shift;
+    if (_pressed[VK_LMENU] || _pressed[VK_RMENU]) result |= KeyMod_Alt;
+    if (_pressed[VK_LCONTROL] || _pressed[VK_RCONTROL]) result |= KeyMod_Ctrl;
     return result;
 }
 
@@ -189,10 +188,12 @@ LRESULT CALLBACK Keyboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM
         const KBDLLHOOKSTRUCT* data = (const KBDLLHOOKSTRUCT*)lParam;
         const bool down = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
         const bool up = wParam == WM_KEYUP || wParam == WM_SYSKEYUP;
-        if ((down || up) && !IsEmulated(data->dwExtraInfo) && self.HandleKey((unsigned short)data->vkCode, down))
+        // some OEM/Fn keys report the reserved VK 0xFF, which has no slot in the per-key tables
+        if ((down || up) && data->vkCode < kKeyboardKeysCount && !IsEmulated(data->dwExtraInfo) &&
+            self.HandleKey((unsigned short)data->vkCode, down))
             return 1;
     }
-    return CallNextHookEx(self._hhook, nCode, wParam, lParam);
+    return CallNextHookEx(self._keyboardHook, nCode, wParam, lParam);
 }
 
 LRESULT CALLBACK Keyboard::LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
@@ -219,22 +220,14 @@ LRESULT CALLBACK Keyboard::LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lP
 
 bool Keyboard::HandleKey(unsigned short vkCode, bool down)
 {
-    const DWORD newState = down ? GetTickCount() : 0;
-    if (IsModifier(vkCode)) {
-        _state[vkCode] = newState;
-        return false;
-    }
-    // auto-repeat: a down while already down, or (after SyncState) an up we never saw the down for
-    const bool repeat = (_state[vkCode] != 0) == down;
-    if (!repeat) _state[vkCode] = newState;
+    // auto-repeat: a down while already down, or an up for a key we never saw go down
+    const bool repeat = _pressed[vkCode].exchange(down) == down;
+    if (IsModifier(vkCode)) return false;
     const Callback_t& callback = down ? _onPress : _onRelease;
-    bool swallow = callback && callback(vkCode, repeat);
+    const bool swallow = callback && callback(vkCode, repeat);
     // only swallow what pairs with a down we swallowed: if win32k saw the down (key held before the hook
     // went up, SyncState seeded it), blocking its up leaves the button stuck system-wide — every click
     // anywhere is then routed to the "mouse owner" window until that very button reaches win32k again
-    if (down && !repeat)
-        _swallowed[vkCode] = swallow;
-    else
-        swallow = swallow && _swallowed[vkCode];
-    return swallow;
+    if (down && !repeat) return _swallowed[vkCode] = swallow;
+    return swallow && _swallowed[vkCode];
 }

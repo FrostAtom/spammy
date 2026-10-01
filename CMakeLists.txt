@@ -5,9 +5,6 @@ cmake_policy(SET CMP0091 NEW)
 set(CMAKE_DISABLE_SOURCE_CHANGES ON)
 set(CMAKE_DISABLE_IN_SOURCE_BUILD OFF)
 set(CMAKE_SUPPRESS_REGENERATION ON)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE}/)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE}/)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE}/)
 # static CRT (/MT, /MTd) via CMP0091 abstraction — keeps the exe standalone.
 # Setting it through the manual flags below is overridden by CMake's default /MD, so it must go here,
 # before project() — the runtime library is picked during compiler/language init.
@@ -30,6 +27,15 @@ endif()
 
 project(Spammy LANGUAGES C CXX)
 
+# output dirs; clang builds get their own so they don't overwrite the MSVC binaries
+set(OUTPUT_DIR ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE})
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	string(APPEND OUTPUT_DIR "-clang")
+endif()
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIR}/)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_DIR}/)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_DIR}/)
+
 # x86-only: the window-proc userdata and other Win32 code target a 32-bit process
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
 	message(FATAL_ERROR "Only the x86 (32-bit) build is supported. Configure from an x86 developer environment (vcvarsall.bat x86 / 'x86 Native Tools Command Prompt') or use the CMake presets.")
@@ -42,9 +48,13 @@ set(CMAKE_CXX23_EXTENSION_COMPILE_OPTION "-std:c++latest")
 set(COMMON_COMPILE_FLAGS "/W3 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS")
 # /Gy + /Gw: split functions/data into COMDATs so the linker can strip and fold them
 # /GL + /LTCG: whole-program optimization; /OPT:REF drops unused code, /OPT:ICF folds identical COMDATs
+# clang: -flto=thin emits LLVM bitcode objects, so linking needs lld-link and archiving needs llvm-lib (see the clang presets)
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-	set(CMAKE_CXX_FLAGS_RELEASE "${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy -flto /DNDEBUG")
-	set(CMAKE_C_FLAGS_RELEASE	"${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy -flto /DNDEBUG")
+	if(NOT CMAKE_LINKER MATCHES "lld-link")
+		message(FATAL_ERROR "Clang build needs lld-link for LTO: use the clang-* presets or pass -DCMAKE_LINKER=lld-link -DCMAKE_AR=llvm-lib")
+	endif()
+	set(CMAKE_CXX_FLAGS_RELEASE "${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy -flto=thin /DNDEBUG")
+	set(CMAKE_C_FLAGS_RELEASE	"${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy -flto=thin /DNDEBUG")
 	set(CMAKE_CXX_FLAGS_DEBUG	"${COMMON_COMPILE_FLAGS} /Od /Zi /DDEBUG /D_DEBUG")
 	set(CMAKE_C_FLAGS_DEBUG		"${COMMON_COMPILE_FLAGS} /Od /Zi /DDEBUG /D_DEBUG")
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/OPT:REF /OPT:ICF /INCREMENTAL:NO")

@@ -20,17 +20,37 @@
                 "strategy": "external"
             },
             "cacheVariables": {
-                "CMAKE_CXX_COMPILER": "cl",
-                "CMAKE_C_COMPILER": "cl",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "VCPKG_TARGET_TRIPLET": "x86-windows-static"
+            }
+        },
+        {
+            "name": "msvc",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "cl",
+                "CMAKE_C_COMPILER": "cl"
+            }
+        },
+        {
+            "name": "clang",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "clang-cl",
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER_TARGET": "i686-pc-windows-msvc",
+                "CMAKE_C_COMPILER_TARGET": "i686-pc-windows-msvc",
+                "CMAKE_LINKER": "lld-link",
+                "CMAKE_AR": "llvm-lib"
             }
         },
         {
             "name": "debug",
             "displayName": "Debug",
             "description": "Unoptimized build with debug info (/Od /Zi, /MTd runtime)",
-            "inherits": "base",
+            "inherits": "msvc",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
@@ -39,7 +59,25 @@
             "name": "release",
             "displayName": "Release",
             "description": "Compact, fully optimized standalone build (/O2 /GL /LTCG, dead-code strip + COMDAT folding, static /MT runtime)",
-            "inherits": "base",
+            "inherits": "msvc",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "clang-debug",
+            "displayName": "Clang Debug",
+            "description": "clang-cl + lld-link, unoptimized build with debug info (/Od /Zi, /MTd runtime)",
+            "inherits": "clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "clang-release",
+            "displayName": "Clang Release",
+            "description": "clang-cl + lld-link, optimized standalone build (/O2 + ThinLTO, dead-code strip + COMDAT folding, static /MT runtime)",
+            "inherits": "clang",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
@@ -54,6 +92,16 @@
         {
             "name": "release",
             "configurePreset": "release",
+            "configuration": "Release"
+        },
+        {
+            "name": "clang-debug",
+            "configurePreset": "clang-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "clang-release",
+            "configurePreset": "clang-release",
             "configuration": "Release"
         }
     ]

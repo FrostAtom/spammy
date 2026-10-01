@@ -3,10 +3,13 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 
+#include <boost/container/static_vector.hpp>
+
 namespace ImGui {
 void Tip(const char* fmt, ...);
 
-ImVec4 FlashColor(float r, float g, float b, float periodSec = 8.f, float minAlpha = 0.f, float maxAlpha = 1.f);
+// col with its alpha pulsing between minAlpha and 1
+ImU32 UiFlash(ImU32 col, float periodSec, float minAlpha);
 ImU32 UiFlashDanger();
 ImU32 UiFlashWarn();
 
@@ -20,7 +23,6 @@ inline constexpr ImU32 Text = IM_COL32(0xE8, 0xED, 0xF5, 0xFF);
 inline constexpr ImU32 Sub = IM_COL32(0x8A, 0x94, 0xA6, 0xFF);
 inline constexpr ImU32 Mute = IM_COL32(0x52, 0x5D, 0x6E, 0xFF);
 inline constexpr ImU32 Service = IM_COL32(0x6B, 0x76, 0x88, 0xFF);
-inline constexpr ImU32 Locked = IM_COL32(0x3A, 0x44, 0x54, 0xFF);
 inline constexpr ImU32 Spam = IM_COL32(0xFF, 0x6B, 0x1A, 0xFF);
 inline constexpr ImU32 SpamFill = IM_COL32(0x2A, 0x1D, 0x17, 0xFF);
 inline constexpr ImU32 SpamText = IM_COL32(0xFF, 0x8B, 0x47, 0xFF);
@@ -69,18 +71,16 @@ struct UiKeyDesc {
     const char* label;
     UiKeyStyle style;
     UiKeyStyle preview;
-    ImU32 tint;
     bool inherited;
     bool pressed;
     bool locked;
-    ImU32 dots[3];
-    int dotCount;
+    boost::container::static_vector<ImU32, 3> dots; // a dot per key mode bound on some modifier layer
 };
 
 void LoadUiFonts();
 void LoadUiStyle();
 
-float UiAnim(ImGuiID id, float target, float speed = 14.f, float initial = FLT_MAX);
+float UiAnim(ImGuiID id, float target, float speed, float initial = FLT_MAX);
 ImU32 UiMixColor(ImU32 a, ImU32 b, float t);
 ImU32 UiHsvColor(float hue, float sat, float val);
 constexpr ImU32 UiWithAlpha(ImU32 col, float alpha)
@@ -99,7 +99,7 @@ void AddGlow(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col, fl
 void AddLogoMark(ImDrawList* dl, const ImVec2& pos, float size);
 void AddAccentHairline(ImDrawList* dl, const ImVec2& pos, float width, float height);
 void AddPanel(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float rounding);
-void AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col, float flip = 0.f);
+void AddChevronDown(ImDrawList* dl, const ImVec2& center, ImU32 col, float flip);
 void AddKeycap(ImDrawList* dl, const ImVec2& min, const ImVec2& max, const char* text, ImU32 textCol);
 
 bool UiBadge(const char* id, const ImVec2& pos, const char* text, ImU32 accent);

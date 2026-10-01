@@ -1,7 +1,5 @@
 #include "Updater.h"
 #include "Utils.h"
-#include <chrono>
-#include <optional>
 
 static constexpr const wchar_t* UPDATER_API_HOST = L"api.github.com";
 static constexpr const wchar_t* UPDATER_API_PATH = L"/repos/FrostAtom/spammy/releases/latest";
@@ -19,8 +17,8 @@ Updater& Updater::Instance()
 
 static std::optional<std::chrono::sys_days> MakeDate(int year, int month, int day)
 {
-    std::chrono::year_month_day date{std::chrono::year(year), std::chrono::month((unsigned)month),
-                                     std::chrono::day((unsigned)day)};
+    const std::chrono::year_month_day date{std::chrono::year(year), std::chrono::month((unsigned)month),
+                                           std::chrono::day((unsigned)day)};
     if (!date.ok()) return std::nullopt;
     return std::chrono::sys_days(date);
 }
@@ -44,11 +42,11 @@ static std::string HttpGet(const wchar_t* host, const wchar_t* path)
     WinHttpSetTimeouts(session, 5000, 5000, 5000, 10000);
 
     HINTERNET connect = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", path, NULL, WINHTTP_NO_REFERER,
+    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
                                                      WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
-                                : NULL;
+                                : nullptr;
     if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-        WinHttpReceiveResponse(request, NULL)) {
+        WinHttpReceiveResponse(request, nullptr)) {
         DWORD status = 0;
         DWORD statusSize = sizeof(status);
         WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
@@ -56,7 +54,7 @@ static std::string HttpGet(const wchar_t* host, const wchar_t* path)
         if (status == 200) {
             DWORD available = 0;
             while (WinHttpQueryDataAvailable(request, &available) && available) {
-                size_t offset = result.size();
+                const size_t offset = result.size();
                 result.resize(offset + available);
                 DWORD read = 0;
                 if (!WinHttpReadData(request, result.data() + offset, available, &read)) {

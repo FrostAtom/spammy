@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
+#include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -17,9 +20,6 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-
-#define _USE_MATH_DEFINES
-#include <cmath>
 
 #define NOMINMAX
 #include <Windows.h>

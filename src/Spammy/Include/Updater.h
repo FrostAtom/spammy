@@ -12,7 +12,6 @@ class Updater {
     Updater() = default;
 
 public:
-    ~Updater() = default;
     static Updater& Instance();
     void CheckAsync();
     bool IsUpdateAvailable() const { return _updateAvailable; }

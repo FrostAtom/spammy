@@ -2,11 +2,23 @@
 #include "Headers.h"
 #include "Utils.h"
 #include "Win32/Keyboard.h"
-#define GET_KEY_MODIFIER(bundle) ((bundle >> 16) & 0xFFFF)
-#define GET_KEY_VKCODE(bundle) (bundle & 0xFFFF)
-#define MAKE_KEY_BUNDLE(vkCode, mods) (vkCode | (mods << 16))
-#define PROFILE_SPEED_MIN 10
-#define PROFILE_SPEED_MAX 200
+
+inline constexpr int kProfileSpeedMin = 10;
+inline constexpr int kProfileSpeedMax = 200;
+
+// a key bundle packs a VK code into the low word and the KeyMod flags required with it into the high word
+constexpr unsigned MakeKeyBundle(unsigned vkCode, unsigned mods)
+{
+    return vkCode | (mods << 16);
+}
+constexpr unsigned KeyBundleVk(unsigned bundle)
+{
+    return bundle & 0xFFFF;
+}
+constexpr unsigned KeyBundleMods(unsigned bundle)
+{
+    return (bundle >> 16) & 0xFFFF;
+}
 
 enum Action {
     Action_None,
@@ -28,7 +40,7 @@ struct Profile {
     AppList_t apps;
     std::array<KeyModList_t, kKeyboardKeysCount> keys = {};
     unsigned speed = 20;
-    unsigned vkPause = 0;
+    unsigned vkPause = 0; // key bundle, 0 = unset
     bool disableAltF4 = false;
     bool disableWin = false;
 
@@ -37,12 +49,10 @@ struct Profile {
     // true if any mouse button is bound (or is the pause key) — decides whether the mouse hook is installed
     bool UsesMouse() const
     {
-        if (Keyboard::IsMouseButton(GET_KEY_VKCODE(vkPause))) return true;
-        for (unsigned short vk = VK_LBUTTON; vk <= VK_XBUTTON2; vk++) {
-            if (!Keyboard::IsMouseButton(vk)) continue;
-            if (std::ranges::any_of(keys[vk], [](const KeyConfig& cfg) { return cfg.action != Action_None; }))
-                return true;
-        }
+        if (Keyboard::IsMouseButton(KeyBundleVk(vkPause))) return true;
+        auto isBound = [](const KeyConfig& cfg) { return cfg.action != Action_None; };
+        for (unsigned short vk = VK_LBUTTON; vk <= VK_XBUTTON2; vk++)
+            if (Keyboard::IsMouseButton(vk) && std::ranges::any_of(keys[vk], isBound)) return true;
         return false;
     }
 };
@@ -61,8 +71,8 @@ inline void to_json(nlohmann::json& json, const Profile& value)
     nlohmann::json keys = nlohmann::json::array();
     for (unsigned k = 0; k < kKeyboardKeysCount; k++) {
         for (unsigned m = 0; m < kKeyboardKeyModCount; m++) {
-            if (Action action = value.keys[k][m].action; action != Action_None)
-                keys.push_back({{"key", (unsigned)MAKE_KEY_BUNDLE(k, m)}, {"action", (unsigned)action}});
+            if (const Action action = value.keys[k][m].action; action != Action_None)
+                keys.push_back({{"key", MakeKeyBundle(k, m)}, {"action", (unsigned)action}});
         }
     }
     json["keys"] = std::move(keys);
@@ -72,8 +82,7 @@ inline void from_json(const nlohmann::json& json, Profile& value)
 {
     json.at("name").get_to(value.name);
     json.at("apps").get_to(value.apps);
-    value.speed =
-        std::clamp(json.at("speed").get<unsigned>(), (unsigned)PROFILE_SPEED_MIN, (unsigned)PROFILE_SPEED_MAX);
+    value.speed = std::clamp(json.at("speed").get<unsigned>(), (unsigned)kProfileSpeedMin, (unsigned)kProfileSpeedMax);
     json.at("vkPause").get_to(value.vkPause);
     json.at("disableAltF4").get_to(value.disableAltF4);
     json.at("disableWin").get_to(value.disableWin);
@@ -84,9 +93,9 @@ inline void from_json(const nlohmann::json& json, Profile& value)
         const nlohmann::json& key = item.at("key");
         const nlohmann::json& action = item.at("action");
         if (!key.is_number_unsigned() || !action.is_number_unsigned()) continue;
-        unsigned bundle = key.get<unsigned>();
-        unsigned vkCode = GET_KEY_VKCODE(bundle);
-        unsigned mods = GET_KEY_MODIFIER(bundle);
+        const unsigned bundle = key.get<unsigned>();
+        const unsigned vkCode = KeyBundleVk(bundle);
+        const unsigned mods = KeyBundleMods(bundle);
         if (vkCode < kKeyboardKeysCount && mods < kKeyboardKeyModCount)
             value.keys[vkCode][mods].action = (Action)action.get<unsigned>();
     }

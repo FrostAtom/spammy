@@ -17,14 +17,51 @@ constexpr ImVec2 kPanelMax(1260.f, 660.f);
 constexpr float kKeyGap = 7.f;
 constexpr DWORD kRateWindowMs = 1000;
 
-bool MatchesFilter(const std::string& name, const char* filter)
+// right side of the mouse body down to its tail, then back up the left side, as cubic bezier (c1, c2, end) triples
+constexpr ImVec2 kMouseOutline[][3] = {
+    {{151.f, 86.f}, {133.f, 119.f}, {133.f, 151.f}}, {{133.f, 178.f}, {151.f, 189.f}, {150.f, 224.f}},
+    {{149.f, 256.f}, {123.f, 270.f}, {75.f, 270.f}}, {{27.f, 270.f}, {1.f, 256.f}, {0.f, 224.f}},
+    {{-1.f, 189.f}, {17.f, 178.f}, {17.f, 151.f}},   {{17.f, 119.f}, {-1.f, 86.f}, {0.f, 26.f}},
+};
+
+constexpr struct {
+    const char* name;
+    unsigned mod;
+} kModLayers[] = {{"SHIFT", KeyMod_Shift}, {"CTRL", KeyMod_Ctrl}, {"ALT", KeyMod_Alt}};
+
+// laid out right to left; the last one (NOTHING) only exists on modifier layers
+constexpr Action kBrushes[] = {Action_Speedy, Action_Spammy, Action_Disabled};
+
+struct PressBadge {
+    ImVec2 pos;
+    unsigned rate;
+    DWORD age;
+};
+using PressBadges = boost::container::small_vector<PressBadge, 32>;
+
+// assigns a persisted setting, flagging the config for saving only on an actual change
+template <class T>
+bool SetSetting(T& field, std::type_identity_t<T> value)
 {
-    if (!filter[0]) return true;
-    auto it = std::search(name.begin(), name.end(), filter, filter + strlen(filter),
-                          [](char a, char b) { return tolower((unsigned char)a) == tolower((unsigned char)b); });
-    return it != name.end();
+    if (field == value) return false;
+    field = value;
+    sConfig.MarkDirty();
+    return true;
 }
 
+void ToggleSetting(auto& flag)
+{
+    flag = !flag;
+    sConfig.MarkDirty();
+}
+
+bool MatchesFilter(std::string_view name, std::string_view filter)
+{
+    auto equalNoCase = [](char a, char b) { return tolower((unsigned char)a) == tolower((unsigned char)b); };
+    return filter.empty() || !std::ranges::search(name, filter, equalNoCase).empty();
+}
+
+// comma-joined app names, cut short with "..." when wider than maxW
 std::string EllipsizedAppList(const Profile::AppList_t& apps, float maxW)
 {
     std::string text;
@@ -32,21 +69,64 @@ std::string EllipsizedAppList(const Profile::AppList_t& apps, float maxW)
         if (!text.empty()) text += ", ";
         text += app;
     }
-    auto width = [](const std::string& s) { return UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, s.c_str()).x; };
-    if (width(text) <= maxW) return text;
-    while (!text.empty() && width(text + "...") > maxW) {
-        text.pop_back();
-        while (!text.empty() && ((unsigned char)text.back() & 0xC0) == 0x80) // finish removing a multi-byte char
-            text.pop_back();
+    auto width = [&] { return UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, text.c_str()).x; };
+    if (width() <= maxW) return text;
+    text += "...";
+    while (text.size() > 3 && width() > maxW) {
+        size_t cut = text.size() - 4;
+        while (cut && ((unsigned char)text[cut] & 0xC0) == 0x80) // back to the lead byte of a multi-byte char
+            cut--;
+        text.erase(cut, text.size() - 3 - cut);
     }
-    return text + "...";
+    return text;
+}
+
+void DrawPressBadges(ImDrawList* dl, const PressBadges& badges)
+{
+    for (const PressBadge& badge : badges) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%u/s", badge.rate);
+        const float pop = badge.age < 120 ? 1.3f - .3f * (badge.age / 120.f) : 1.f;
+        const float alpha = badge.age > 700 ? 1.f - (badge.age - 700) / 300.f : 1.f;
+        const ImVec2 ts = UiFonts::Bold->CalcTextSizeA(24.f * pop, FLT_MAX, 0.f, buf);
+        const ImVec2 bmin(badge.pos.x - ts.x * .5f - 10.f, badge.pos.y - ts.y - 16.f);
+        const ImVec2 bmax(badge.pos.x + ts.x * .5f + 10.f, badge.pos.y - 6.f);
+        dl->AddRectFilled(bmin, bmax, UiWithAlpha(UiCol::KeyCap, alpha), 8.f);
+        dl->AddRect(bmin, bmax, UiWithAlpha(UiCol::Spam, alpha), 8.f, 0, 2.f);
+        dl->AddText(UiFonts::Bold, 24.f * pop, ImVec2(badge.pos.x - ts.x * .5f, bmin.y + 5.f),
+                    UiWithAlpha(UiCol::SpamText, alpha), buf);
+    }
+}
+
+// "- [slider] +" row editing the autofire interval
+void DrawSpeedEditor(const ImVec2& pos, Profile& profile)
+{
+    int speed = (int)profile.speed;
+    if (UiGhostButton("##ratedec", pos, 22.f, UiGlyph_Minus)) speed--;
+    PushFont(UiFonts::Mono, 12.f);
+    PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
+    SetCursorScreenPos(pos + ImVec2(26.f, 0.f));
+    SetNextItemWidth(88.f);
+    SliderInt("##rate", &speed, kProfileSpeedMin, kProfileSpeedMax, "%d ms");
+    PopStyleVar();
+    PopFont();
+    if (UiGhostButton("##rateinc", pos + ImVec2(118.f, 0.f), 22.f, UiGlyph_Plus)) speed++;
+    SetSetting(profile.speed, (unsigned)ImClamp(speed, kProfileSpeedMin, kProfileSpeedMax));
 }
 } // namespace
 
-MainWindow::MainWindow(const wchar_t* className, const wchar_t* wndName)
-    : Window(className, wndName), _appFilePath(GetModulePath())
-{
-}
+// everything a key needs while the keyboard panel is drawn, resolved once per frame
+struct MainWindow::KeyFrame {
+    Profile* profile;
+    unsigned mods;
+    UiKeyStyle brushPreview;
+    DWORD nowTicks;
+    bool wndFocused;
+    bool brushing;
+    bool releasedLeft;
+    bool erasing;
+    PressBadges badges;
+};
 
 MainWindow::~MainWindow()
 {
@@ -60,14 +140,14 @@ bool MainWindow::Initialize()
         return false;
     }
 
-    if (ErrorCode ec = Window::Initialize(); ec != ErrorCode_OK) {
+    if (const ErrorCode ec = Window::Initialize(); ec != ErrorCode_OK) {
         char msg[256];
         snprintf(msg, std::size(msg), "%s (0x%08lX)", FormatError(ec), (unsigned long)LastError());
-        MessageBoxA(NULL, msg, APP_NAME, MB_ICONERROR | MB_OK);
+        MessageBoxA(nullptr, msg, APP_NAME, MB_ICONERROR | MB_OK);
         return false;
     }
 
-    HICON icon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDI_ICON1));
+    HICON icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_ICON1));
     SetIcon(icon);
     _pausedIcon = CreateGrayscaleIcon(icon);
     EnableMoving();
@@ -88,7 +168,7 @@ bool MainWindow::Initialize()
 
 void MainWindow::SyncTrayIcon()
 {
-    SetTrayIconOverride(sApp.IsEnabled() ? NULL : _pausedIcon);
+    SetTrayIconOverride(sApp.IsEnabled() ? nullptr : _pausedIcon);
 }
 
 void MainWindow::RequestClose()
@@ -106,26 +186,30 @@ void MainWindow::RequestClose()
 
 bool MainWindow::HandleKeyPress(unsigned short vkCode, bool repeat, bool focused)
 {
-    if (!repeat && focused && vkCode < kKeyboardKeysCount) LogKeyPress(vkCode, GetTickCount());
-    return !Keyboard::IsMouseButton(vkCode) && _editPause;
+    if (!repeat && focused) _physicalPresses.Push({vkCode, GetTickCount()});
+    return !Keyboard::IsMouseButton(vkCode) && _capturingPauseKey;
 }
 
 bool MainWindow::HandleKeyRelease(unsigned short vkCode)
 {
-    if (Keyboard::IsMouseButton(vkCode) || !_editPause) return false;
-    if (auto profile = sConfig.editingProfile) {
-        profile->vkPause = MAKE_KEY_BUNDLE(vkCode, sKeyboard.TestModifiers());
-        sConfig.MarkDirty();
-    }
-    _editPause = false;
+    if (Keyboard::IsMouseButton(vkCode) || !_capturingPauseKey) return false;
+    _capturedPauseKey = MakeKeyBundle(vkCode, sKeyboard.TestModifiers());
+    _capturingPauseKey = false;
     return true;
+}
+
+void MainWindow::ApplyHookEvents()
+{
+    _physicalPresses.Drain([this](const PhysicalPress& press) { LogKeyPress(press.vkCode, press.ticks); });
+    if (const unsigned pauseKey = _capturedPauseKey.exchange(0))
+        if (auto profile = sConfig.editingProfile) SetSetting(profile->vkPause, pauseKey);
 }
 
 void MainWindow::LogKeyPress(unsigned short vkCode, DWORD ticks)
 {
     PressLog& log = _pressLog[vkCode];
     log[_pressHead[vkCode]++ % log.size()] = ticks;
-    _pressTick[vkCode] = ticks;
+    _lastPressTick[vkCode] = ticks;
 }
 
 unsigned MainWindow::PressRate(unsigned short vkCode, DWORD nowTicks) const
@@ -137,7 +221,7 @@ unsigned MainWindow::PressRate(unsigned short vkCode, DWORD nowTicks) const
 // autofire happens on the input worker, so the UI re-derives the simulated presses from the profile speed
 void MainWindow::TickSimulatedPresses(unsigned short vkCode, DWORD nowTicks, unsigned speed, bool firing)
 {
-    DWORD& tick = _spamTick[vkCode];
+    DWORD& tick = _simulatedTick[vkCode];
     if (!firing) {
         tick = nowTicks;
         return;
@@ -172,7 +256,8 @@ void MainWindow::OnTrayMenu(TrayIconMenu& menu)
 
 void MainWindow::Draw()
 {
-    auto profile = sConfig.editingProfile;
+    ApplyHookEvents();
+    auto profile = sConfig.editingProfile; // own a reference: the profiles popup can delete it mid-frame
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 o = GetWindowPos();
 
@@ -228,14 +313,10 @@ void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_p
                         EllipsizedAppList(profile->apps, 184.f).c_str());
         DrawAppsPopup(o, profile);
 
-        if (UiLockChip("##winkey", o + ImVec2(700.f, 66.f), ImVec2(110.f, 46.f), "WIN KEY", profile->disableWin)) {
-            profile->disableWin = !profile->disableWin;
-            sConfig.MarkDirty();
-        }
-        if (UiLockChip("##altf4", o + ImVec2(824.f, 66.f), ImVec2(120.f, 46.f), "ALT + F4", profile->disableAltF4)) {
-            profile->disableAltF4 = !profile->disableAltF4;
-            sConfig.MarkDirty();
-        }
+        if (UiLockChip("##winkey", o + ImVec2(700.f, 66.f), ImVec2(110.f, 46.f), "WIN KEY", profile->disableWin))
+            ToggleSetting(profile->disableWin);
+        if (UiLockChip("##altf4", o + ImVec2(824.f, 66.f), ImVec2(120.f, 46.f), "ALT + F4", profile->disableAltF4))
+            ToggleSetting(profile->disableAltF4);
         DrawPauseKeyChip(dl, o + ImVec2(958.f, 66.f), *profile);
     }
 
@@ -247,32 +328,34 @@ void MainWindow::DrawPauseKeyChip(ImDrawList* dl, const ImVec2& pos, Profile& pr
 {
     const ImVec2 size(150.f, 46.f);
     if (UiChipFrame("##pause", pos, size)) {
-        if (_editPause) {
-            _editPause = false;
+        if (_capturingPauseKey) {
+            _capturingPauseKey = false;
         } else {
             profile.vkPause = 0;
             sConfig.MarkDirty();
             sKeyboard.Attach(true);
-            _editPause = true;
+            _capturingPauseKey = true;
         }
     }
     UiChipLabel(pos + ImVec2(16.f, 7.f), "PAUSE KEY");
 
-    char keycap[32] = "NOT SET";
+    const bool capturing = _capturingPauseKey;
+    char keyName[32];
+    const char* keycap = "NOT SET";
     ImU32 keycapCol = UiFlashDanger();
-    if (_editPause) {
-        strcpy(keycap, "PRESS KEY");
-        keycapCol = GetColorU32(FlashColor(1.f, .55f, .28f, 1.5f, .4f, 1.f));
+    if (capturing) {
+        keycap = "PRESS KEY";
+        keycapCol = UiFlash(IM_COL32(0xFF, 0x8C, 0x47, 0xFF), 1.5f, .4f);
     } else if (profile.vkPause) {
-        const char* keyName = Keyboard::GetKeyName(GET_KEY_VKCODE(profile.vkPause));
-        if (!keyName[0]) keyName = "UNKNOWN";
-        const size_t len = std::min(strlen(keyName), sizeof(keycap) - 1);
-        std::transform(keyName, keyName + len, keycap, [](unsigned char c) { return (char)toupper(c); });
-        keycap[len] = '\0';
+        const char* name = Keyboard::GetKeyName(KeyBundleVk(profile.vkPause));
+        ImStrncpy(keyName, name[0] ? name : "UNKNOWN", sizeof(keyName));
+        for (char* c = keyName; *c; c++)
+            *c = (char)toupper((unsigned char)*c);
+        keycap = keyName;
         keycapCol = UiCol::Sub;
     }
     AddKeycap(dl, pos + ImVec2(16.f, 19.f), pos + ImVec2(94.f, 37.f), keycap, keycapCol);
-    if (_editPause) {
+    if (capturing) {
         const float p = 0.5f + 0.5f * sinf((float)GetTime() * 4.f);
         AddGlow(dl, pos, pos + size, UiCol::Spam, 10.f, 6, 0.08f + 0.14f * p);
     }
@@ -291,106 +374,28 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     const ImVec2 avail((mouseForm != MouseForm_Off ? mouseLeft - 24.f : panelMax.x - 16.f) - start.x,
                        panelMax.y - panelMin.y - 120.f);
 
-    std::span<const KeyboardKey> layout = GetKeyboardLayout(sConfig.form, sConfig.variant);
+    const std::span<const KeyboardKey> layout = GetKeyboardLayout(sConfig.form, sConfig.variant);
     ImVec2 grid(0.f, 0.f);
-    for (const KeyboardKey& item : layout)
-        grid = ImMax(grid, ImVec2(item.x + item.w, item.y + item.h));
+    for (const KeyboardKey& key : layout)
+        grid = ImMax(grid, ImVec2(key.x + key.w, key.y + key.h));
 
     const float keySize = ImFloor(ImMin((avail.x + kKeyGap) / grid.x, (avail.y + kKeyGap) / grid.y));
     const ImVec2 origin = start + (avail - (grid * keySize - ImVec2(kKeyGap, kKeyGap))) * .5f;
 
-    // mouse gesture state carried across frames: paint on drag / click, erase with right button
-    static struct {
-        UINT pressVk = 0;
-        bool pressInPanel = false;
-        bool rightInPanel = false;
-        bool brushMoved = false;
-        bool leftDismiss = false; // the click that closes a popup must not paint
-    } s_gesture;
-
-    const bool anyPopup = IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    const ImGuiWindow* hoveredWnd = GImGui->HoveredWindow;
-    const bool overPopup = anyPopup && hoveredWnd && (hoveredWnd->Flags & ImGuiWindowFlags_Popup);
-    const bool inPanel = !overPopup && IsMouseHoveringRect(panelMin, panelMax);
-    if (IsMouseClicked(ImGuiMouseButton_Left)) {
-        s_gesture.leftDismiss = anyPopup;
-        s_gesture.pressInPanel = inPanel;
-        s_gesture.pressVk = 0;
-        s_gesture.brushMoved = false;
-    }
-    if (IsMouseClicked(ImGuiMouseButton_Right)) s_gesture.rightInPanel = inPanel;
-    const bool brushing =
-        s_gesture.pressInPanel && !s_gesture.leftDismiss && IsMouseDragging(ImGuiMouseButton_Left, 4.f);
-    if (brushing) s_gesture.brushMoved = true;
-    const bool releasedLeft = IsMouseReleased(ImGuiMouseButton_Left);
-    const bool erasingRight = s_gesture.rightInPanel && IsMouseDown(ImGuiMouseButton_Right);
-
-    struct PressBadge {
-        ImVec2 pos;
-        unsigned rate;
-        DWORD age;
-    };
-    boost::container::small_vector<PressBadge, 32> badges;
-    const DWORD nowTicks = GetTickCount();
-    const bool wndFocused = GetForegroundWindow() == Native();
-
-    const unsigned mods = _editMods;
     const KeyMode* brushMode = FindKeyMode(_brushAction);
-    const UiKeyStyle brushPreview = brushMode ? brushMode->keyStyle : UiKeyStyle_None;
-
-    auto keyItem = [&](const char* id, const char* label, UINT vkCode, const ImVec2& pos, const ImVec2& size) {
-        IM_ASSERT(vkCode < kKeyboardKeysCount);
-        UiKeyDesc desc = {};
-        desc.label = label;
-        desc.locked = sKeyboard.IsModifier(vkCode) || vkCode == VK_LWIN || vkCode == VK_RWIN;
-        desc.pressed = sKeyboard.IsPressed(vkCode) != 0;
-        if (profile) {
-            desc.preview = brushPreview;
-            bool inherited = false;
-            const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods, &inherited));
-            desc.inherited = inherited;
-            if (mode) desc.style = mode->keyStyle;
-
-            if (mods == KeyMod_None) {
-                const auto& layers = profile->keys[vkCode];
-                for (const KeyMode& layerMode : KeyModes()) {
-                    const bool onSomeLayer = std::any_of(layers.begin() + 1, layers.end(), [&](const KeyConfig& c) {
-                        return c.action == layerMode.action;
-                    });
-                    if (onSomeLayer) desc.dots[desc.dotCount++] = layerMode.menuColor;
-                }
-            }
-            TickSimulatedPresses(vkCode, nowTicks, profile->speed, wndFocused && desc.pressed && mode && mode->onTick);
-        }
-
-        UiKey(id, pos, size, desc);
-        const ImVec2 keyMin = GetItemRectMin();
-        const ImVec2 keyMax = GetItemRectMax();
-
-        if (const unsigned rate = PressRate(vkCode, nowTicks); rate > 2)
-            badges.push_back({ImVec2((keyMin.x + keyMax.x) * .5f, keyMin.y), rate, nowTicks - _pressTick[vkCode]});
-
-        const bool hoverKey = IsMouseHoveringRect(keyMin, keyMax);
-        if (s_gesture.pressInPanel && hoverKey && IsMouseClicked(ImGuiMouseButton_Left)) s_gesture.pressVk = vkCode;
-
-        if (profile && !desc.locked && hoverKey) {
-            KeyConfig& config = profile->keys[vkCode][mods];
-            auto paint = [&](Action action) {
-                if (config.action == action) return;
-                config.action = action;
-                sConfig.MarkDirty();
-            };
-            const bool clickedHere =
-                releasedLeft && !s_gesture.leftDismiss && !s_gesture.brushMoved && s_gesture.pressVk == vkCode;
-            if (brushing || clickedHere) paint(_brushAction);
-            if (erasingRight) paint(Action_None);
-        }
+    KeyFrame frame = {
+        .profile = profile.get(),
+        .mods = _editMods,
+        .brushPreview = brushMode ? brushMode->keyStyle : UiKeyStyle_None,
+        .nowTicks = GetTickCount(),
+        .wndFocused = GetForegroundWindow() == Native(),
     };
+    UpdateBrushGesture(frame, panelMin, panelMax);
 
     for (size_t i = 0; i < layout.size(); i++) {
         const KeyboardKey& key = layout[i];
         PushID((int)i);
-        keyItem("##key", key.name, key.vkCode, origin + ImVec2(key.x, key.y) * keySize,
+        DrawKey(frame, "##key", key.name, key.vkCode, origin + ImVec2(key.x, key.y) * keySize,
                 ImVec2(key.w, key.h) * keySize - ImVec2(kKeyGap, kKeyGap));
         PopID();
     }
@@ -399,75 +404,132 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
         const ImVec2 bodySize(150.f, 270.f);
         const ImVec2 body(mouseLeft + (mouseW - bodySize.x) * .5f + 8.f,
                           panelMin.y + (panelMax.y - panelMin.y - bodySize.y) * .5f);
-        auto bp = [&](float x, float y) { return body + ImVec2(x, y); };
-        auto bodyPath = [&] {
-            dl->PathArcTo(bp(26.f, 26.f), 26.f, IM_PI, IM_PI * 1.5f);
-            dl->PathArcTo(bp(124.f, 26.f), 26.f, IM_PI * 1.5f, IM_PI * 2.f);
-            dl->PathBezierCubicCurveTo(bp(151.f, 86.f), bp(133.f, 119.f), bp(133.f, 151.f));
-            dl->PathBezierCubicCurveTo(bp(133.f, 178.f), bp(151.f, 189.f), bp(150.f, 224.f));
-            dl->PathBezierCubicCurveTo(bp(149.f, 256.f), bp(123.f, 270.f), bp(75.f, 270.f));
-            dl->PathBezierCubicCurveTo(bp(27.f, 270.f), bp(1.f, 256.f), bp(0.f, 224.f));
-            dl->PathBezierCubicCurveTo(bp(-1.f, 189.f), bp(17.f, 178.f), bp(17.f, 151.f));
-            dl->PathBezierCubicCurveTo(bp(17.f, 119.f), bp(-1.f, 86.f), bp(0.f, 26.f));
-        };
-        bodyPath();
-        dl->PathFillConcave(UiCol::PanelTop);
-        bodyPath();
-        dl->PathStroke(UiCol::Stroke, ImDrawFlags_Closed, 1.5f);
+        DrawMouse(dl, frame, body, mouseForm == MouseForm_5);
+    }
 
-        // RGB led strip along the lower body, drawn as a wide dim line under a thin bright one
-        const float now = (float)GetTime();
-        const int stripSegs = 28;
-        ImVec2 stripPrev;
-        for (int i = 0; i <= stripSegs; i++) {
-            const float a = IM_PI * (.15f + .7f * (float)i / stripSegs);
-            const ImVec2 pt = bp(75.f + cosf(a) * 77.f, 200.f + sinf(a) * 62.f);
-            if (i) {
-                const ImU32 led = UiHsvColor((float)i / stripSegs * .6f - now * .1f, .9f, 1.f) & ~IM_COL32_A_MASK;
-                dl->AddLine(stripPrev, pt, led | IM_COL32(0, 0, 0, 70), 8.f);
-                dl->AddLine(stripPrev, pt, led | IM_COL32(0, 0, 0, 230), 3.f);
+    DrawPressBadges(dl, frame.badges);
+    DrawBrushBar(dl, panelMin, panelMax, brushMode ? brushMode->menuColor : UiCol::Spam, profile.get());
+}
+
+void MainWindow::UpdateBrushGesture(KeyFrame& frame, const ImVec2& panelMin, const ImVec2& panelMax)
+{
+    const bool anyPopup = IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    const ImGuiWindow* hoveredWnd = GImGui->HoveredWindow;
+    const bool overPopup = anyPopup && hoveredWnd && (hoveredWnd->Flags & ImGuiWindowFlags_Popup);
+    const bool inPanel = !overPopup && IsMouseHoveringRect(panelMin, panelMax);
+    if (IsMouseClicked(ImGuiMouseButton_Left)) {
+        _gesture.leftDismiss = anyPopup;
+        _gesture.pressInPanel = inPanel;
+        _gesture.pressVk = 0;
+        _gesture.moved = false;
+    }
+    if (IsMouseClicked(ImGuiMouseButton_Right)) _gesture.rightInPanel = inPanel;
+
+    frame.brushing = _gesture.pressInPanel && !_gesture.leftDismiss && IsMouseDragging(ImGuiMouseButton_Left, 4.f);
+    if (frame.brushing) _gesture.moved = true;
+    frame.releasedLeft = IsMouseReleased(ImGuiMouseButton_Left);
+    frame.erasing = _gesture.rightInPanel && IsMouseDown(ImGuiMouseButton_Right);
+}
+
+void MainWindow::DrawKey(KeyFrame& frame, const char* id, const char* label, UINT vkCode, const ImVec2& pos,
+                         const ImVec2& size)
+{
+    IM_ASSERT(vkCode < kKeyboardKeysCount);
+    Profile* profile = frame.profile;
+    UiKeyDesc desc = {};
+    desc.label = label;
+    desc.locked = sKeyboard.IsModifier(vkCode) || vkCode == VK_LWIN || vkCode == VK_RWIN;
+    desc.pressed = sKeyboard.IsPressed(vkCode);
+    if (profile) {
+        desc.preview = frame.brushPreview;
+        const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, frame.mods, &desc.inherited));
+        if (mode) desc.style = mode->keyStyle;
+
+        if (frame.mods == KeyMod_None) {
+            const auto modLayers = profile->keys[vkCode] | std::views::drop(1);
+            for (const KeyMode& layerMode : KeyModes()) {
+                if (std::ranges::contains(modLayers, layerMode.action, &KeyConfig::action))
+                    desc.dots.push_back(layerMode.menuColor);
             }
-            stripPrev = pt;
         }
-
-        dl->AddBezierQuadratic(bp(10.f, 104.f), bp(75.f, 113.f), bp(140.f, 104.f), UiCol::StrokeSoft, 1.5f);
-
-        keyItem("##mbL", "LMB", VK_LBUTTON, bp(8.f, 8.f), ImVec2(53.f, 92.f));
-        keyItem("##mbM", "M3", VK_MBUTTON, bp(63.f, 22.f), ImVec2(24.f, 64.f));
-        keyItem("##mbR", "RMB", VK_RBUTTON, bp(89.f, 8.f), ImVec2(53.f, 92.f));
-        if (mouseForm == MouseForm_5) {
-            keyItem("##mb5", "M5", VK_XBUTTON2, bp(6.f, 122.f), ImVec2(24.f, 38.f));
-            keyItem("##mb4", "M4", VK_XBUTTON1, bp(6.f, 164.f), ImVec2(24.f, 38.f));
-        }
+        TickSimulatedPresses(vkCode, frame.nowTicks, profile->speed,
+                             frame.wndFocused && desc.pressed && mode && mode->onTick);
     }
 
-    for (const PressBadge& badge : badges) {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%u/s", badge.rate);
-        const float pop = badge.age < 120 ? 1.3f - .3f * (badge.age / 120.f) : 1.f;
-        const float alpha = badge.age > 700 ? 1.f - (badge.age - 700) / 300.f : 1.f;
-        const ImVec2 ts = UiFonts::Bold->CalcTextSizeA(24.f * pop, FLT_MAX, 0.f, buf);
-        const ImVec2 bmin(badge.pos.x - ts.x * .5f - 10.f, badge.pos.y - ts.y - 16.f);
-        const ImVec2 bmax(badge.pos.x + ts.x * .5f + 10.f, badge.pos.y - 6.f);
-        dl->AddRectFilled(bmin, bmax, UiWithAlpha(UiCol::KeyCap, alpha), 8.f);
-        dl->AddRect(bmin, bmax, UiWithAlpha(UiCol::Spam, alpha), 8.f, 0, 2.f);
-        dl->AddText(UiFonts::Bold, 24.f * pop, ImVec2(badge.pos.x - ts.x * .5f, bmin.y + 5.f),
-                    UiWithAlpha(UiCol::SpamText, alpha), buf);
+    UiKey(id, pos, size, desc);
+    const ImVec2 keyMin = GetItemRectMin();
+    const ImVec2 keyMax = GetItemRectMax();
+
+    if (const unsigned rate = PressRate(vkCode, frame.nowTicks); rate > 2)
+        frame.badges.push_back(
+            {ImVec2((keyMin.x + keyMax.x) * .5f, keyMin.y), rate, frame.nowTicks - _lastPressTick[vkCode]});
+
+    const bool hovered = IsMouseHoveringRect(keyMin, keyMax);
+    if (_gesture.pressInPanel && hovered && IsMouseClicked(ImGuiMouseButton_Left)) _gesture.pressVk = vkCode;
+    if (!profile || desc.locked || !hovered) return;
+
+    Action& action = profile->keys[vkCode][frame.mods].action;
+    const bool clickedHere =
+        frame.releasedLeft && !_gesture.leftDismiss && !_gesture.moved && _gesture.pressVk == vkCode;
+    if (frame.brushing || clickedHere) SetSetting(action, _brushAction);
+    if (frame.erasing) SetSetting(action, Action_None);
+}
+
+void MainWindow::DrawMouse(ImDrawList* dl, KeyFrame& frame, const ImVec2& body, bool sideButtons)
+{
+    auto outlinePath = [&] {
+        dl->PathArcTo(body + ImVec2(26.f, 26.f), 26.f, IM_PI, IM_PI * 1.5f);
+        dl->PathArcTo(body + ImVec2(124.f, 26.f), 26.f, IM_PI * 1.5f, IM_PI * 2.f);
+        for (const auto& [c1, c2, end] : kMouseOutline)
+            dl->PathBezierCubicCurveTo(body + c1, body + c2, body + end);
+    };
+    outlinePath();
+    dl->PathFillConcave(UiCol::PanelTop);
+    outlinePath();
+    dl->PathStroke(UiCol::Stroke, ImDrawFlags_Closed, 1.5f);
+
+    // RGB led strip along the lower body, drawn as a wide dim line under a thin bright one
+    const float now = (float)GetTime();
+    const int stripSegs = 28;
+    ImVec2 stripPrev;
+    for (int i = 0; i <= stripSegs; i++) {
+        const float a = IM_PI * (.15f + .7f * (float)i / stripSegs);
+        const ImVec2 pt = body + ImVec2(75.f + cosf(a) * 77.f, 200.f + sinf(a) * 62.f);
+        if (i) {
+            const ImU32 led = UiHsvColor((float)i / stripSegs * .6f - now * .1f, .9f, 1.f) & ~IM_COL32_A_MASK;
+            dl->AddLine(stripPrev, pt, led | IM_COL32(0, 0, 0, 70), 8.f);
+            dl->AddLine(stripPrev, pt, led | IM_COL32(0, 0, 0, 230), 3.f);
+        }
+        stripPrev = pt;
     }
 
+    dl->AddBezierQuadratic(body + ImVec2(10.f, 104.f), body + ImVec2(75.f, 113.f), body + ImVec2(140.f, 104.f),
+                           UiCol::StrokeSoft, 1.5f);
+
+    DrawKey(frame, "##mbL", "LMB", VK_LBUTTON, body + ImVec2(8.f, 8.f), ImVec2(53.f, 92.f));
+    DrawKey(frame, "##mbM", "M3", VK_MBUTTON, body + ImVec2(63.f, 22.f), ImVec2(24.f, 64.f));
+    DrawKey(frame, "##mbR", "RMB", VK_RBUTTON, body + ImVec2(89.f, 8.f), ImVec2(53.f, 92.f));
+    if (sideButtons) {
+        DrawKey(frame, "##mb5", "M5", VK_XBUTTON2, body + ImVec2(6.f, 122.f), ImVec2(24.f, 38.f));
+        DrawKey(frame, "##mb4", "M4", VK_XBUTTON1, body + ImVec2(6.f, 164.f), ImVec2(24.f, 38.f));
+    }
+}
+
+void MainWindow::DrawBrushBar(ImDrawList* dl, const ImVec2& panelMin, const ImVec2& panelMax, ImU32 brushColor,
+                              Profile* profile)
+{
     const float titleY = panelMin.y + 10.f;
     const float descY = panelMin.y + 26.f;
     const float barY = panelMin.y + 42.f;
 
-    auto groupTitle = [&](float x, float w, const char* text) {
-        const ImVec2 size = CalcTrackedTextSize(UiFonts::Semi, 12.f, text, 1.5f);
-        AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x + (w - size.x) * .5f, titleY), UiCol::Text, text, 1.5f);
-    };
-    auto groupFade = [&](float x, float w, ImU32 accent) {
-        const ImU32 gradTop = UiWithAlpha(accent, 0.2f);
-        const ImU32 gradClear = UiWithAlpha(accent, 0.f);
-        dl->AddRectFilledMultiColor(ImVec2(x - 3.f, panelMin.y), ImVec2(x + w + 3.f, panelMin.y + 96.f), gradTop,
-                                    gradTop, gradClear, gradClear);
+    // accent fade behind a control group, topped by its centered title
+    auto groupHeader = [&](float x, float w, ImU32 accent, const char* title) {
+        const ImU32 fadeTop = UiWithAlpha(accent, 0.2f);
+        const ImU32 fadeClear = UiWithAlpha(accent, 0.f);
+        dl->AddRectFilledMultiColor(ImVec2(x - 3.f, panelMin.y), ImVec2(x + w + 3.f, panelMin.y + 96.f), fadeTop,
+                                    fadeTop, fadeClear, fadeClear);
+        const ImVec2 size = CalcTrackedTextSize(UiFonts::Semi, 12.f, title, 1.5f);
+        AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x + (w - size.x) * .5f, titleY), UiCol::Text, title, 1.5f);
     };
     auto blockDesc = [&](float x, float w, const char* desc) {
         const float descW = UiFonts::Mono->CalcTextSizeA(13.f, FLT_MAX, 0.f, desc).x;
@@ -476,19 +538,14 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
 
     const float allX = panelMin.x + 16.f;
     const float modsX = allX + 176.f;
-    groupFade(allX, 362.f, UiCol::Spam);
-    groupTitle(allX, 362.f, "GLOBAL / OVERRIDE LAYERS");
+    groupHeader(allX, 362.f, UiCol::Spam, "GLOBAL / OVERRIDE LAYERS");
     blockDesc(allX, 170.f, "paint the base layer");
     if (UiBrushChip("##layerall", ImVec2(allX, barY), ImVec2(170.f, 22.f), "GLOBAL", UiCol::Spam, _editMods == 0))
         _editMods = 0;
 
-    static constexpr struct {
-        const char* name;
-        unsigned mod;
-    } s_layers[] = {{"SHIFT", KeyMod_Shift}, {"CTRL", KeyMod_Ctrl}, {"ALT", KeyMod_Alt}};
     blockDesc(modsX, 186.f, "only when modifier held");
     float layerX = modsX;
-    for (const auto& layer : s_layers) {
+    for (const auto& layer : kModLayers) {
         PushID((int)layer.mod);
         if (UiBrushChip("##layer", ImVec2(layerX, barY), ImVec2(58.f, 22.f), layer.name, UiCol::Spam,
                         _editMods & layer.mod))
@@ -503,50 +560,28 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared
     dl->AddText(UiFonts::Mono, 12.f, ImVec2((panelMin.x + panelMax.x - hintW) * .5f, titleY), UiCol::Text, hint);
 
     const float colW = 170.f;
-    const int modeCount = _editMods ? 3 : 2;
-    const float modesW = modeCount * colW + (modeCount - 1) * 6.f;
-    groupFade(panelMax.x - 16.f - modesW, modesW, brushMode ? brushMode->menuColor : UiCol::Spam);
-    groupTitle(panelMax.x - 16.f - modesW, modesW, "BRUSH");
+    const float chipW = 140.f;
+    const int brushCount = _editMods ? 3 : 2;
+    const float brushesW = brushCount * colW + (brushCount - 1) * 6.f;
+    groupHeader(panelMax.x - 16.f - brushesW, brushesW, brushColor, "BRUSH");
 
-    float modeX = panelMax.x - 16.f;
-    auto brushChip = [&](Action act) {
-        const KeyMode* mode = FindKeyMode(act);
-        modeX -= colW;
-        const float colX = modeX;
-        const float chipW = 140.f;
+    float colX = panelMax.x - 16.f;
+    float spammyChipX = 0.f;
+    for (const Action action : kBrushes | std::views::take(brushCount)) {
+        const KeyMode* mode = FindKeyMode(action);
+        colX -= colW;
         const float chipX = colX + (colW - chipW) * .5f;
-        PushID((int)act);
+        PushID((int)action);
         if (UiBrushChip("##brush", ImVec2(chipX, barY), ImVec2(chipW, 22.f), mode->name, mode->menuColor,
-                        _brushAction == act))
-            _brushAction = act;
+                        _brushAction == action))
+            _brushAction = action;
         PopID();
         blockDesc(colX, colW, mode->desc);
-        modeX -= 6.f;
-        return chipX;
-    };
-    brushChip(Action_Speedy);
-    const float spammyX = brushChip(Action_Spammy);
-    if (_editMods) brushChip(Action_Disabled);
-
-    if (profile) {
-        const float rateY = barY + 26.f;
-        const int speed = (int)profile->speed;
-        int edited = speed;
-        if (UiGhostButton("##ratedec", ImVec2(spammyX, rateY), 22.f, UiGlyph_Minus)) edited--;
-        PushFont(UiFonts::Mono, 12.f);
-        PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
-        SetCursorScreenPos(ImVec2(spammyX + 26.f, rateY));
-        SetNextItemWidth(88.f);
-        SliderInt("##rate", &edited, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX, "%d ms");
-        PopStyleVar();
-        PopFont();
-        if (UiGhostButton("##rateinc", ImVec2(spammyX + 118.f, rateY), 22.f, UiGlyph_Plus)) edited++;
-        edited = ImClamp(edited, PROFILE_SPEED_MIN, PROFILE_SPEED_MAX);
-        if (edited != speed) {
-            profile->speed = (unsigned)edited;
-            sConfig.MarkDirty();
-        }
+        colX -= 6.f;
+        if (action == Action_Spammy) spammyChipX = chipX;
     }
+
+    if (profile) DrawSpeedEditor(ImVec2(spammyChipX, barY + 26.f), *profile);
 }
 
 void MainWindow::DrawProfilesPopup(const ImVec2& o)
@@ -568,7 +603,7 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
 
     ImDrawList* dl = GetWindowDrawList();
     const auto editing = sConfig.editingProfile;
-    const char* pendingDelete = NULL;
+    const char* pendingDelete = nullptr;
     for (const std::shared_ptr<Profile>& item : sConfig.profiles) {
         PushID(item.get());
         const ImVec2 p = GetCursorScreenPos();
@@ -590,8 +625,7 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
                 s_armedDelete = item->name;
         }
         if (armed)
-            dl->AddRect(p + ImVec2(208.f, 0.f), p + ImVec2(232.f, 24.f),
-                        GetColorU32(FlashColor(1.f, .3f, .37f, 1.5f, .5f, 1.f)), 6.f);
+            dl->AddRect(p + ImVec2(208.f, 0.f), p + ImVec2(232.f, 24.f), UiFlash(UiCol::Danger, 1.5f, .5f), 6.f);
         PopID();
     }
     if (!sConfig.profiles.empty()) Separator();
@@ -603,10 +637,7 @@ void MainWindow::DrawProfilesPopup(const ImVec2& o)
         }
     } else {
         SetNextItemWidth(-52.f);
-        if (s_focusName) {
-            SetKeyboardFocusHere();
-            s_focusName = false;
-        }
+        if (std::exchange(s_focusName, false)) SetKeyboardFocusHere();
         const bool enter = InputTextWithHint("##newname", "profile name", s_newName, sizeof(s_newName),
                                              ImGuiInputTextFlags_EnterReturnsTrue);
         const bool valid = strlen(s_newName) >= 3 && !sConfig.IsProfileExists(s_newName);
@@ -635,9 +666,9 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     if (IsWindowAppearing()) {
         s_search[0] = '\0';
         s_runningApps.clear();
-        EnumWindows([this](HWND hwnd) -> BOOL {
+        EnumWindows([](HWND hwnd) -> BOOL {
             const std::filesystem::path path = GetProcessPath(hwnd);
-            if (path.has_filename() && path != _appFilePath) s_runningApps.emplace(Utf8FileName(path));
+            if (path.has_filename() && path != GetModulePath()) s_runningApps.emplace(Utf8FileName(path));
             return TRUE;
         });
         SetKeyboardFocusHere();
@@ -651,7 +682,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     PushFont(UiFonts::Semi, 14.f);
     if (!profile->apps.empty()) {
         TextDisabled("BOUND");
-        const char* unbindApp = NULL;
+        const char* unbindApp = nullptr;
         for (const std::string& app : profile->apps) {
             if (!MatchesFilter(app, s_search)) continue;
             PushID(app.c_str());
@@ -666,7 +697,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
     }
 
     TextDisabled("RUNNING");
-    int shown = 0;
+    bool anyShown = false;
     for (const std::string& app : s_runningApps) {
         if (!MatchesFilter(app, s_search) || profile->apps.contains(app)) continue;
         const auto appProfile = sConfig.FindProfileByApp(app.c_str());
@@ -674,9 +705,9 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& 
         PushID(app.c_str());
         if (UiMenuRow(app.c_str(), 0, boundElsewhere, true)) sConfig.BindProfile(profile->name.c_str(), app.c_str());
         PopID();
-        shown++;
+        anyShown = true;
     }
-    if (!shown) TextDisabled(s_search[0] ? "no matches" : "nothing running");
+    if (!anyShown) TextDisabled(s_search[0] ? "no matches" : "nothing running");
     PopFont();
     EndChild();
 
@@ -696,21 +727,15 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
         s_uiSize = (int)sConfig.uiSize;
     }
 
-    auto toggleSetting = [](const char* id, const char* label, auto& value) {
-        if (!UiToggleRow(id, label, value)) return;
-        value = !value;
-        sConfig.MarkDirty();
-    };
     auto stepEnum = [](const char* id, const char* label, auto name, int count, auto& value) {
         int index = (int)value;
-        if (!UiStepperRow(id, label, name(value), count, index)) return;
-        value = (std::remove_reference_t<decltype(value)>)index;
-        sConfig.MarkDirty();
+        if (UiStepperRow(id, label, name(value), count, index))
+            SetSetting(value, (std::remove_reference_t<decltype(value)>)index);
     };
 
     if (UiToggleRow("##autostart", "AUTO START", s_autoStart) && sApp.EnableAutoStart(!s_autoStart))
         s_autoStart = !s_autoStart;
-    toggleSetting("##sounds", "ENABLE SOUNDS", sConfig.soundsEnabled);
+    if (UiToggleRow("##sounds", "ENABLE SOUNDS", sConfig.soundsEnabled)) ToggleSetting(sConfig.soundsEnabled);
     stepEnum("##close", "ON CLOSE", CloseActionName, CloseAction_Count, sConfig.closeAction);
 
     Separator();
@@ -721,11 +746,7 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     // rescaling the window mid-drag would fight the stepper, so apply on release
     bool released = false;
     UiStepperRow("##uisize", "UI SIZE", UiSizeName((UiSize)s_uiSize), UiSize_Count, s_uiSize, &released);
-    if (released && (UiSize)s_uiSize != sConfig.uiSize) {
-        sConfig.uiSize = (UiSize)s_uiSize;
-        sConfig.MarkDirty();
-        SetScaleFactor(UiSizeFactor(sConfig.uiSize));
-    }
+    if (released && SetSetting(sConfig.uiSize, (UiSize)s_uiSize)) SetScaleFactor(UiSizeFactor(sConfig.uiSize));
 
     Separator();
     if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
@@ -767,10 +788,7 @@ void MainWindow::DrawClosePopup(const ImVec2& o)
     if (clickedOutside || IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
 
     if (chosen != CloseAction_Ask) {
-        if (s_remember) {
-            sConfig.closeAction = chosen;
-            sConfig.MarkDirty();
-        }
+        if (s_remember) SetSetting(sConfig.closeAction, chosen);
         CloseCurrentPopup();
         if (chosen == CloseAction_Hide)
             Hide();

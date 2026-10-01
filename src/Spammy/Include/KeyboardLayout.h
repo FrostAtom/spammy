@@ -1,11 +1,10 @@
 #pragma once
-#include <Windows.h>
-#include <span>
+#include "Headers.h"
 
 struct KeyboardKey {
     const char* name;
     UINT vkCode;
-    float x, y, w, h;
+    float x, y, w = 1.f, h = 1.f;
 };
 
 enum KeyboardForm {

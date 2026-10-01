@@ -5,15 +5,12 @@ static constexpr std::array<const char*, Window::ErrorCode_COUNT> s_errorCodeNam
     "OK", "Invalid call", "Windows error", "Renderer error", "ImGui error",
 };
 
-static constexpr DWORD ImGuiWindowDisableScrollMask = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-static constexpr DWORD ImGuiWindowNoTitleBarMask = ImGuiWindowFlags_NoTitleBar;
-
 const char* Window::FormatError(ErrorCode code)
 {
     return s_errorCodeNames[code];
 }
 
-Window::Window(const wchar_t* className, const wchar_t* wndName) : _imWndFlags(ImGuiWindowDisableScrollMask)
+Window::Window(const wchar_t* className, const wchar_t* wndName)
 {
     wcsncpy_s(_className, className, std::size(_className));
     SetName(wndName ? wndName : className);
@@ -37,16 +34,16 @@ Window::~Window()
 Window::ErrorCode Window::Initialize()
 {
     if (_hwnd) return ErrorCode_InvalidCall;
+    _lastError = 0;
 
     _imCtx = ImGui::CreateContext();
     if (!_imCtx) return ErrorCode_ImGuiError;
 
+    // Cleanup() also undoes whatever a failed step managed to create
     if (!CreateWnd()) {
-        _lastError = HRESULT_FROM_WIN32(GetLastError());
         Cleanup();
         return ErrorCode_WinError;
     }
-
     if (!CreateDevice()) {
         Cleanup();
         return ErrorCode_RendererError;
@@ -55,7 +52,7 @@ Window::ErrorCode Window::Initialize()
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigWindowsResizeFromEdges = false;
     io.ConfigInputTrickleEventQueue = false;
-    io.IniFilename = NULL;
+    io.IniFilename = nullptr;
 
     ImGui::LoadUiFonts();
 
@@ -84,7 +81,7 @@ void Window::Cleanup()
     CleanupWnd();
     if (_imCtx) {
         ImGui::DestroyContext(_imCtx);
-        _imCtx = NULL;
+        _imCtx = nullptr;
     }
 }
 
@@ -100,11 +97,6 @@ void Window::SetIcon(HICON icon)
     if (!_hwnd) return;
     ApplyWndIcon();
     if (_trayIcon) _trayIcon->UpdateIcon(TrayIconImage());
-}
-
-void Window::SetIcon(unsigned id)
-{
-    SetIcon(LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(id)));
 }
 
 void Window::Focus()
@@ -139,14 +131,14 @@ void Window::SetName(const wchar_t* name)
 {
     wcsncpy_s(_wndName, name, std::size(_wndName));
     _u8wndName[0] = '\0';
-    WideCharToMultiByte(CP_UTF8, 0, name, -1, _u8wndName, (int)std::size(_u8wndName), NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, _u8wndName, (int)std::size(_u8wndName), nullptr, nullptr);
     if (_hwnd) SetWindowTextW(_hwnd, name);
 }
 
 void Window::MoveToStoredRect()
 {
     if (!_hwnd) return;
-    Vec2D<int> scaled = ScaledSize();
+    const Vec2D<int> scaled = ScaledSize();
     MoveWindow(_hwnd, _position.x, _position.y, scaled.x, scaled.y, FALSE);
 }
 
@@ -164,9 +156,10 @@ void Window::SetPosition(const Vec2D<int>& position)
 
 void Window::ResetPosition()
 {
-    Vec2D<int> screen = GetScreenSize();
-    Vec2D<int> size = ScaledSize();
-    SetPosition({(screen.x - size.x) / 2, (screen.y - size.y) / 2});
+    RECT work;
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    const Vec2D<int> size = ScaledSize();
+    SetPosition({(work.right - work.left - size.x) / 2, (work.bottom - work.top - size.y) / 2});
 }
 
 Window::Vec2D<int> Window::ScaledSize() const
@@ -186,13 +179,13 @@ void Window::SetScaleFactor(float factor)
 
 void Window::ApplyScale(bool keepCenter)
 {
-    float scale = _scaleFactor * (float)_dpi / 96.f;
+    float scale = DpiScale();
     MONITORINFO monitor = {sizeof(monitor)};
-    bool hasMonitor = _hwnd && GetMonitorInfoW(MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST), &monitor);
+    const bool hasMonitor = _hwnd && GetMonitorInfoW(MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST), &monitor);
     const RECT& work = monitor.rcWork;
     if (hasMonitor && _size.x > 0 && _size.y > 0) {
-        float fitW = (float)(work.right - work.left) / (float)_size.x;
-        float fitH = (float)(work.bottom - work.top) / (float)_size.y;
+        const float fitW = (float)(work.right - work.left) / (float)_size.x;
+        const float fitH = (float)(work.bottom - work.top) / (float)_size.y;
         scale = ImMin(scale, ImMin(fitW, fitH));
     }
     _scale = ImMax(scale, 0.5f);
@@ -204,7 +197,7 @@ void Window::ApplyScale(bool keepCenter)
     }
 
     if (!_hwnd) return;
-    Vec2D<int> size = ScaledSize();
+    const Vec2D<int> size = ScaledSize();
     Vec2D<int> pos = _position;
     if (keepCenter) {
         RECT rect;
@@ -218,13 +211,6 @@ void Window::ApplyScale(bool keepCenter)
     MoveWindow(_hwnd, pos.x, pos.y, size.x, size.y, TRUE);
 }
 
-Window::Vec2D<int> Window::GetScreenSize()
-{
-    RECT rect;
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &rect, 0);
-    return {rect.right - rect.left, rect.bottom - rect.top};
-}
-
 void Window::Update()
 {
     if (std::exchange(_scalePending, false)) ApplyScale(true);
@@ -233,12 +219,12 @@ void Window::Update()
     EndFrame();
 }
 
-void Window::EnableTitleBar(bool state)
+void Window::EnableTitleBar(bool v)
 {
-    if (state)
-        _imWndFlags &= ~ImGuiWindowNoTitleBarMask;
+    if (v)
+        _imWndFlags &= ~ImGuiWindowFlags_NoTitleBar;
     else
-        _imWndFlags |= ImGuiWindowNoTitleBarMask;
+        _imWndFlags |= ImGuiWindowFlags_NoTitleBar;
 }
 
 bool Window::BeginFrame()
@@ -250,7 +236,7 @@ bool Window::BeginFrame()
     io.DisplayFramebufferScale = ImVec2(_scale, _scale);
     if (_scale != 1.f) {
         // ImGui runs in unscaled logical units; the backend reports physical pixels
-        io.DisplaySize = ImVec2(io.DisplaySize.x / _scale, io.DisplaySize.y / _scale);
+        io.DisplaySize /= _scale;
         for (ImGuiInputEvent& event : GImGui->InputEventsQueue)
             if (event.Type == ImGuiInputEventType_MousePos && event.MousePos.PosX != -FLT_MAX) {
                 event.MousePos.PosX /= _scale;
@@ -258,12 +244,13 @@ bool Window::BeginFrame()
             }
     }
     ImGui::NewFrame();
-    bool isShown = true;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
-    DWORD flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
-    bool result = ImGui::Begin(_u8wndName, &isShown, flags | _imWndFlags);
+    bool isOpen = true; // cleared by the title bar's close button
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus | _imWndFlags;
+    const bool visible = ImGui::Begin(_u8wndName, &isOpen, flags);
 
     ImGuiContext* ctx = ImGui::GetCurrentContext();
     if (ctx->CurrentWindow && ctx->MovingWindow == ctx->CurrentWindow)
@@ -271,11 +258,8 @@ bool Window::BeginFrame()
     else
         StopMove();
 
-    if (!isShown) {
-        _wantQuit = true;
-        PostMessageW(_hwnd, WM_QUIT, NULL, NULL);
-    }
-    return result;
+    if (!isOpen) _wantQuit = true;
+    return visible;
 }
 
 void Window::EndFrame()
@@ -288,26 +272,29 @@ void Window::EndFrame()
 
 bool Window::CreateWnd()
 {
-    WNDCLASSEXW wc = {sizeof(WNDCLASSEXW), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandleW(NULL), NULL, NULL, NULL, NULL,
-                      _className,          NULL};
+    const WNDCLASSEXW wc = {
+        .cbSize = sizeof(wc),
+        .style = CS_CLASSDC,
+        .lpfnWndProc = WndProc,
+        .hInstance = GetModuleHandleW(nullptr),
+        .lpszClassName = _className,
+    };
     _atom = RegisterClassExW(&wc);
-    if (!_atom) return false;
-
-    DWORD style = WS_POPUP | WS_THICKFRAME;
-    _hwnd = CreateWindowExW(0, wc.lpszClassName, _wndName, style, _position.x, _position.y, _size.x, _size.y, NULL,
-                            NULL, wc.hInstance, this);
+    if (_atom)
+        _hwnd = CreateWindowExW(0, _className, _wndName, WS_POPUP | WS_THICKFRAME, _position.x, _position.y, _size.x,
+                                _size.y, nullptr, nullptr, wc.hInstance, this);
     if (!_hwnd) {
-        CleanupWnd();
+        _lastError = HRESULT_FROM_WIN32(GetLastError());
         return false;
     }
     if (_icon) ApplyWndIcon();
 
     // a 1px DWM frame gives the borderless popup the system drop shadow
-    MARGINS shadowMargins = {1, 1, 1, 1};
+    const MARGINS shadowMargins = {1, 1, 1, 1};
     DwmExtendFrameIntoClientArea(_hwnd, &shadowMargins);
 
     _dpi = GetDpiForWindow(_hwnd);
-    _scale = _scaleFactor * (float)_dpi / 96.f;
+    _scale = DpiScale();
 
     ImGui_ImplWin32_Init(_hwnd);
     return true;
@@ -318,38 +305,35 @@ void Window::CleanupWnd()
     if (_hwnd) {
         ImGui_ImplWin32_Shutdown();
         DestroyWindow(_hwnd);
-        _hwnd = NULL;
+        _hwnd = nullptr;
     }
     if (_atom) {
-        UnregisterClassW(MAKEINTATOM(_atom), NULL);
+        UnregisterClassW(MAKEINTATOM(_atom), nullptr);
         _atom = NULL;
     }
 }
 
 bool Window::CreateDevice()
 {
-    _lastError = 0;
     _d3d = Direct3DCreate9(D3D_SDK_VERSION);
     if (!_d3d) {
         _lastError = HRESULT_FROM_WIN32(GetLastError());
         return false;
     }
 
-    // hardware T&L is missing on basic display adapters, RDP sessions, VMs and some old iGPUs — fall back gracefully
-    static constexpr DWORD s_behaviorFlags[] = {
+    // hardware T&L is missing on basic display adapters, RDP sessions, VMs and some old iGPUs
+    static constexpr DWORD s_vertexProcessingFallbacks[] = {
         D3DCREATE_HARDWARE_VERTEXPROCESSING,
         D3DCREATE_MIXED_VERTEXPROCESSING,
         D3DCREATE_SOFTWARE_VERTEXPROCESSING,
     };
     HRESULT hRes = E_FAIL;
-    for (DWORD flags : s_behaviorFlags) {
-        hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, flags, &_d3dParams, &_d3dDevice);
-        if (SUCCEEDED(hRes)) break;
-    }
+    for (const DWORD flags : s_vertexProcessingFallbacks)
+        if (SUCCEEDED(hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, flags, &_d3dParams,
+                                                &_d3dDevice)))
+            break;
     if (FAILED(hRes)) {
         _lastError = hRes;
-        _d3d->Release();
-        _d3d = NULL;
         return false;
     }
     ImGui_ImplDX9_Init(_d3dDevice);
@@ -361,11 +345,11 @@ void Window::CleanupDevice()
     if (_d3dDevice) {
         ImGui_ImplDX9_Shutdown();
         _d3dDevice->Release();
-        _d3dDevice = NULL;
+        _d3dDevice = nullptr;
     }
     if (_d3d) {
         _d3d->Release();
-        _d3d = NULL;
+        _d3d = nullptr;
     }
 }
 
@@ -382,31 +366,25 @@ void Window::Render()
     _d3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
     _d3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
     _d3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-    _d3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_RGBA(10, 13, 19, 255), 1.0f, 0);
+    _d3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_RGBA(10, 13, 19, 255), 1.0f, 0);
     if (_d3dDevice->BeginScene() >= 0) {
         ImGui::Render();
         ImDrawData* drawData = ImGui::GetDrawData();
         if (_scale != 1.f) {
             // scale the logical-unit draw data back to physical pixels (see BeginFrame)
-            drawData->DisplaySize = ImVec2(drawData->DisplaySize.x * _scale, drawData->DisplaySize.y * _scale);
+            drawData->DisplaySize *= _scale;
             drawData->FramebufferScale = ImVec2(1.f, 1.f);
             for (ImDrawList* cmdList : drawData->CmdLists) {
-                for (ImDrawVert& vertex : cmdList->VtxBuffer) {
-                    vertex.pos.x *= _scale;
-                    vertex.pos.y *= _scale;
-                }
-                for (ImDrawCmd& cmd : cmdList->CmdBuffer) {
-                    cmd.ClipRect.x *= _scale;
-                    cmd.ClipRect.y *= _scale;
-                    cmd.ClipRect.z *= _scale;
-                    cmd.ClipRect.w *= _scale;
-                }
+                for (ImDrawVert& vertex : cmdList->VtxBuffer)
+                    vertex.pos *= _scale;
+                for (ImDrawCmd& cmd : cmdList->CmdBuffer)
+                    cmd.ClipRect *= _scale;
             }
         }
         ImGui_ImplDX9_RenderDrawData(drawData);
         _d3dDevice->EndScene();
     }
-    if (_d3dDevice->Present(NULL, NULL, NULL, NULL) == D3DERR_DEVICELOST &&
+    if (_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr) == D3DERR_DEVICELOST &&
         _d3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
         ResetDevice();
 }
@@ -486,7 +464,7 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
     return false;
 }
 
-LRESULT __stdcall Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+LRESULT WINAPI Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_CREATE) {
         Window* self = (Window*)((const CREATESTRUCTW*)lParam)->lpCreateParams;

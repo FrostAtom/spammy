@@ -1,5 +1,7 @@
 #include "Config.h"
 
+static constexpr DWORD CONFIG_SAVE_DELAY_MS = 10000;
+
 const char* UiSizeName(UiSize size)
 {
     static constexpr const char* s_names[UiSize_Count] = {"SMALL", "MEDIUM", "LARGE"};
@@ -18,7 +20,7 @@ const char* CloseActionName(CloseAction action)
     return s_names[action];
 }
 
-Config& Config::GetInstance()
+Config& Config::Instance()
 {
     static Config s_config;
     return s_config;
@@ -35,7 +37,7 @@ template <class Enum>
 static void ReadEnum(const nlohmann::json& json, const char* key, Enum& out, int count)
 {
     if (auto it = json.find(key); it != json.end() && it->is_number_integer()) {
-        int value = it->get<int>();
+        const int value = it->get<int>();
         if (value >= 0 && value < count) out = (Enum)value;
     }
 }
@@ -99,24 +101,26 @@ void Config::SaveIfDirty()
     if (_dirty && GetTickCount() - _lastSaveTicks >= CONFIG_SAVE_DELAY_MS) Save();
 }
 
+template <class Pred>
+static std::shared_ptr<Profile> FindProfileIf(const Config::ProfileList_t& profiles, Pred pred)
+{
+    auto it = std::ranges::find_if(profiles, [&](const std::shared_ptr<Profile>& item) { return pred(*item); });
+    return it != profiles.end() ? *it : nullptr;
+}
+
 std::shared_ptr<Profile> Config::FindProfile(const char* name) const
 {
-    auto it =
-        std::ranges::find_if(profiles, [name](const std::shared_ptr<Profile>& item) { return item->name == name; });
-    return it != profiles.end() ? *it : nullptr;
+    return FindProfileIf(profiles, [name](const Profile& item) { return item.name == name; });
 }
 
 std::shared_ptr<Profile> Config::FindProfileByApp(const char* app) const
 {
-    auto it = std::ranges::find_if(
-        profiles, [app](const std::shared_ptr<Profile>& item) { return item->apps.contains(std::string_view(app)); });
-    return it != profiles.end() ? *it : nullptr;
+    return FindProfileIf(profiles, [app](const Profile& item) { return item.apps.contains(std::string_view(app)); });
 }
 
 std::shared_ptr<Profile> Config::FindGlobalProfile() const
 {
-    auto it = std::ranges::find_if(profiles, [](const std::shared_ptr<Profile>& item) { return item->IsGlobal(); });
-    return it != profiles.end() ? *it : nullptr;
+    return FindProfileIf(profiles, [](const Profile& item) { return item.IsGlobal(); });
 }
 
 bool Config::IsProfileExists(const char* name) const
@@ -139,31 +143,25 @@ void Config::SetEditingProfile(const char* name)
 
 void Config::DeleteProfile(const char* name)
 {
-    std::shared_ptr<Profile> profile = FindProfile(name);
+    const std::shared_ptr<Profile> profile = FindProfile(name);
     if (!profile) return;
     if (profile == editingProfile) editingProfile = nullptr;
     profiles.erase(std::ranges::find(profiles, profile));
     MarkDirty();
 }
 
-bool Config::IsProfileBinded(const char* name, const char* app) const
-{
-    std::shared_ptr<Profile> profile = FindProfile(name);
-    return profile && profile->apps.contains(std::string_view(app));
-}
-
 void Config::BindProfile(const char* name, const char* app)
 {
-    std::shared_ptr<Profile> profile = FindProfile(name);
+    const std::shared_ptr<Profile> profile = FindProfile(name);
     if (profile && profile->apps.emplace(app).second) MarkDirty();
 }
 
 void Config::UnbindProfile(const char* name, const char* app)
 {
-    std::shared_ptr<Profile> profile = FindProfile(name);
+    const std::shared_ptr<Profile> profile = FindProfile(name);
     if (!profile) return;
-    auto it = profile->apps.find(std::string_view(app));
-    if (it == profile->apps.end()) return;
-    profile->apps.erase(it);
-    MarkDirty();
+    if (auto it = profile->apps.find(std::string_view(app)); it != profile->apps.end()) {
+        profile->apps.erase(it);
+        MarkDirty();
+    }
 }

@@ -1,6 +1,4 @@
 #include "KeyboardLayout.h"
-#include <boost/container/static_vector.hpp>
-#include <iterator>
 
 namespace {
 
@@ -18,6 +16,25 @@ struct CharLabels {
 };
 constexpr CharLabels kCharLabels;
 
+constexpr const char* kFKeyNames[] = {"F1",  "F2",  "F3",  "F4",  "F5",  "F6",  "F7",  "F8",
+                                      "F9",  "F10", "F11", "F12", "F13", "F14", "F15", "F16",
+                                      "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24"};
+
+// positions relative to the block's top-left corner
+constexpr KeyboardKey kNavCluster[] = {
+    {"INS", VK_INSERT, 0, 0}, {"HOME", VK_HOME, 1, 0}, {"PGUP", VK_PRIOR, 2, 0},  {"DEL", VK_DELETE, 0, 1},
+    {"END", VK_END, 1, 1},    {"PGDN", VK_NEXT, 2, 1}, {"UP", VK_UP, 1, 3},       {"LEFT", VK_LEFT, 0, 4},
+    {"DOWN", VK_DOWN, 1, 4},  {"RIGHT", VK_RIGHT, 2, 4},
+};
+
+constexpr KeyboardKey kNumpad[] = {
+    {"NUM", VK_NUMLOCK, 0, 0}, {"/", VK_DIVIDE, 1, 0},     {"*", VK_MULTIPLY, 2, 0}, {"-", VK_SUBTRACT, 3, 0},
+    {"7", VK_NUMPAD7, 0, 1},   {"8", VK_NUMPAD8, 1, 1},    {"9", VK_NUMPAD9, 2, 1},  {"+", VK_ADD, 3, 1, 1, 2},
+    {"4", VK_NUMPAD4, 0, 2},   {"5", VK_NUMPAD5, 1, 2},    {"6", VK_NUMPAD6, 2, 2},  {"1", VK_NUMPAD1, 0, 3},
+    {"2", VK_NUMPAD2, 1, 3},   {"3", VK_NUMPAD3, 2, 3},    {"ENT", VK_RETURN, 3, 3, 1, 2},
+    {"0", VK_NUMPAD0, 0, 4, 2}, {".", VK_DECIMAL, 2, 4},
+};
+
 struct Grid {
     KeyList keys;
 
@@ -31,6 +48,12 @@ struct Grid {
     {
         for (; *chars; chars++, x += 1.f)
             Put(kCharLabels.str[(unsigned char)*chars], *chars, x, y);
+    }
+
+    void PutBlock(std::span<const KeyboardKey> block, float x, float y)
+    {
+        for (const KeyboardKey& key : block)
+            Put(key.name, key.vkCode, x + key.x, y + key.y, key.w, key.h);
     }
 };
 
@@ -170,10 +193,9 @@ float FKeyX(int i, bool compact)
 
 void AddFunctionRow(Grid& g, float oy, bool compact)
 {
-    static constexpr const char* kNames[] = {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"};
     g.Put("ESC", VK_ESCAPE, 0.f, oy);
     for (int i = 0; i < 12; i++)
-        g.Put(kNames[i], VK_F1 + i, FKeyX(i, compact), oy);
+        g.Put(kFKeyNames[i], VK_F1 + i, FKeyX(i, compact), oy);
     const float sys = compact ? 13.f : 15.5f;
     g.Put("PRT", VK_SNAPSHOT, sys, oy);
     g.Put("SLK", VK_SCROLL, sys + 1.f, oy);
@@ -185,31 +207,27 @@ void AddFunctionRow(Grid& g, float oy, bool compact)
 // (numpad 5 with NumLock off) and Break (Ctrl+Pause arrives as its own VK) fill the second row
 void AddExtraRows(Grid& g)
 {
-    struct Extra {
+    static constexpr KeyboardKey kBrowser[] = {
+        {"W<", VK_BROWSER_BACK, 15.5f, 0},     {"W>", VK_BROWSER_FORWARD, 16.5f, 0},
+        {"WHOM", VK_BROWSER_HOME, 17.5f, 0},   {"WRLD", VK_BROWSER_REFRESH, 18.75f, 0},
+        {"WSTP", VK_BROWSER_STOP, 19.75f, 0},  {"WSRC", VK_BROWSER_SEARCH, 20.75f, 0},
+        {"WFAV", VK_BROWSER_FAVORITES, 21.75f, 0},
+    };
+    struct NamedKey {
         const char* name;
         UINT vk;
     };
-    static constexpr const char* kFNames[] = {"F13", "F14", "F15", "F16", "F17", "F18",
-                                              "F19", "F20", "F21", "F22", "F23", "F24"};
-    static constexpr Extra kMedia[] = {
+    static constexpr NamedKey kMedia[] = {
         {"MUTE", VK_VOLUME_MUTE},      {"VOL-", VK_VOLUME_DOWN},         {"VOL+", VK_VOLUME_UP},
         {"PLAY", VK_MEDIA_PLAY_PAUSE}, {"PREV", VK_MEDIA_PREV_TRACK},    {"NEXT", VK_MEDIA_NEXT_TRACK},
         {"STOP", VK_MEDIA_STOP},       {"MSEL", VK_LAUNCH_MEDIA_SELECT}, {"MAIL", VK_LAUNCH_MAIL},
         {"APP1", VK_LAUNCH_APP1},      {"APP2", VK_LAUNCH_APP2},
     };
-    static constexpr Extra kBrowser[] = {
-        {"W<", VK_BROWSER_BACK},        {"W>", VK_BROWSER_FORWARD}, {"WHOM", VK_BROWSER_HOME},
-        {"WRLD", VK_BROWSER_REFRESH},   {"WSTP", VK_BROWSER_STOP},  {"WSRC", VK_BROWSER_SEARCH},
-        {"WFAV", VK_BROWSER_FAVORITES},
-    };
 
     g.Put("SLP", VK_SLEEP, 0.f, 0.f);
     for (int i = 0; i < 12; i++)
-        g.Put(kFNames[i], VK_F13 + i, FKeyX(i, false), 0.f);
-    for (int i = 0; i < 3; i++)
-        g.Put(kBrowser[i].name, kBrowser[i].vk, 15.5f + i, 0.f);
-    for (int i = 3; i < 7; i++)
-        g.Put(kBrowser[i].name, kBrowser[i].vk, 18.75f + (i - 3), 0.f);
+        g.Put(kFKeyNames[12 + i], VK_F13 + i, FKeyX(i, false), 0.f);
+    g.PutBlock(kBrowser, 0.f, 0.f);
 
     g.Put("CLR", VK_CLEAR, 0.f, 1.f);
     for (int i = 0; i < (int)std::size(kMedia); i++)
@@ -217,45 +235,11 @@ void AddExtraRows(Grid& g)
     g.Put("BRK", VK_CANCEL, 17.5f, 1.f); // above PSE
 }
 
-void AddNavCluster(Grid& g, float ox, float oy)
-{
-    g.Put("INS", VK_INSERT, ox + 0.f, oy + 0.f);
-    g.Put("HOME", VK_HOME, ox + 1.f, oy + 0.f);
-    g.Put("PGUP", VK_PRIOR, ox + 2.f, oy + 0.f);
-    g.Put("DEL", VK_DELETE, ox + 0.f, oy + 1.f);
-    g.Put("END", VK_END, ox + 1.f, oy + 1.f);
-    g.Put("PGDN", VK_NEXT, ox + 2.f, oy + 1.f);
-    g.Put("UP", VK_UP, ox + 1.f, oy + 3.f);
-    g.Put("LEFT", VK_LEFT, ox + 0.f, oy + 4.f);
-    g.Put("DOWN", VK_DOWN, ox + 1.f, oy + 4.f);
-    g.Put("RIGHT", VK_RIGHT, ox + 2.f, oy + 4.f);
-}
-
-void AddNumpad(Grid& g, float ox, float oy)
-{
-    g.Put("NUM", VK_NUMLOCK, ox + 0.f, oy + 0.f);
-    g.Put("/", VK_DIVIDE, ox + 1.f, oy + 0.f);
-    g.Put("*", VK_MULTIPLY, ox + 2.f, oy + 0.f);
-    g.Put("-", VK_SUBTRACT, ox + 3.f, oy + 0.f);
-    g.Put("7", VK_NUMPAD7, ox + 0.f, oy + 1.f);
-    g.Put("8", VK_NUMPAD8, ox + 1.f, oy + 1.f);
-    g.Put("9", VK_NUMPAD9, ox + 2.f, oy + 1.f);
-    g.Put("+", VK_ADD, ox + 3.f, oy + 1.f, 1.f, 2.f);
-    g.Put("4", VK_NUMPAD4, ox + 0.f, oy + 2.f);
-    g.Put("5", VK_NUMPAD5, ox + 1.f, oy + 2.f);
-    g.Put("6", VK_NUMPAD6, ox + 2.f, oy + 2.f);
-    g.Put("1", VK_NUMPAD1, ox + 0.f, oy + 3.f);
-    g.Put("2", VK_NUMPAD2, ox + 1.f, oy + 3.f);
-    g.Put("3", VK_NUMPAD3, ox + 2.f, oy + 3.f);
-    g.Put("ENT", VK_RETURN, ox + 3.f, oy + 3.f, 1.f, 2.f);
-    g.Put("0", VK_NUMPAD0, ox + 0.f, oy + 4.f, 2.f);
-    g.Put(".", VK_DECIMAL, ox + 2.f, oy + 4.f);
-}
-
 KeyList Build(KeyboardForm form, KeyboardVariant variant)
 {
     Grid g;
     switch (form) {
+    case KeyboardForm_60: AddCore(g, 0.f, variant, false); break;
     case KeyboardForm_65: AddCore(g, 0.f, variant, true); break;
     case KeyboardForm_75:
         AddFunctionRow(g, 0.f, true);
@@ -268,11 +252,11 @@ KeyList Build(KeyboardForm form, KeyboardVariant variant)
         if (form == KeyboardForm_Extra) AddExtraRows(g);
         AddFunctionRow(g, oy, false);
         AddCore(g, oy + 1.25f, variant, false);
-        AddNavCluster(g, 15.5f, oy + 1.25f);
-        if (form != KeyboardForm_Tkl) AddNumpad(g, 18.75f, oy + 1.25f);
+        g.PutBlock(kNavCluster, 15.5f, oy + 1.25f);
+        if (form != KeyboardForm_Tkl) g.PutBlock(kNumpad, 18.75f, oy + 1.25f);
         break;
     }
-    default: AddCore(g, 0.f, variant, false); break;
+    case KeyboardForm_Count: break;
     }
     return g.keys;
 }

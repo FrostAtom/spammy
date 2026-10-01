@@ -1,6 +1,7 @@
 #include "App.h"
-#include "Modes.h"
+#include "Config.h"
 #include "Updater.h"
+#include "Utils.h"
 
 static constexpr const wchar_t* AUTOSTART_REG_KEY = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
 static constexpr const wchar_t* AUTOSTART_REG_VALUE = L"Spammy";
@@ -15,10 +16,10 @@ bool App::Init(int argc, char** argv)
 {
     SetCurrentDirectoryW(GetModulePath().parent_path().c_str());
 
-    bool firstRun = !std::filesystem::is_regular_file(CONFIG_FILE);
+    const bool firstRun = !std::filesystem::is_regular_file(CONFIG_FILE);
     if (!sConfig.Load()) {
-        int action =
-            MessageBoxW(NULL, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
+        const int action =
+            MessageBoxW(nullptr, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
         if (action != IDOK) return false;
     }
     if (firstRun) EnableAutoStart(true);
@@ -30,9 +31,12 @@ bool App::Init(int argc, char** argv)
     }
 
     _mainWindow = std::make_unique<MainWindow>(L"" APP_NAME);
-    if (!_mainWindow->Initialize()) return false;
+    if (!_mainWindow->Initialize()) {
+        _mainWindow.reset();
+        return false;
+    }
 
-    bool autolaunch = argc > 1 && strcmp(argv[1], "autolaunch") == 0;
+    const bool autolaunch = argc > 1 && strcmp(argv[1], "autolaunch") == 0;
     if (!autolaunch) {
         _mainWindow->Update();
         _mainWindow->Show();
@@ -58,7 +62,7 @@ void App::Run()
 {
     while (!_mainWindow->MustQuit()) {
         MSG msg;
-        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -80,7 +84,7 @@ void App::Enable(bool state)
     sConfig.MarkDirty();
 }
 
-bool App::IsEnabled()
+bool App::IsEnabled() const
 {
     return sConfig.enabled;
 }
@@ -91,12 +95,12 @@ static const std::wstring& AutoStartCommand()
     return s_command;
 }
 
-bool App::IsAutoStartEnabled()
+bool App::IsAutoStartEnabled() const
 {
     wchar_t value[MAX_PATH + 32] = {0};
     DWORD size = sizeof(value);
-    LSTATUS status =
-        RegGetValueW(HKEY_CURRENT_USER, AUTOSTART_REG_KEY, AUTOSTART_REG_VALUE, RRF_RT_REG_SZ, NULL, value, &size);
+    const LSTATUS status =
+        RegGetValueW(HKEY_CURRENT_USER, AUTOSTART_REG_KEY, AUTOSTART_REG_VALUE, RRF_RT_REG_SZ, nullptr, value, &size);
     return status == ERROR_SUCCESS && value == AutoStartCommand();
 }
 
@@ -113,23 +117,22 @@ static void PlayEnabledSound(bool enabled)
     wchar_t path[MAX_PATH];
     if (!GetWindowsDirectoryW(path, std::size(path))) return;
     wcscat_s(path, enabled ? L"\\Media\\Windows Hardware Insert.wav" : L"\\Media\\Windows Hardware Remove.wav");
-    PlaySoundW(path, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+    PlaySoundW(path, nullptr, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
 }
 
 std::pair<std::shared_ptr<Profile>, HWND> App::ActiveTarget()
 {
-    std::lock_guard lock(_callbackMutex);
+    std::scoped_lock lock(_targetMutex);
     return {_activeProfile, _activeHwnd};
 }
 
 bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
 {
     auto [profile, activeHwnd] = ActiveTarget();
-    if (_mainWindow) {
-        bool selfFocused = activeHwnd == _mainWindow->Native();
-        if (down ? _mainWindow->HandleKeyPress(vkCode, repeat, selfFocused) : _mainWindow->HandleKeyRelease(vkCode))
-            return true;
-    }
+    // the hooks are attached after _mainWindow is created and detached (joined) before it's destroyed
+    const bool selfFocused = activeHwnd == _mainWindow->Native();
+    if (down ? _mainWindow->HandleKeyPress(vkCode, repeat, selfFocused) : _mainWindow->HandleKeyRelease(vkCode))
+        return true;
     // the pause key is decided on its down edge and that decision sticks until its up: letting go of a modifier
     // first (or grabbing one mid-hold) must neither drop the toggle nor leak the up to the game
     if (vkCode == _heldPauseVk) {
@@ -138,12 +141,12 @@ bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
     }
     if (!profile) return false;
 
-    unsigned mods = sKeyboard.TestModifiers();
+    const unsigned mods = sKeyboard.TestModifiers();
     // extra held modifiers (sprint on Shift, crouch on Ctrl, ...) don't get in the way, only the bound ones are required
-    const unsigned pauseMods = GET_KEY_MODIFIER(profile->vkPause);
-    if (down && !repeat && GET_KEY_VKCODE(profile->vkPause) == vkCode && (mods & pauseMods) == pauseMods) {
+    const unsigned pauseMods = KeyBundleMods(profile->vkPause);
+    if (down && !repeat && KeyBundleVk(profile->vkPause) == vkCode && (mods & pauseMods) == pauseMods) {
         _heldPauseVk = (unsigned short)vkCode;
-        PostInput({InputEvent::Kind_TogglePause});
+        PostInput({.handler = nullptr});
         return true;
     }
     if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
@@ -151,26 +154,25 @@ bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
     if (!sConfig.enabled) return false;
 
     const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods));
-    if (!mode || !(down ? mode->onPress : mode->onRelease)) return false;
+    const KeyHandler_t handler = mode ? (down ? mode->onPress : mode->onRelease) : nullptr;
+    if (!handler) return false;
     // typematic auto-repeat of a swallowed key: nothing to do, don't wake the worker for it
-    if (repeat) return true;
-    PostInput({down ? InputEvent::Kind_Press : InputEvent::Kind_Release, repeat, (unsigned short)vkCode, mods,
-               std::move(profile)});
+    if (!repeat) PostInput({handler, (unsigned short)vkCode});
     return true;
 }
 
-void App::PostInput(InputEvent&& ev)
+void App::PostInput(InputEvent ev)
 {
     {
-        std::lock_guard lock(_inputMutex);
-        _inputQueue.push_back(std::move(ev));
+        std::scoped_lock lock(_inputMutex);
+        _inputQueue.push_back(ev);
     }
     SetEvent(_inputWake);
 }
 
 void App::StartInputWorker()
 {
-    _inputWake = CreateEventW(NULL, FALSE, FALSE, NULL);
+    _inputWake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     _inputThread = std::jthread([this](std::stop_token stop) { InputWorkerProc(stop); });
 }
 
@@ -183,7 +185,7 @@ void App::StopInputWorker()
     }
     if (_inputWake) {
         CloseHandle(_inputWake);
-        _inputWake = NULL;
+        _inputWake = nullptr;
     }
     _inputQueue.clear();
 }
@@ -196,25 +198,25 @@ void App::InputWorkerProc(std::stop_token stop)
     timeBeginPeriod(1); // 1ms granularity for the legacy-timer fallback (and Sleep elsewhere)
 
     // sub-millisecond wakeups on Win10 1803+, plain waitable timer otherwise
-    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-    if (!timer) timer = CreateWaitableTimerW(NULL, TRUE, NULL);
+    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!timer) timer = CreateWaitableTimerW(nullptr, TRUE, nullptr);
     HANDLE waitables[] = {_inputWake, timer};
 
     std::vector<InputEvent> batch;
     Clock::time_point lastTick = Clock::now();
     while (!stop.stop_requested()) {
-        std::shared_ptr<Profile> profile = ActiveProfile();
-        Ms period(profile ? profile->speed : 0);
+        const std::shared_ptr<Profile> profile = ActiveProfile();
+        const Ms period(profile ? profile->speed : 0);
 
         if (profile) {
             Clock::time_point due = lastTick + period;
-            Clock::time_point now = Clock::now();
+            const Clock::time_point now = Clock::now();
             // fell behind by more than a period (stall, speed change): resync instead of firing a burst
             if (now - due > period) due = lastTick = now;
             auto rel = std::chrono::duration_cast<std::chrono::nanoseconds>(due - now).count();
             LARGE_INTEGER dueTime;
             dueTime.QuadPart = rel > 0 ? -(rel / 100) : 0; // negative = relative, 100ns units
-            SetWaitableTimer(timer, &dueTime, 0, NULL, NULL, FALSE);
+            SetWaitableTimer(timer, &dueTime, 0, nullptr, nullptr, FALSE);
         } else {
             CancelWaitableTimer(timer);
         }
@@ -222,7 +224,7 @@ void App::InputWorkerProc(std::stop_token stop)
         if (stop.stop_requested()) break;
 
         {
-            std::lock_guard lock(_inputMutex);
+            std::scoped_lock lock(_inputMutex);
             batch.swap(_inputQueue);
         }
         for (const InputEvent& ev : batch)
@@ -241,47 +243,37 @@ void App::InputWorkerProc(std::stop_token stop)
 
 void App::HandleInput(const InputEvent& ev)
 {
-    if (ev.kind == InputEvent::Kind_TogglePause) {
-        sConfig.enabled = !sConfig.enabled;
-        sConfig.MarkDirty();
-        if (sConfig.soundsEnabled) PlayEnabledSound(sConfig.enabled);
+    if (!ev.IsPauseToggle()) {
+        ev.handler(ev.vkCode);
         return;
     }
-    // re-resolve against the profile snapshot taken at hook time so press/release always pair up
-    const KeyMode* mode = FindKeyMode(ResolveKeyAction(*ev.profile, ev.vkCode, ev.mods));
-    if (!mode) return;
-    auto handler = ev.kind == InputEvent::Kind_Press ? mode->onPress : mode->onRelease;
-    if (handler) handler({ev.vkCode, ev.repeat, *ev.profile});
+    sConfig.enabled = !sConfig.enabled;
+    sConfig.MarkDirty();
+    if (sConfig.soundsEnabled) PlayEnabledSound(sConfig.enabled);
 }
 
 void App::TickAutofire(const Profile& profile)
 {
-    unsigned mods = sKeyboard.TestModifiers();
+    const unsigned mods = sKeyboard.TestModifiers();
     for (unsigned short vk = 1; vk < kKeyboardKeysCount; vk++) {
         if (!sKeyboard.IsPressed(vk)) continue;
         const KeyMode* mode = FindKeyMode(ResolveKeyAction(profile, vk, mods));
-        if (mode && mode->onTick) mode->onTick({vk, false, profile});
+        if (mode && mode->onTick) mode->onTick(vk);
     }
 }
 
 std::shared_ptr<Profile> App::ActiveProfile()
 {
-    std::lock_guard lock(_callbackMutex);
+    std::scoped_lock lock(_targetMutex);
     return _activeProfile;
-}
-
-std::string App::ActiveAppName()
-{
-    std::lock_guard lock(_callbackMutex);
-    return _activeApp;
 }
 
 void App::DeleteProfile(const char* name)
 {
-    std::shared_ptr<Profile> profile = sConfig.FindProfile(name);
+    const std::shared_ptr<Profile> profile = sConfig.FindProfile(name);
     if (!profile) return;
     {
-        std::lock_guard lock(_callbackMutex);
+        std::scoped_lock lock(_targetMutex);
         if (profile == _activeProfile) _activeProfile = nullptr;
     }
     sConfig.DeleteProfile(name);
@@ -293,27 +285,24 @@ void App::UpdateActiveTarget()
     if (hwnd == _activeHwnd) return; // only the main thread writes _activeHwnd, so this read needs no lock
 
     std::shared_ptr<Profile> profile;
-    std::string app;
-    if (std::filesystem::path path = hwnd ? GetProcessPath(hwnd) : std::filesystem::path(); path.has_filename()) {
-        app = Utf8FileName(path);
-        profile = sConfig.FindProfileByApp(app.c_str());
+    if (const std::filesystem::path path = hwnd ? GetProcessPath(hwnd) : std::filesystem::path(); path.has_filename()) {
+        profile = sConfig.FindProfileByApp(Utf8FileName(path).c_str());
         // the global (unbound) profile applies to everything but ourselves
         if (!profile && path != GetModulePath()) profile = sConfig.FindGlobalProfile();
     }
 
     {
-        std::lock_guard lock(_callbackMutex);
+        std::scoped_lock lock(_targetMutex);
         _activeProfile = profile;
         _activeHwnd = hwnd;
-        _activeApp = profile ? std::move(app) : std::string();
     }
     // presses queued for the previous window must not be injected into the new one; a pending pause toggle still counts
     {
-        std::lock_guard lock(_inputMutex);
-        std::erase_if(_inputQueue, [](const InputEvent& ev) { return ev.kind != InputEvent::Kind_TogglePause; });
+        std::scoped_lock lock(_inputMutex);
+        std::erase_if(_inputQueue, [](const InputEvent& ev) { return !ev.IsPauseToggle(); });
     }
 
-    bool selfFocused = _mainWindow && hwnd == _mainWindow->Native();
+    const bool selfFocused = hwnd == _mainWindow->Native();
     if (profile || selfFocused)
         sKeyboard.Attach(selfFocused || profile->UsesMouse()); // own window logs mouse presses for the key editor
     else
@@ -322,8 +311,10 @@ void App::UpdateActiveTarget()
 
 int main(int argc, char** argv)
 {
-    bool ok = sApp.Init(argc, argv);
-    if (ok) sApp.Run();
+    // a failed Init leaves nothing to undo, and must not reach Uninit: saving there would overwrite the config
+    // the user just refused to reset, or the one owned by the instance that is already running
+    if (!sApp.Init(argc, argv)) return EXIT_FAILURE;
+    sApp.Run();
     sApp.Uninit();
-    return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+    return EXIT_SUCCESS;
 }

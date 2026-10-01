@@ -21,14 +21,14 @@ public:
 private:
     wchar_t _wndName[64], _className[64];
     char _u8wndName[64 * 4];
-    HICON _icon = NULL;
-    HICON _trayIconOverride = NULL; // shown in the tray instead of _icon while set
+    HICON _icon = nullptr;
+    HICON _trayIconOverride = nullptr; // shown in the tray instead of _icon while set
     ATOM _atom = NULL;
-    HWND _hwnd = NULL;
-    ImGuiContext* _imCtx = NULL;
+    HWND _hwnd = nullptr;
+    ImGuiContext* _imCtx = nullptr;
     bool _wantQuit = false, _mustQuit = false;
 
-    DWORD _imWndFlags;
+    ImGuiWindowFlags _imWndFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     bool _movable = false;
     Vec2D<int> _size = {512, 512};
     Vec2D<int> _position = {CW_USEDEFAULT, CW_USEDEFAULT};
@@ -42,14 +42,14 @@ private:
     bool _scalePending = false;
     bool _inFrame = false;
 
-    LPDIRECT3D9 _d3d = NULL;
-    LPDIRECT3DDEVICE9 _d3dDevice = NULL;
+    LPDIRECT3D9 _d3d = nullptr;
+    LPDIRECT3DDEVICE9 _d3dDevice = nullptr;
     D3DPRESENT_PARAMETERS _d3dParams;
     HRESULT _lastError = 0;
     std::unique_ptr<TrayIcon> _trayIcon;
 
 public:
-    Window(const wchar_t* className, const wchar_t* wndName = NULL);
+    Window(const wchar_t* className, const wchar_t* wndName = nullptr);
     virtual ~Window();
 
     ErrorCode Initialize();
@@ -73,7 +73,6 @@ public:
     void EnableMoving(bool v = true) { _movable = v; }
 
     void SetIcon(HICON icon);
-    void SetIcon(unsigned id);
     // NULL restores the window icon in the tray; the caller keeps ownership of the HICON
     void SetTrayIconOverride(HICON icon);
 
@@ -82,16 +81,19 @@ public:
     void SetSize(const Vec2D<int>& v);
     void SetScaleFactor(float factor);
     void SetPosition(const Vec2D<int>& pos);
+    // centers the window on the primary monitor's work area
     void ResetPosition();
 
-    static Vec2D<int> GetScreenSize();
     static const char* FormatError(ErrorCode code);
     // HRESULT of the last failed Initialize() step (0 if none)
     HRESULT LastError() const { return _lastError; }
 
 protected:
-    bool IsReady() const { return _hwnd && _d3dDevice; }
     virtual void Draw() = 0;
+    virtual bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result);
+
+private:
+    bool IsReady() const { return _hwnd && _d3dDevice; }
     bool BeginFrame();
     void EndFrame();
 
@@ -107,16 +109,14 @@ protected:
     void StopMove() { _moving = false; }
     void UpdateMove();
 
+    float DpiScale() const { return _scaleFactor * (float)_dpi / 96.f; }
     void ApplyScale(bool keepCenter);
     Vec2D<int> ScaledSize() const;
 
-    virtual bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result);
-
-    static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-private:
     int ShowCmd() const;
     HICON TrayIconImage() const { return _trayIconOverride ? _trayIconOverride : _icon; }
     void ApplyWndIcon();
     void MoveToStoredRect();
+
+    static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 };

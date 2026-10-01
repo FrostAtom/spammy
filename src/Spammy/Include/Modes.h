@@ -1,13 +1,8 @@
 #pragma once
 #include "ImGui.h"
 #include "Profile.h"
-#include <span>
 
-struct KeyModeContext {
-    unsigned short vkCode;
-    bool repeat;
-    const Profile& profile;
-};
+using KeyHandler_t = void (*)(unsigned short vkCode);
 
 struct KeyMode {
     Action action;
@@ -17,11 +12,11 @@ struct KeyMode {
     ImU32 menuColor;
     // a non-NULL handler means the physical event is swallowed by the hook; the handler itself
     // runs later on the input worker thread, never on the hook thread
-    void (*onPress)(const KeyModeContext& ctx);
-    void (*onRelease)(const KeyModeContext& ctx);
-    void (*onTick)(const KeyModeContext& ctx);
+    KeyHandler_t onPress;
+    KeyHandler_t onRelease;
+    KeyHandler_t onTick;
 };
 
 std::span<const KeyMode> KeyModes();
 const KeyMode* FindKeyMode(Action action);
-Action ResolveKeyAction(const Profile& profile, size_t vkCode, unsigned mods, bool* inherited = NULL);
+Action ResolveKeyAction(const Profile& profile, size_t vkCode, unsigned mods, bool* inherited = nullptr);

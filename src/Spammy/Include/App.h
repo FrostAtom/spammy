@@ -1,52 +1,44 @@
 #pragma once
-#include "Config.h"
 #include "Headers.h"
 #include "MainWindow.h"
+#include "Modes.h"
 #include "Profile.h"
-#include "Utils.h"
-#include "Win32/Keyboard.h"
 #define sApp App::Instance()
 
 class App {
+    App() = default;
+
 public:
-    ~App() = default;
+    static App& Instance();
     bool Init(int argc, char** argv);
+    void Run();
     void Uninit();
 
-    static App& Instance();
-    void Run();
+    void Enable(bool state);
+    bool IsEnabled() const;
 
-    void Enable(bool state = true);
-    bool IsEnabled();
-
-    bool IsAutoStartEnabled();
+    bool IsAutoStartEnabled() const;
     bool EnableAutoStart(bool state);
 
-    std::shared_ptr<Profile> ActiveProfile();
-    std::string ActiveAppName();
     void DeleteProfile(const char* name);
 
 private:
-    // a physical key event the hook decided to swallow, handed off to the input worker
+    // a physical key event the hook decided to swallow, handed off to the input worker; the handler is resolved at
+    // hook time, so the worker runs exactly what the event was swallowed for even if the profile changed since
     struct InputEvent {
-        enum Kind : unsigned char {
-            Kind_Press,
-            Kind_Release,
-            Kind_TogglePause
-        };
-        Kind kind;
-        bool repeat;
+        KeyHandler_t handler; // NULL: the pause key was hit
         unsigned short vkCode;
-        unsigned mods;
-        std::shared_ptr<Profile> profile;
+
+        bool IsPauseToggle() const { return !handler; }
     };
 
     void UpdateActiveTarget();
+    std::shared_ptr<Profile> ActiveProfile();
     std::pair<std::shared_ptr<Profile>, HWND> ActiveTarget();
 
     // hook thread: decide + enqueue only
     bool OnKeyEvent(bool down, UINT vkCode, bool repeat);
-    void PostInput(InputEvent&& ev);
+    void PostInput(InputEvent ev);
 
     // input worker thread: injection + autofire ticking, decoupled from rendering
     void StartInputWorker();
@@ -57,17 +49,16 @@ private:
 
 private:
     std::unique_ptr<MainWindow> _mainWindow;
-    HWND _activeHwnd = NULL;
+    HWND _activeHwnd = nullptr;
 
     std::shared_ptr<Profile> _activeProfile;
-    std::string _activeApp;
-    // guards _activeProfile/_activeHwnd between the hook thread, the input worker and the main thread (UpdateActiveTarget)
-    std::mutex _callbackMutex;
+    // guards _activeProfile/_activeHwnd across the hook thread, the input worker and the main thread
+    std::mutex _targetMutex;
     // pause key whose down toggled and whose up/repeats are still to be swallowed; hook thread only
     unsigned short _heldPauseVk = 0;
 
     std::jthread _inputThread;
-    HANDLE _inputWake = NULL;
+    HANDLE _inputWake = nullptr;
     std::mutex _inputMutex;
     std::vector<InputEvent> _inputQueue;
 };

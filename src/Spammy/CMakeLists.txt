@@ -1,6 +1,5 @@
 include(${CMAKE_SOURCE_DIR}/cmake/FetchFilesInFolder.cmake)
 
-project(Spammy LANGUAGES C CXX)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO")
 
 find_package(Boost CONFIG REQUIRED COMPONENTS container)

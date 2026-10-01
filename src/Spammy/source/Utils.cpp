@@ -8,15 +8,15 @@ bool CaseInsensitiveLess::operator()(std::string_view a, std::string_view b) con
 
 void LaunchUrl(const wchar_t* url)
 {
-    ShellExecuteW(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL);
+    ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 HICON CreateGrayscaleIcon(HICON source)
 {
     ICONINFO info;
-    if (!GetIconInfo(source, &info)) return NULL;
+    if (!GetIconInfo(source, &info)) return nullptr;
 
-    HICON result = NULL;
+    HICON result = nullptr;
     BITMAP bm;
     if (info.hbmColor && GetObject(info.hbmColor, sizeof(bm), &bm)) {
         BITMAPINFO bi = {};
@@ -27,9 +27,9 @@ HICON CreateGrayscaleIcon(HICON source)
         bi.bmiHeader.biBitCount = 32;
         bi.bmiHeader.biCompression = BI_RGB;
 
-        HDC dc = GetDC(NULL);
-        void* bits = NULL;
-        HBITMAP color = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+        HDC dc = GetDC(nullptr);
+        void* bits = nullptr;
+        HBITMAP color = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
         // 32bpp icons keep their alpha byte through GetDIBits, so the copy only needs its RGB flattened to luma
         if (color && GetDIBits(dc, info.hbmColor, 0, bm.bmHeight, bits, &bi, DIB_RGB_COLORS)) {
             for (uint32_t *px = (uint32_t*)bits, *end = px + bm.bmWidth * bm.bmHeight; px != end; px++) {
@@ -42,18 +42,21 @@ HICON CreateGrayscaleIcon(HICON source)
             result = CreateIconIndirect(&gray);
         }
         if (color) DeleteObject(color);
-        ReleaseDC(NULL, dc);
+        ReleaseDC(nullptr, dc);
     }
     if (info.hbmColor) DeleteObject(info.hbmColor);
     if (info.hbmMask) DeleteObject(info.hbmMask);
     return result;
 }
 
-std::filesystem::path GetModulePath()
+const std::filesystem::path& GetModulePath()
 {
-    wchar_t buf[MAX_PATH] = {0};
-    GetModuleFileNameW(NULL, buf, std::size(buf));
-    return buf;
+    static const std::filesystem::path s_path = [] {
+        wchar_t buf[MAX_PATH] = {0};
+        GetModuleFileNameW(nullptr, buf, std::size(buf));
+        return std::filesystem::path(buf);
+    }();
+    return s_path;
 }
 
 std::filesystem::path GetProcessPath(HWND hwnd)
