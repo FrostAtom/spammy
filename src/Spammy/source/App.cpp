@@ -112,12 +112,84 @@ bool App::EnableAutoStart(bool state)
                            (DWORD)((command.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
 }
 
+static constexpr uint32_t kToggleSoundRate = 44100;
+
+struct MarimbaPartial
+{
+    float mult, amp, decay; // harmonic multiplier, amplitude, decay time relative to the fundamental's
+};
+
+// a struck-bar tone: the upper partials die out faster than the fundamental
+static void AddMarimbaNote(std::vector<float>& buf, float start, float freq, float tau, float gain,
+                           std::span<const MarimbaPartial> partials)
+{
+    constexpr double kTwoPi = 6.283185307179586;
+    constexpr float kAttack = 0.0025f;
+    const size_t first = (size_t)(start * kToggleSoundRate);
+    const size_t count = std::min((size_t)(tau * 5 * kToggleSoundRate), buf.size() - std::min(first, buf.size()));
+    for (size_t i = 0; i < count; i++) {
+        const double t = (double)i / kToggleSoundRate;
+        double s = 0;
+        for (const MarimbaPartial& p : partials)
+            s += p.amp * std::sin(kTwoPi * freq * p.mult * t) * std::exp(-t / (tau * p.decay));
+        if (t < kAttack) s *= 0.5 - 0.5 * std::cos(kTwoPi / 2 * t / kAttack); // soft onset instead of a pop
+        buf[first + i] += (float)s * gain;
+    }
+}
+
+// 16-bit stereo WAV: two marimba strikes an octave apart (up for on, down for off), detuned a hair per ear for
+// width, with a ping-pong echo of the landing note. On is brighter and louder, off duller and quieter
+static std::vector<char> SynthToggleWav(bool on)
+{
+    static constexpr MarimbaPartial kBright[] = {{1, 1.f, 1.f}, {4, 0.30f, 0.3f}, {10, 0.06f, 0.15f}};
+    static constexpr MarimbaPartial kDull[] = {{1, 1.f, 1.f}, {4, 0.12f, 0.3f}};
+    constexpr float kLanding = 0.055f, kLength = 0.525f, kTailFade = 0.020f;
+    constexpr uint32_t kCount = (uint32_t)(kToggleSoundRate * kLength);
+    constexpr uint32_t kDataSize = kCount * 2 * sizeof(int16_t);
+
+    const std::span<const MarimbaPartial> timbre =
+        on ? std::span<const MarimbaPartial>(kBright) : std::span<const MarimbaPartial>(kDull);
+    const float from = on ? 523.f : 1046.f, to = on ? 1046.f : 523.f;
+    std::vector<float> channels[2] = {std::vector<float>(kCount), std::vector<float>(kCount)};
+    for (int c = 0; c < 2; c++) {
+        const float detune = std::exp2((c == 0 ? 5.f : -5.f) / 1200.f); // +-5 cents
+        AddMarimbaNote(channels[c], 0, from * detune, 0.030f, 1.f, timbre);
+        AddMarimbaNote(channels[c], kLanding, to * detune, 0.050f, 1.f, timbre);
+        // right ear echoes first, then left
+        AddMarimbaNote(channels[c], kLanding + (c == 1 ? 0.110f : 0.220f), to * detune, 0.050f,
+                       c == 1 ? 0.28f : 0.12f, timbre);
+    }
+
+    float peak = 0;
+    for (std::vector<float>& ch : channels) {
+        for (uint32_t i = 0; i < kCount; i++) {
+            const float left = (float)(kCount - 1 - i) / kToggleSoundRate;
+            if (left < kTailFade) ch[i] *= left / kTailFade; // land on exact silence
+            peak = std::max(peak, std::abs(ch[i]));
+        }
+    }
+    const float scale = (on ? 0.2512f : 0.1884f) / std::max(peak, 1e-6f); // peak at -12 / -14.5 dB
+
+    std::vector<char> wav(44 + kDataSize);
+    char* p = wav.data();
+    auto put = [&p](auto v) { memcpy(p, &v, sizeof(v)); p += sizeof(v); };
+    auto tag = [&p](const char* s) { memcpy(p, s, 4); p += 4; };
+    tag("RIFF"), put(36 + kDataSize), tag("WAVE");
+    tag("fmt "), put(16u), put(uint16_t(WAVE_FORMAT_PCM)), put(uint16_t(2)), put(kToggleSoundRate),
+        put(kToggleSoundRate * 4), put(uint16_t(4)), put(uint16_t(16));
+    tag("data"), put(kDataSize);
+    for (uint32_t i = 0; i < kCount; i++)
+        for (const std::vector<float>& ch : channels)
+            put(int16_t(std::clamp(ch[i] * scale, -1.f, 1.f) * 32767));
+    return wav;
+}
+
 static void PlayEnabledSound(bool enabled)
 {
-    wchar_t path[MAX_PATH];
-    if (!GetWindowsDirectoryW(path, std::size(path))) return;
-    wcscat_s(path, enabled ? L"\\Media\\Windows Hardware Insert.wav" : L"\\Media\\Windows Hardware Remove.wav");
-    PlaySoundW(path, nullptr, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+    // SND_ASYNC | SND_MEMORY reads the buffer while playing, so it has to outlive the call
+    static const std::vector<char> s_on = SynthToggleWav(true);
+    static const std::vector<char> s_off = SynthToggleWav(false);
+    PlaySoundW((LPCWSTR)(enabled ? s_on : s_off).data(), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 }
 
 std::pair<std::shared_ptr<Profile>, HWND> App::ActiveTarget()
