@@ -25,6 +25,8 @@ private:
     std::jthread _thread;
     // press tick per VK (0 = released); written by the hook thread, read by the input worker
     std::array<std::atomic<DWORD>, kKeyboardKeysCount> _state;
+    // true while the physical down of this key was swallowed by us, so win32k never saw it
+    std::array<std::atomic<bool>, kKeyboardKeysCount> _swallowed;
     Callback_t _onPress, _onRelease;
 
     Keyboard() = default;

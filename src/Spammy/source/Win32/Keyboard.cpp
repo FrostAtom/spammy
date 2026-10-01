@@ -79,6 +79,8 @@ void Keyboard::ResetState()
 {
     for (auto& s : _state)
         s = 0;
+    for (auto& s : _swallowed)
+        s = false;
 }
 
 void Keyboard::SyncState()
@@ -226,5 +228,13 @@ bool Keyboard::HandleKey(unsigned short vkCode, bool down)
     const bool repeat = (_state[vkCode] != 0) == down;
     if (!repeat) _state[vkCode] = newState;
     const Callback_t& callback = down ? _onPress : _onRelease;
-    return callback && callback(vkCode, repeat);
+    bool swallow = callback && callback(vkCode, repeat);
+    // only swallow what pairs with a down we swallowed: if win32k saw the down (key held before the hook
+    // went up, SyncState seeded it), blocking its up leaves the button stuck system-wide — every click
+    // anywhere is then routed to the "mouse owner" window until that very button reaches win32k again
+    if (down && !repeat)
+        _swallowed[vkCode] = swallow;
+    else
+        swallow = swallow && _swallowed[vkCode];
+    return swallow;
 }
