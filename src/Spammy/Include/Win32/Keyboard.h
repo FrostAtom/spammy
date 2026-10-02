@@ -27,6 +27,11 @@ private:
     std::array<std::atomic<bool>, kKeyboardKeysCount> _pressed;
     // hook thread only: true while the physical down of this key was swallowed by us, so win32k never saw it
     std::array<bool, kKeyboardKeysCount> _swallowed = {};
+    // hook thread only: set by MaskAlt, cleared once the last Alt is physically let go; meanwhile the system
+    // believes Alt is up, so every physical Alt event is swallowed to keep it that way
+    bool _altMasked = false;
+    // Alts the system still saw down when MaskAlt hid them, for the input worker to lift; bit 0: LAlt, bit 1: RAlt
+    std::atomic<unsigned> _altsToRelease = 0;
     Callback_t _onPress, _onRelease;
 
     Keyboard() = default;
@@ -44,6 +49,11 @@ public:
     static constexpr bool IsMouseButton(unsigned short vkCode) noexcept;
     bool IsPressed(unsigned short vkCode) const noexcept { return _pressed[vkCode]; }
     void Press(unsigned short vkCode);
+    // hook thread: hides Alt from the system until both Alts are physically up; KeyDownWithoutAlt lifts it
+    void MaskAlt();
+    // input worker: lifts the Alts MaskAlt hid, then sends this key's down, as one uninterruptible sequence
+    void KeyDownWithoutAlt(unsigned short vkCode);
+    void KeyUp(unsigned short vkCode);
     void OnPress(Callback_t&& func) { _onPress = std::move(func); }
     void OnRelease(Callback_t&& func) { _onRelease = std::move(func); }
     static const char* GetKeyName(unsigned short vkCode);

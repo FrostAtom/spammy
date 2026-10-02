@@ -28,6 +28,7 @@ private:
     struct InputEvent {
         KeyHandler_t handler; // NULL: the pause key was hit
         unsigned short vkCode;
+        bool keep = false; // survives a foreground switch: dropping it would leave a key stuck down
 
         bool IsPauseToggle() const { return !handler; }
     };
@@ -56,6 +57,8 @@ private:
     std::mutex _targetMutex;
     // pause key whose down toggled and whose up/repeats are still to be swallowed; hook thread only
     unsigned short _heldPauseVk = 0;
+    // an Alt+F4 down went in as a plain F4 and its up must follow the same way; hook thread only
+    bool _altF4Held = false;
 
     std::jthread _inputThread;
     HANDLE _inputWake = nullptr;

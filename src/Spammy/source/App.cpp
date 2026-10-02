@@ -192,6 +192,16 @@ static void PlayEnabledSound(bool enabled)
     PlaySoundW((LPCWSTR)(enabled ? s_on : s_off).data(), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 }
 
+static void PressWithoutAlt(unsigned short vkCode)
+{
+    sKeyboard.KeyDownWithoutAlt(vkCode);
+}
+
+static void ReleaseKey(unsigned short vkCode)
+{
+    sKeyboard.KeyUp(vkCode);
+}
+
 std::pair<std::shared_ptr<Profile>, HWND> App::ActiveTarget()
 {
     std::scoped_lock lock(_targetMutex);
@@ -211,6 +221,14 @@ bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
         if (!down) _heldPauseVk = 0;
         return true;
     }
+    // even if the profile changed since: the system got our injected down, so it must get our up, after it
+    if (vkCode == VK_F4 && _altF4Held) {
+        if (!down) {
+            _altF4Held = false;
+            PostInput({&ReleaseKey, VK_F4, true});
+        }
+        return true;
+    }
     if (!profile) return false;
 
     const unsigned mods = sKeyboard.TestModifiers();
@@ -222,7 +240,16 @@ bool App::OnKeyEvent(bool down, UINT vkCode, bool repeat)
         return true;
     }
     if (profile->disableWin && (vkCode == VK_RWIN || vkCode == VK_LWIN)) return true;
-    if (profile->disableAltF4 && vkCode == VK_F4 && (mods & KeyMod_Alt)) return true;
+    // Alt+F4 goes in as a plain F4, so in-game binds on F4 still fire: Alt is lifted for it and stays hidden from
+    // the system until let go physically
+    if (profile->disableAltF4 && vkCode == VK_F4 && (mods & KeyMod_Alt)) {
+        if (down && !repeat) {
+            _altF4Held = true;
+            sKeyboard.MaskAlt();
+            PostInput({&PressWithoutAlt, VK_F4, true});
+        }
+        return true;
+    }
     if (!sConfig.enabled) return false;
 
     const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, mods));
@@ -329,6 +356,8 @@ void App::TickAutofire(const Profile& profile)
     const unsigned mods = sKeyboard.TestModifiers();
     for (unsigned short vk = 1; vk < kKeyboardKeysCount; vk++) {
         if (!sKeyboard.IsPressed(vk)) continue;
+        // the hook may not have lifted Alt yet, and an F4 injected under it is Alt+F4 again
+        if (vk == VK_F4 && profile.disableAltF4 && (mods & KeyMod_Alt)) continue;
         const KeyMode* mode = FindKeyMode(ResolveKeyAction(profile, vk, mods));
         if (mode && mode->onTick) mode->onTick(vk);
     }
@@ -368,10 +397,11 @@ void App::UpdateActiveTarget()
         _activeProfile = profile;
         _activeHwnd = hwnd;
     }
-    // presses queued for the previous window must not be injected into the new one; a pending pause toggle still counts
+    // presses queued for the previous window must not be injected into the new one; a pending pause toggle and the
+    // kept halves of a key the system already holds still count
     {
         std::scoped_lock lock(_inputMutex);
-        std::erase_if(_inputQueue, [](const InputEvent& ev) { return !ev.IsPauseToggle(); });
+        std::erase_if(_inputQueue, [](const InputEvent& ev) { return !ev.IsPauseToggle() && !ev.keep; });
     }
 
     const bool selfFocused = hwnd == _mainWindow->Native();

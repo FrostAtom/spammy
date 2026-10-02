@@ -4,6 +4,8 @@ namespace {
 
 // tags injected input so the hooks can tell our own SendInput from physical keys
 constexpr ULONG_PTR kEmulatedExtraInfo = 0x80000000;
+// an unassigned VK tapped between Alt's down and up, so the up doesn't open the window menu
+constexpr unsigned short kMenuMaskVk = 0xE8;
 
 bool IsEmulated(ULONG_PTR extraInfo) noexcept
 {
@@ -81,6 +83,8 @@ void Keyboard::ResetState()
     for (auto& pressed : _pressed)
         pressed = false;
     _swallowed.fill(false);
+    // _altsToRelease stays: a pending lift must still reach the system, an extra Alt up is harmless
+    _altMasked = false;
 }
 
 void Keyboard::SyncState()
@@ -140,6 +144,33 @@ void Keyboard::Press(unsigned short vkCode)
     // one SendInput call: down+up land in the input stream back-to-back, nothing can interleave
     INPUT in[2] = {MakeInput(vkCode, true), MakeInput(vkCode, false)};
     SendInput(2, in, sizeof(INPUT));
+}
+
+void Keyboard::MaskAlt()
+{
+    if (_altMasked) return; // already hidden: the system's Alt is (or is about to be) up
+    _altMasked = true;
+    _altsToRelease |= (_pressed[VK_LMENU] ? 1u : 0u) | (_pressed[VK_RMENU] ? 2u : 0u);
+}
+
+void Keyboard::KeyDownWithoutAlt(unsigned short vkCode)
+{
+    INPUT in[5];
+    UINT count = 0;
+    if (const unsigned alts = _altsToRelease.exchange(0)) {
+        in[count++] = MakeInput(kMenuMaskVk, true);
+        in[count++] = MakeInput(kMenuMaskVk, false);
+        if (alts & 1) in[count++] = MakeInput(VK_LMENU, false);
+        if (alts & 2) in[count++] = MakeInput(VK_RMENU, false);
+    }
+    in[count++] = MakeInput(vkCode, true);
+    SendInput(count, in, sizeof(INPUT));
+}
+
+void Keyboard::KeyUp(unsigned short vkCode)
+{
+    INPUT in = MakeInput(vkCode, false);
+    SendInput(1, &in, sizeof(INPUT));
 }
 
 const char* Keyboard::GetKeyName(unsigned short vkCode)
@@ -222,7 +253,12 @@ bool Keyboard::HandleKey(unsigned short vkCode, bool down)
 {
     // auto-repeat: a down while already down, or an up for a key we never saw go down
     const bool repeat = _pressed[vkCode].exchange(down) == down;
-    if (IsModifier(vkCode)) return false;
+    if (IsModifier(vkCode)) {
+        if (!_altMasked || (vkCode != VK_LMENU && vkCode != VK_RMENU)) return false;
+        // the system already got (or is getting) Alt's up from KeyDownWithoutAlt, this one included
+        if (!_pressed[VK_LMENU] && !_pressed[VK_RMENU]) _altMasked = false;
+        return true;
+    }
     const Callback_t& callback = down ? _onPress : _onRelease;
     const bool swallow = callback && callback(vkCode, repeat);
     // only swallow what pairs with a down we swallowed: if win32k saw the down (key held before the hook
