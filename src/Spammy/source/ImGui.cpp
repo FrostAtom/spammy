@@ -174,14 +174,63 @@ bool UiStepper(const char* id, const ImVec2& pos, float width, int count, int& v
     return changed;
 }
 
+// soft drop shadow outside a rounded rect: rings fading out from its edge, reaching further below than above
+void AddShadow(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float rounding, float size, float alpha)
+{
+    constexpr int kCornerSegs = 8, kPoints = (kCornerSegs + 1) * 4, kRings = 6;
+    constexpr float kBelow = 1.5f, kAbove = 0.5f;
+    const ImVec2 centers[4] = {min + ImVec2(rounding, rounding), ImVec2(max.x - rounding, min.y + rounding),
+                               max - ImVec2(rounding, rounding), ImVec2(min.x + rounding, max.y - rounding)};
+    ImVec2 dirs[kPoints];
+    for (int j = 0; j < kPoints; j++) {
+        const int corner = j / (kCornerSegs + 1), seg = j % (kCornerSegs + 1);
+        const float a = IM_PI * (1.f + 0.5f * (float)corner + 0.5f * (float)seg / kCornerSegs);
+        dirs[j] = ImVec2(cosf(a), sinf(a));
+    }
+
+    const float reach = size * kBelow;
+    dl->PushClipRect(min - ImVec2(reach, reach), max + ImVec2(reach, reach), false);
+    const ImVec2 uv = dl->_Data->TexUvWhitePixel;
+    dl->PrimReserve(kRings * kPoints * 6, (kRings + 1) * kPoints);
+    const unsigned base = dl->_VtxCurrentIdx;
+    for (int i = 0; i <= kRings; i++) {
+        const float t = (float)i / kRings;
+        const float spread = size * t;
+        const ImU32 col = ImGui::UiWithAlpha(IM_COL32_BLACK, alpha * (1.f - t) * (1.f - t));
+        for (int j = 0; j < kPoints; j++) {
+            const ImVec2 d = dirs[j], at = centers[j / (kCornerSegs + 1)];
+            const float stretch = d.y > 0.f ? kBelow : kAbove;
+            dl->PrimWriteVtx(ImVec2(at.x + d.x * (rounding + spread), at.y + d.y * (rounding + spread * stretch)), uv,
+                             col);
+        }
+    }
+    for (int i = 0; i < kRings; i++)
+        for (int j = 0; j < kPoints; j++) {
+            const ImDrawIdx a = (ImDrawIdx)(base + i * kPoints + j);
+            const ImDrawIdx b = (ImDrawIdx)(base + i * kPoints + (j + 1) % kPoints);
+            const ImDrawIdx c = (ImDrawIdx)(a + kPoints);
+            const ImDrawIdx d = (ImDrawIdx)(b + kPoints);
+            for (const ImDrawIdx idx : {a, b, d, a, d, c})
+                dl->PrimWriteIdx(idx);
+        }
+    dl->PopClipRect();
+}
+
 bool BeginPopupAnimated(const char* str_id, bool modal)
 {
     using namespace ImGui;
     auto begin = [&] {
-        if (!modal) return BeginPopup(str_id);
-        return BeginPopupModal(str_id, nullptr,
-                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_AlwaysAutoResize);
+        const bool open = modal ? BeginPopupModal(str_id, nullptr,
+                                                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize)
+                                : BeginPopup(str_id);
+        if (open) {
+            // drawn first, so it sits under the popup's content; the rings start at the frame edge and stay outside
+            const ImGuiWindow* window = GetCurrentWindow();
+            AddShadow(window->DrawList, window->Pos, window->Pos + window->Size, window->WindowRounding, 18.f,
+                      0.45f * GetStyle().Alpha);
+        }
+        return open;
     };
     const ImGuiID animId = SubId(GetID(str_id), AnimSlot_Popup);
     if (!IsPopupOpen(str_id)) {

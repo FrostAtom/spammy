@@ -36,6 +36,15 @@ private:
     bool _moving = false;
     Vec2D<int> _movePos;
 
+    // show/hide slides the window in from the left and out to the right while fading it (a layered window meanwhile)
+    enum Swipe { Swipe_None, Swipe_In, Swipe_Out };
+    Swipe _swipe = Swipe_None;
+    bool _swipeQuit = false; // the swipe out ends the app instead of hiding the window
+    float _swipeT = 0.f;
+    float _swipeFromX = 0.f, _swipeFromAlpha = 0.f; // where the current swipe started, x relative to the rest spot
+    float _swipeX = 0.f, _swipeAlpha = 1.f;         // the frame shown now
+    int _restX = 0;                                 // where the window sits when no swipe is running
+
     unsigned _dpi = 96;
     float _scaleFactor = 1.f;
     float _scale = 1.f;
@@ -57,15 +66,18 @@ public:
     HWND Native() const { return _hwnd; }
     void Update();
 
-    void Close() { _mustQuit = true; }
+    // swipes the window out first when it's on screen
+    void Close();
     void Cleanup();
     bool MustQuit() const { return _mustQuit; }
     bool WantQuit() { return std::exchange(_wantQuit, false); }
 
     bool IsWndMaximized() const { return ShowCmd() == SW_MAXIMIZE; }
     bool IsWndNormalized() const { return ShowCmd() == SW_NORMAL; }
+    // Show swipes in from hidden (or turns a running swipe out back), Hide swipes out; a minimized window skips it
     void Show();
     void Hide();
+    // false already while swiping out
     bool IsShown() const;
     void Focus();
 
@@ -108,6 +120,12 @@ private:
     void StartMove();
     void StopMove() { _moving = false; }
     void UpdateMove();
+
+    void StartSwipe(Swipe swipe);
+    void StepSwipe(float dt);
+    void ApplySwipeFrame();
+    void FinishSwipe();
+    void SetLayered(bool layered);
 
     float DpiScale() const { return _scaleFactor * (float)_dpi / 96.f; }
     void ApplyScale(bool keepCenter);

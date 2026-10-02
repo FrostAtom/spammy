@@ -5,6 +5,10 @@ static constexpr std::array<const char*, Window::ErrorCode_COUNT> s_errorCodeNam
     "OK", "Invalid call", "Windows error", "Renderer error", "ImGui error",
 };
 
+static constexpr float s_swipeDistance = 56.f; // logical px the window travels on show / hide
+static constexpr float s_swipeInSec = 0.22f;
+static constexpr float s_swipeOutSec = 0.16f;
+
 const char* Window::FormatError(ErrorCode code)
 {
     return s_errorCodeNames[code];
@@ -114,17 +118,99 @@ int Window::ShowCmd() const
 
 void Window::Show()
 {
-    if (_hwnd) ShowWindow(_hwnd, SW_SHOWNORMAL);
+    if (!_hwnd) return;
+    // a minimized window comes back with the system restore animation instead
+    if (!IsIconic(_hwnd) && (!IsWindowVisible(_hwnd) || _swipe == Swipe_Out)) StartSwipe(Swipe_In);
+    ShowWindow(_hwnd, SW_SHOWNORMAL);
 }
 
 void Window::Hide()
 {
-    if (_hwnd) ShowWindow(_hwnd, SW_HIDE);
+    if (!_hwnd || _swipe == Swipe_Out) return;
+    // Update() doesn't run for a minimized window, so there'd be nothing to drive the swipe
+    if (IsIconic(_hwnd) || !IsWindowVisible(_hwnd))
+        ShowWindow(_hwnd, SW_HIDE);
+    else
+        StartSwipe(Swipe_Out);
+}
+
+void Window::Close()
+{
+    if (!_hwnd || IsIconic(_hwnd) || !IsWindowVisible(_hwnd)) {
+        _mustQuit = true;
+        return;
+    }
+    _swipeQuit = true;
+    if (_swipe != Swipe_Out) StartSwipe(Swipe_Out);
 }
 
 bool Window::IsShown() const
 {
-    return _hwnd && IsWindowVisible(_hwnd);
+    return _hwnd && IsWindowVisible(_hwnd) && _swipe != Swipe_Out;
+}
+
+void Window::SetLayered(bool layered)
+{
+    const LONG_PTR style = GetWindowLongPtrW(_hwnd, GWL_EXSTYLE);
+    SetWindowLongPtrW(_hwnd, GWL_EXSTYLE, layered ? style | WS_EX_LAYERED : style & ~WS_EX_LAYERED);
+}
+
+void Window::StartSwipe(Swipe swipe)
+{
+    if (_swipe == Swipe_None) {
+        RECT rect;
+        GetWindowRect(_hwnd, &rect);
+        _restX = rect.left;
+        // from hidden it comes in from the left, from the screen it leaves from where it stands
+        _swipeX = swipe == Swipe_In ? -s_swipeDistance : 0.f;
+        _swipeAlpha = swipe == Swipe_In ? 0.f : 1.f;
+        SetLayered(true); // the alpha below must follow right away: a layered window without one isn't drawn
+    }
+    // a swipe that turns around midway continues from wherever the previous one got to
+    _swipe = swipe;
+    _swipeT = 0.f;
+    _swipeFromX = _swipeX;
+    _swipeFromAlpha = _swipeAlpha;
+    ApplySwipeFrame();
+}
+
+void Window::StepSwipe(float dt)
+{
+    if (_swipe == Swipe_None) return;
+    const bool in = _swipe == Swipe_In;
+    _swipeT = ImMin(_swipeT + dt / (in ? s_swipeInSec : s_swipeOutSec), 1.f);
+    // decelerates into place, accelerates away
+    const float left = 1.f - _swipeT;
+    const float eased = in ? 1.f - left * left * left : _swipeT * _swipeT;
+    _swipeX = ImLerp(_swipeFromX, in ? 0.f : s_swipeDistance, eased);
+    _swipeAlpha = ImLerp(_swipeFromAlpha, in ? 1.f : 0.f, in ? eased : _swipeT);
+    ApplySwipeFrame();
+    if (_swipeT >= 1.f) FinishSwipe();
+}
+
+void Window::ApplySwipeFrame()
+{
+    SetLayeredWindowAttributes(_hwnd, 0, (BYTE)lroundf(_swipeAlpha * 255.f), LWA_ALPHA);
+    // the user grabbed the window mid-swipe: it's theirs to place now
+    if (!_moving)
+        SetWindowPos(_hwnd, nullptr, _restX + (int)lroundf(_swipeX * _scale), _position.y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void Window::FinishSwipe()
+{
+    if (std::exchange(_swipe, Swipe_None) == Swipe_In) {
+        SetLayered(false); // a layered window composes slower, keep it only for the fades
+        return;
+    }
+    if (std::exchange(_swipeQuit, false)) {
+        _mustQuit = true;
+        return;
+    }
+    ShowWindow(_hwnd, SW_HIDE);
+    // back to the rest spot while hidden, so the next swipe in lands where the window was
+    SetWindowPos(_hwnd, nullptr, _restX, _position.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetLayered(false);
 }
 
 void Window::SetName(const wchar_t* name)
@@ -217,6 +303,8 @@ void Window::Update()
     if (!IsReady()) return;
     if (BeginFrame()) Draw();
     EndFrame();
+    // capped so a hitch doesn't skip the swipe altogether
+    StepSwipe(ImMin(ImGui::GetIO().DeltaTime, 1.f / 30.f));
 }
 
 void Window::EnableTitleBar(bool v)
@@ -417,7 +505,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 
 bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
 {
-    *result = ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam);
+    // a window swiping out is already gone for the user, it must not take clicks meant for what's under it
+    *result = _swipe == Swipe_Out ? 0 : ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam);
     if (*result) return true;
     if (_trayIcon && _trayIcon->HandleMessage(msg, wParam, lParam)) return true;
 
