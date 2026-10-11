@@ -53,8 +53,12 @@ public:
     void SetMenu(MenuCallback_t&& func);
 
 private:
+    // bound to a window; the icon itself may be missing from the tray until the next TaskbarCreated
     bool IsCreated() const { return _data.hWnd != nullptr; }
     bool Create(HWND hwnd, HICON icon);
+    // (re)adds the icon with everything set so far
+    bool Add();
+    static UINT TaskbarCreatedMsg();
     void Cleanup();
     void Reset();
     bool Notify(DWORD message);

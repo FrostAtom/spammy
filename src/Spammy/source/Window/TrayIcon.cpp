@@ -95,8 +95,20 @@ void TrayIcon::UpdateIcon(HICON icon)
     Notify(NIM_MODIFY);
 }
 
+UINT TrayIcon::TaskbarCreatedMsg()
+{
+    static const UINT s_msg = RegisterWindowMessageW(L"TaskbarCreated");
+    return s_msg;
+}
+
 bool TrayIcon::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    // a restarted explorer comes up with an empty tray and broadcasts this to every top-level window
+    // (also sent on a taskbar DPI change with the icon still there; NIM_ADD then just fails, nothing lost)
+    if (msg && msg == TaskbarCreatedMsg()) {
+        if (IsCreated()) Add();
+        return true;
+    }
     // NOTIFYICON_VERSION_4: HIWORD(lParam) = icon id, LOWORD(lParam) = event, wParam = cursor position
     if (msg != WM_TRAYCMD || HIWORD(lParam) != _data.uID) return false;
     switch (LOWORD(lParam)) {
@@ -114,11 +126,17 @@ bool TrayIcon::Create(HWND hwnd, HICON icon)
     _data.hWnd = hwnd;
     _data.hIcon = icon;
     _data.uFlags |= NIF_ICON;
-    if (Notify(NIM_ADD)) {
-        if (Notify(NIM_SETVERSION)) return true;
-        Notify(NIM_DELETE);
-    }
-    _data.hWnd = nullptr;
+    // the shell runs unelevated: UIPI would drop its broadcast to an elevated instance
+    ChangeWindowMessageFilterEx(hwnd, TaskbarCreatedMsg(), MSGFLT_ALLOW, nullptr);
+    // hWnd stays set even if this fails (autolaunch can beat the taskbar), TaskbarCreated adds it once the tray is up
+    return Add();
+}
+
+bool TrayIcon::Add()
+{
+    if (!Notify(NIM_ADD)) return false;
+    if (Notify(NIM_SETVERSION)) return true;
+    Notify(NIM_DELETE);
     return false;
 }
 
