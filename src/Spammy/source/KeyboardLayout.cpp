@@ -2,37 +2,43 @@
 
 namespace {
 
-// the full 100% layout is ~110 keys, EXTRA adds another ~35
-using KeyList = boost::container::static_vector<KeyboardKey, 160>;
+constexpr size_t kMaxKeysPerLayout = 160;
+using KeyList = boost::container::static_vector<KeyboardKey, kMaxKeysPerLayout>;
 
-// single-character key labels; VK codes of digits and latin letters equal their ASCII codes
-struct CharLabels {
+struct SingleCharLabels {
     char str[128][2] = {};
-    constexpr CharLabels()
+    constexpr SingleCharLabels()
     {
         for (int c = 0; c < 128; c++)
             str[c][0] = (char)c;
     }
 };
-constexpr CharLabels kCharLabels;
+constexpr SingleCharLabels kSingleCharLabels;
+
+constexpr UINT VkOfDigitOrCapital(char c)
+{
+    return (unsigned char)c;
+}
 
 constexpr const char* kFKeyNames[] = {"F1",  "F2",  "F3",  "F4",  "F5",  "F6",  "F7",  "F8",
                                       "F9",  "F10", "F11", "F12", "F13", "F14", "F15", "F16",
                                       "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24"};
 
-// positions relative to the block's top-left corner
+constexpr float kNavClusterX = 15.5f;
+constexpr float kNumpadX = 18.75f;
+
 constexpr KeyboardKey kNavCluster[] = {
-    {"INS", VK_INSERT, 0, 0}, {"HOME", VK_HOME, 1, 0}, {"PGUP", VK_PRIOR, 2, 0},  {"DEL", VK_DELETE, 0, 1},
-    {"END", VK_END, 1, 1},    {"PGDN", VK_NEXT, 2, 1}, {"UP", VK_UP, 1, 3},       {"LEFT", VK_LEFT, 0, 4},
+    {"INS", VK_INSERT, 0, 0}, {"HOME", VK_HOME, 1, 0},   {"PGUP", VK_PRIOR, 2, 0}, {"DEL", VK_DELETE, 0, 1},
+    {"END", VK_END, 1, 1},    {"PGDN", VK_NEXT, 2, 1},   {"UP", VK_UP, 1, 3},      {"LEFT", VK_LEFT, 0, 4},
     {"DOWN", VK_DOWN, 1, 4},  {"RIGHT", VK_RIGHT, 2, 4},
 };
 
 constexpr KeyboardKey kNumpad[] = {
-    {"NUM", VK_NUMLOCK, 0, 0}, {"/", VK_DIVIDE, 1, 0},     {"*", VK_MULTIPLY, 2, 0}, {"-", VK_SUBTRACT, 3, 0},
-    {"7", VK_NUMPAD7, 0, 1},   {"8", VK_NUMPAD8, 1, 1},    {"9", VK_NUMPAD9, 2, 1},  {"+", VK_ADD, 3, 1, 1, 2},
-    {"4", VK_NUMPAD4, 0, 2},   {"5", VK_NUMPAD5, 1, 2},    {"6", VK_NUMPAD6, 2, 2},  {"1", VK_NUMPAD1, 0, 3},
-    {"2", VK_NUMPAD2, 1, 3},   {"3", VK_NUMPAD3, 2, 3},    {"ENT", VK_RETURN, 3, 3, 1, 2},
-    {"0", VK_NUMPAD0, 0, 4, 2}, {".", VK_DECIMAL, 2, 4},
+    {"NUM", VK_NUMLOCK, 0, 0}, {"/", VK_DIVIDE, 1, 0},  {"*", VK_MULTIPLY, 2, 0},       {"-", VK_SUBTRACT, 3, 0},
+    {"7", VK_NUMPAD7, 0, 1},   {"8", VK_NUMPAD8, 1, 1}, {"9", VK_NUMPAD9, 2, 1},        {"+", VK_ADD, 3, 1, 1, 2},
+    {"4", VK_NUMPAD4, 0, 2},   {"5", VK_NUMPAD5, 1, 2}, {"6", VK_NUMPAD6, 2, 2},        {"1", VK_NUMPAD1, 0, 3},
+    {"2", VK_NUMPAD2, 1, 3},   {"3", VK_NUMPAD3, 2, 3}, {"ENT", VK_RETURN, 3, 3, 1, 2}, {"0", VK_NUMPAD0, 0, 4, 2},
+    {".", VK_DECIMAL, 2, 4},
 };
 
 struct Grid {
@@ -43,17 +49,16 @@ struct Grid {
         keys.push_back({name, vk, x, y, w, h});
     }
 
-    // one unit-wide key per character, left to right
-    void PutRun(const char* chars, float x, float y)
+    void PutRun(const char* digitsOrCapitals, float x, float y)
     {
-        for (; *chars; chars++, x += 1.f)
-            Put(kCharLabels.str[(unsigned char)*chars], *chars, x, y);
+        for (const char* c = digitsOrCapitals; *c; c++, x += 1.f)
+            Put(kSingleCharLabels.str[(unsigned char)*c], VkOfDigitOrCapital(*c), x, y);
     }
 
-    void PutBlock(std::span<const KeyboardKey> block, float x, float y)
+    void PutBlock(std::span<const KeyboardKey> block, float left, float top)
     {
         for (const KeyboardKey& key : block)
-            Put(key.name, key.vkCode, x + key.x, y + key.y, key.w, key.h);
+            Put(key.name, key.vkCode, left + key.x, top + key.y, key.w, key.h);
     }
 };
 
@@ -93,10 +98,11 @@ void AddHomeRow(Grid& g, float oy, KeyboardVariant v, bool compact)
 {
     g.Put("CAPS", VK_CAPITAL, 0.f, oy, 1.75f);
     g.PutRun("ASDFGHJKL", 1.75f, oy);
-    g.Put(";", 0xBA, 10.75f, oy);
+    const bool jis = v == KeyboardVariant_Jis;
+    g.Put(";", jis ? 0xBB : 0xBA, 10.75f, oy);
     switch (v) {
     case KeyboardVariant_Jis:
-        g.Put(":", 0xBF, 11.75f, oy);
+        g.Put(":", 0xBA, 11.75f, oy);
         g.Put("]", 0xDD, 12.75f, oy);
         break;
     case KeyboardVariant_Iso:
@@ -185,10 +191,12 @@ void AddCore(Grid& g, float oy, KeyboardVariant v, bool compact)
     AddSpaceRow(g, oy + 4.f, v, compact);
 }
 
-// column of the i-th F-key; compact: packed without the 0.5u gaps between F4|F5 and F8|F9
-float FKeyX(int i, bool compact)
+float FKeyX(int index, bool compact)
 {
-    return compact ? 1.f + i : 2.f + i + 0.5f * (i / 4);
+    if (compact) return 1.f + index;
+    constexpr float kGapBetweenFours = 0.5f;
+    const int groupOfFour = index / 4;
+    return 2.f + index + kGapBetweenFours * groupOfFour;
 }
 
 void AddFunctionRow(Grid& g, float oy, bool compact)
@@ -196,22 +204,22 @@ void AddFunctionRow(Grid& g, float oy, bool compact)
     g.Put("ESC", VK_ESCAPE, 0.f, oy);
     for (int i = 0; i < 12; i++)
         g.Put(kFKeyNames[i], VK_F1 + i, FKeyX(i, compact), oy);
-    const float sys = compact ? 13.f : 15.5f;
-    g.Put("PRT", VK_SNAPSHOT, sys, oy);
-    g.Put("SLK", VK_SCROLL, sys + 1.f, oy);
-    g.Put("PSE", VK_PAUSE, sys + 2.f, oy);
+    const float systemKeysX = compact ? 13.f : kNavClusterX;
+    g.Put("PRT", VK_SNAPSHOT, systemKeysX, oy);
+    g.Put("SLK", VK_SCROLL, systemKeysX + 1.f, oy);
+    g.Put("PSE", VK_PAUSE, systemKeysX + 2.f, oy);
 }
 
-// two rows on top of a full-size board for keys Windows maps to scancodes but no 100% board carries:
-// F13-F24 sit above F1-F12, browser keys above the nav cluster / numpad, media, launch, Sleep, Clear
-// (numpad 5 with NumLock off) and Break (Ctrl+Pause arrives as its own VK) fill the second row
 void AddExtraRows(Grid& g)
 {
+    constexpr UINT kVkNumpad5WithoutNumLock = VK_CLEAR;
+    constexpr UINT kVkCtrlPause = VK_CANCEL;
+    constexpr float kAbovePauseX = kNavClusterX + 2.f;
     static constexpr KeyboardKey kBrowser[] = {
-        {"W<", VK_BROWSER_BACK, 15.5f, 0},     {"W>", VK_BROWSER_FORWARD, 16.5f, 0},
-        {"WHOM", VK_BROWSER_HOME, 17.5f, 0},   {"WRLD", VK_BROWSER_REFRESH, 18.75f, 0},
-        {"WSTP", VK_BROWSER_STOP, 19.75f, 0},  {"WSRC", VK_BROWSER_SEARCH, 20.75f, 0},
-        {"WFAV", VK_BROWSER_FAVORITES, 21.75f, 0},
+        {"W<", VK_BROWSER_BACK, kNavClusterX, 0},          {"W>", VK_BROWSER_FORWARD, kNavClusterX + 1.f, 0},
+        {"WHOM", VK_BROWSER_HOME, kNavClusterX + 2.f, 0},  {"WRLD", VK_BROWSER_REFRESH, kNumpadX, 0},
+        {"WSTP", VK_BROWSER_STOP, kNumpadX + 1.f, 0},      {"WSRC", VK_BROWSER_SEARCH, kNumpadX + 2.f, 0},
+        {"WFAV", VK_BROWSER_FAVORITES, kNumpadX + 3.f, 0},
     };
     struct NamedKey {
         const char* name;
@@ -229,10 +237,10 @@ void AddExtraRows(Grid& g)
         g.Put(kFKeyNames[12 + i], VK_F13 + i, FKeyX(i, false), 0.f);
     g.PutBlock(kBrowser, 0.f, 0.f);
 
-    g.Put("CLR", VK_CLEAR, 0.f, 1.f);
+    g.Put("CLR", kVkNumpad5WithoutNumLock, 0.f, 1.f);
     for (int i = 0; i < (int)std::size(kMedia); i++)
         g.Put(kMedia[i].name, kMedia[i].vk, FKeyX(i, false), 1.f);
-    g.Put("BRK", VK_CANCEL, 17.5f, 1.f); // above PSE
+    g.Put("BRK", kVkCtrlPause, kAbovePauseX, 1.f);
 }
 
 KeyList Build(KeyboardForm form, KeyboardVariant variant)
@@ -252,8 +260,8 @@ KeyList Build(KeyboardForm form, KeyboardVariant variant)
         if (form == KeyboardForm_Extra) AddExtraRows(g);
         AddFunctionRow(g, oy, false);
         AddCore(g, oy + 1.25f, variant, false);
-        g.PutBlock(kNavCluster, 15.5f, oy + 1.25f);
-        if (form != KeyboardForm_Tkl) g.PutBlock(kNumpad, 18.75f, oy + 1.25f);
+        g.PutBlock(kNavCluster, kNavClusterX, oy + 1.25f);
+        if (form != KeyboardForm_Tkl) g.PutBlock(kNumpad, kNumpadX, oy + 1.25f);
         break;
     }
     case KeyboardForm_Count: break;

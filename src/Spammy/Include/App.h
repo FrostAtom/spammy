@@ -20,30 +20,27 @@ public:
     bool IsAutoStartEnabled() const;
     bool EnableAutoStart(bool state);
 
-    void DeleteProfile(const char* name);
-    // the game whose app was in the foreground most recently (its tab dot is lit); NULL until one ever was
+    void DeleteProfile(const std::shared_ptr<Profile>& profile);
     std::shared_ptr<Profile> LastActiveProfile();
 
 private:
-    // a physical key event the hook decided to swallow, handed off to the input worker; the handler is resolved at
-    // hook time, so the worker runs exactly what the event was swallowed for even if the profile changed since
     struct InputEvent {
-        KeyHandler_t handler; // NULL: the pause key was hit
+        KeyHandler_t handler;
         unsigned short vkCode;
-        bool keep = false; // survives a foreground switch: dropping it would leave a key stuck down
+        bool survivesFocusSwitch = false;
 
+        static InputEvent PauseToggle() { return {.handler = nullptr, .vkCode = 0, .survivesFocusSwitch = true}; }
         bool IsPauseToggle() const { return !handler; }
     };
 
     void UpdateActiveTarget();
-    std::shared_ptr<Profile> ActiveProfile();
     std::pair<std::shared_ptr<Profile>, HWND> ActiveTarget();
 
-    // hook thread: decide + enqueue only
+    // hook thread: decide and enqueue only
     bool OnKeyEvent(bool down, UINT vkCode, bool repeat);
     void PostInput(InputEvent ev);
 
-    // input worker thread: injection + autofire ticking, decoupled from rendering
+    // input worker thread
     void StartInputWorker();
     void StopInputWorker();
     void InputWorkerProc(std::stop_token stop);
@@ -52,16 +49,16 @@ private:
 
 private:
     std::unique_ptr<MainWindow> _mainWindow;
+    std::weak_ptr<Profile> _lastActiveProfile; // main thread only
+
+    // guards the two below; only the main thread writes them, so it may read them unlocked
+    std::mutex _targetMutex;
+    std::shared_ptr<Profile> _activeProfile;
     HWND _activeHwnd = nullptr;
 
-    std::shared_ptr<Profile> _activeProfile;
-    std::weak_ptr<Profile> _lastActiveProfile; // main thread only
-    // guards _activeProfile/_activeHwnd across the hook thread, the input worker and the main thread
-    std::mutex _targetMutex;
-    // pause key whose down toggled and whose up/repeats are still to be swallowed; hook thread only
+    // hook thread only
     unsigned short _heldPauseVk = 0;
-    // an Alt+F4 down went in as a plain F4 and its up must follow the same way; hook thread only
-    bool _altF4Held = false;
+    bool _injectedF4Held = false;
 
     std::jthread _inputThread;
     HANDLE _inputWake = nullptr;

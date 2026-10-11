@@ -1,6 +1,7 @@
 #include "Config.h"
 
 static constexpr DWORD CONFIG_SAVE_DELAY_MS = 10000;
+static constexpr const char* CONFIG_TEMP_FILE = "Spammy.json.tmp";
 
 const char* UiSizeName(UiSize size)
 {
@@ -26,15 +27,14 @@ Config& Config::Instance()
     return s_config;
 }
 
-// silently keeps the default on a missing or mistyped field
 template <class Bool>
-static void ReadBool(const nlohmann::json& json, const char* key, Bool& out)
+static void TryReadBool(const nlohmann::json& json, const char* key, Bool& out)
 {
     if (auto it = json.find(key); it != json.end() && it->is_boolean()) out = it->get<bool>();
 }
 
 template <class Enum>
-static void ReadEnum(const nlohmann::json& json, const char* key, Enum& out, int count)
+static void TryReadEnum(const nlohmann::json& json, const char* key, Enum& out, int count)
 {
     if (auto it = json.find(key); it != json.end() && it->is_number_integer()) {
         const int value = it->get<int>();
@@ -44,23 +44,26 @@ static void ReadEnum(const nlohmann::json& json, const char* key, Enum& out, int
 
 bool Config::Load()
 {
-    _lastSaveTicks = GetTickCount();
+    _lastSaveAttemptTicks = GetTickCount();
     if (!std::filesystem::is_regular_file(CONFIG_FILE)) return true;
     std::ifstream file(CONFIG_FILE);
     if (!file) return false;
     try {
         const nlohmann::json json = nlohmann::json::parse(file);
-        ReadBool(json, "enabled", enabled);
-        // older builds stored the close behaviour as a plain "hide on close" flag
-        if (auto it = json.find("minimizeToTray"); it != json.end() && it->is_boolean())
-            closeAction = it->get<bool>() ? CloseAction_Hide : CloseAction_Exit;
-        ReadEnum(json, "closeAction", closeAction, CloseAction_Count);
-        ReadBool(json, "soundsEnabled", soundsEnabled);
-        ReadEnum(json, "form", form, KeyboardForm_Count);
-        ReadEnum(json, "variant", variant, KeyboardVariant_Count);
-        ReadEnum(json, "mouse", mouse, MouseForm_Count);
-        ReadEnum(json, "uiSize", uiSize, UiSize_Count);
-        if (auto it = json.find("profiles"); it != json.end() && it->is_array()) it->get_to(profiles);
+        // the only read that throws: done before anything is applied, so a refused file leaves the defaults
+        ProfileList_t loaded;
+        if (auto it = json.find("profiles"); it != json.end() && it->is_array()) it->get_to(loaded);
+        TryReadBool(json, "enabled", enabled);
+        std::optional<bool> legacyMinimizeToTray;
+        TryReadBool(json, "minimizeToTray", legacyMinimizeToTray);
+        if (legacyMinimizeToTray) closeAction = *legacyMinimizeToTray ? CloseAction_Hide : CloseAction_Exit;
+        TryReadEnum(json, "closeAction", closeAction, CloseAction_Count);
+        TryReadBool(json, "soundsEnabled", soundsEnabled);
+        TryReadEnum(json, "form", form, KeyboardForm_Count);
+        TryReadEnum(json, "variant", variant, KeyboardVariant_Count);
+        TryReadEnum(json, "mouse", mouse, MouseForm_Count);
+        TryReadEnum(json, "uiSize", uiSize, UiSize_Count);
+        profiles = std::move(loaded);
         if (auto it = json.find("editingProfile"); it != json.end() && it->is_string())
             editingProfile = FindProfile(it->get_ref<const std::string&>().c_str());
         if (!editingProfile && !profiles.empty()) editingProfile = profiles.front();
@@ -70,12 +73,25 @@ bool Config::Load()
     return true;
 }
 
+static bool WriteFileAtomically(const char* path, const char* tempPath, std::string_view data)
+{
+    HANDLE file = CreateFileA(tempPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const bool tempOnDisk = WriteFile(file, data.data(), (DWORD)data.size(), &written, nullptr) &&
+                            written == data.size() && FlushFileBuffers(file);
+    CloseHandle(file);
+    if (tempOnDisk && MoveFileExA(tempPath, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    DeleteFileA(tempPath);
+    return false;
+}
+
 void Config::Save()
 {
-    std::ofstream file(CONFIG_FILE);
-    if (!file) return;
+    // cleared before the state is read: a change made meanwhile on the input worker stays dirty
+    _dirty = false;
+    _lastSaveAttemptTicks = GetTickCount();
 
-    // defaults are omitted so the file only contains what the user changed
     nlohmann::json json = nlohmann::json::object();
     if (!enabled) json["enabled"] = false;
     if (closeAction != CloseAction_Ask) json["closeAction"] = (int)closeAction;
@@ -87,9 +103,7 @@ void Config::Save()
     if (editingProfile) json["editingProfile"] = editingProfile->name;
     if (!profiles.empty()) json["profiles"] = profiles;
 
-    file << json.dump(2, ' ');
-    _dirty = false;
-    _lastSaveTicks = GetTickCount();
+    if (!WriteFileAtomically(CONFIG_FILE, CONFIG_TEMP_FILE, json.dump(2))) _dirty = true;
 }
 
 void Config::MarkDirty()
@@ -99,7 +113,7 @@ void Config::MarkDirty()
 
 void Config::SaveIfDirty()
 {
-    if (_dirty && GetTickCount() - _lastSaveTicks >= CONFIG_SAVE_DELAY_MS) Save();
+    if (_dirty && GetTickCount() - _lastSaveAttemptTicks >= CONFIG_SAVE_DELAY_MS) Save();
 }
 
 template <class Pred>
@@ -119,11 +133,6 @@ std::shared_ptr<Profile> Config::FindProfileByApp(const char* app) const
     return FindProfileIf(profiles, [app](const Profile& item) { return item.apps.contains(std::string_view(app)); });
 }
 
-bool Config::IsProfileExists(const char* name) const
-{
-    return FindProfile(name) != nullptr;
-}
-
 static std::string_view TrimSpaces(std::string_view text)
 {
     constexpr std::string_view kSpaces = " \t\r\n";
@@ -132,24 +141,21 @@ static std::string_view TrimSpaces(std::string_view text)
     return text.substr(first, text.find_last_not_of(kSpaces) - first + 1);
 }
 
-// at most max bytes, backing off to a code point boundary so a multi-byte character is never split
-static std::string_view CutUtf8(std::string_view text, size_t max)
+static std::string_view CutUtf8(std::string_view text, size_t maxBytes)
 {
-    if (text.size() <= max) return text;
-    size_t size = max;
-    while (size > 0 && ((unsigned char)text[size] & 0xC0) == 0x80)
+    if (text.size() <= maxBytes) return text;
+    size_t size = maxBytes;
+    while (size > 0 && IsUtf8ContinuationByte(text[size]))
         size--;
     return text.substr(0, size);
 }
 
-std::string Config::UniqueProfileName(std::string_view base, const Profile* except) const
+std::string Config::UniqueProfileName(std::string_view base) const
 {
     base = TrimSpaces(CutUtf8(TrimSpaces(base), kProfileNameMax));
     if (base.empty()) base = "Game";
     auto isFree = [&](std::string_view name) {
-        return std::ranges::none_of(profiles, [&](const std::shared_ptr<Profile>& item) {
-            return item.get() != except && item->name == name;
-        });
+        return std::ranges::none_of(profiles, [&](const std::shared_ptr<Profile>& item) { return item->name == name; });
     };
     if (isFree(base)) return std::string(base);
     for (unsigned n = 2;; n++) {
@@ -160,18 +166,11 @@ std::string Config::UniqueProfileName(std::string_view base, const Profile* exce
     }
 }
 
-std::shared_ptr<Profile> Config::CreateGame(std::string_view name, std::string_view app, const Profile* copyFrom)
+std::shared_ptr<Profile> Config::CreateGame(std::string_view name, std::string_view app)
 {
     auto profile = std::make_shared<Profile>();
     profile->name = UniqueProfileName(name);
     if (!app.empty()) profile->apps.emplace(std::string(app));
-    if (copyFrom) {
-        profile->keys = copyFrom->keys;
-        profile->speed = copyFrom->speed;
-        profile->vkPause = copyFrom->vkPause;
-        profile->disableAltF4 = copyFrom->disableAltF4;
-        profile->disableWin = copyFrom->disableWin;
-    }
     editingProfile = profiles.emplace_back(std::move(profile));
     MarkDirty();
     return editingProfile;
@@ -181,6 +180,7 @@ bool Config::RenameProfile(const std::shared_ptr<Profile>& profile, std::string_
 {
     name = TrimSpaces(name);
     if (!profile || name.empty() || name.size() > kProfileNameMax) return false;
+    if (name == profile->name) return true;
     auto taken = [&](const std::shared_ptr<Profile>& item) { return item != profile && item->name == name; };
     if (std::ranges::any_of(profiles, taken)) return false;
     profile->name = name;
@@ -188,17 +188,16 @@ bool Config::RenameProfile(const std::shared_ptr<Profile>& profile, std::string_
     return true;
 }
 
-void Config::SetEditingProfile(const char* name)
+void Config::SetEditingProfile(const std::shared_ptr<Profile>& profile)
 {
-    editingProfile = FindProfile(name);
+    editingProfile = profile;
     MarkDirty();
 }
 
-void Config::DeleteProfile(const char* name)
+void Config::DeleteProfile(const std::shared_ptr<Profile>& profile)
 {
-    const std::shared_ptr<Profile> profile = FindProfile(name);
-    if (!profile) return;
     const auto it = std::ranges::find(profiles, profile);
+    if (it == profiles.end()) return;
     if (profile == editingProfile) {
         if (it + 1 != profiles.end())
             editingProfile = *(it + 1);
@@ -211,18 +210,12 @@ void Config::DeleteProfile(const char* name)
     MarkDirty();
 }
 
-void Config::BindProfile(const char* name, const char* app)
+void Config::BindProfile(Profile& profile, const std::string& app)
 {
-    const std::shared_ptr<Profile> profile = FindProfile(name);
-    if (profile && profile->apps.emplace(app).second) MarkDirty();
+    if (profile.apps.emplace(app).second) MarkDirty();
 }
 
-void Config::UnbindProfile(const char* name, const char* app)
+void Config::UnbindProfile(Profile& profile, const std::string& app)
 {
-    const std::shared_ptr<Profile> profile = FindProfile(name);
-    if (!profile) return;
-    if (auto it = profile->apps.find(std::string_view(app)); it != profile->apps.end()) {
-        profile->apps.erase(it);
-        MarkDirty();
-    }
+    if (profile.apps.erase(app)) MarkDirty();
 }

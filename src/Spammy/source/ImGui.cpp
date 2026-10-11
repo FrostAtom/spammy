@@ -1,5 +1,9 @@
 #include "ImGui.h"
+#include <concepts>
 #include <cstring>
+#include <initializer_list>
+#include <numbers>
+#include <optional>
 
 #include "Resources/ImFont_ArchivoBold.inl"
 #include "Resources/ImFont_ArchivoExtraBold.inl"
@@ -16,68 +20,72 @@ ImFont* ImGui::UiFonts::Bold = nullptr;
 ImFont* ImGui::UiFonts::Heavy = nullptr;
 
 static ImGuiStorage s_animStorage;
-// VtxBuffer size of each open UiBeginPopup's draw list right after its shadow, for fading the content in
-static ImVector<int> s_popupVtxStart;
+static ImVector<int> s_popupContentVtxStart;
 
 namespace {
-// animation values live in s_animStorage under the widget's id hashed with one of these
+constexpr float kSilkFontSize = 9.f, kSilkTracking = 1.6f;
+constexpr float kTapeFontSize = 10.f, kTapeTracking = 1.2f, kTapeHeight = 24.f;
+constexpr ImVec2 kTapeTextOffset(10.f, 7.f);
+constexpr float kTabHeight = 34.f, kTabTextX = 28.f, kTabPadRight = 21.f;
+constexpr float kPanelRowHeight = 36.f;
+
 enum AnimSlot {
     AnimSlot_Hover = 1,
     AnimSlot_Press,
     AnimSlot_State,
-    AnimSlot_Popup = 0x506F5055, // a popup shares its id with a same-named button, keep clear of the button's slots
+    AnimSlot_Popup,
 };
 
-ImGuiID SubId(ImGuiID id, AnimSlot slot, int index = 0)
+ImGuiID AnimId(ImGuiID id, AnimSlot slot, int index = 0)
 {
     const int key[2] = {slot, index};
     return ImHashData(key, sizeof(key), id);
 }
 
+float UiAnim(ImGuiID id, float target, float speed, float initial = FLT_MAX)
+{
+    float* v = s_animStorage.GetFloatRef(id, initial == FLT_MAX ? target : initial);
+    *v += (target - *v) * (1.f - expf(-speed * GImGui->IO.DeltaTime));
+    if (fabsf(target - *v) < 0.001f) *v = target;
+    return *v;
+}
+
 struct HitBox {
     bool clicked;
     ImGuiID id;
+    bool hovered, active;
 
     float Anim(AnimSlot slot, bool target, float speed) const
     {
-        return UiAnim(SubId(id, slot), target ? 1.f : 0.f, speed);
+        return UiAnim(AnimId(id, slot), target ? 1.f : 0.f, speed);
     }
-    // these query the last item, so call them before submitting another one
-    float HoverAnim(float speed = 18.f) const { return Anim(AnimSlot_Hover, IsItemHovered(), speed); }
-    float PressAnim() const { return Anim(AnimSlot_Press, IsItemActive(), 28.f); }
+    float HoverAnim() const { return Anim(AnimSlot_Hover, hovered, 18.f); }
+    float PressAnim() const { return Anim(AnimSlot_Press, active, 28.f); }
 };
+
+HitBox LastItemHitBox(bool clicked)
+{
+    return {clicked, GetItemID(), IsItemHovered(), IsItemActive()};
+}
 
 HitBox PlaceInvisibleButton(const char* id, const ImVec2& pos, const ImVec2& size)
 {
     SetCursorScreenPos(pos);
     const bool clicked = InvisibleButton(id, size);
-    return {clicked, GetItemID()};
+    return LastItemHitBox(clicked);
 }
 
-void ScaleVtxAlpha(ImDrawList* dl, int start, float alpha)
+int PushTransparentColors(std::initializer_list<ImGuiCol> cols)
 {
-    for (int i = start; i < dl->VtxBuffer.Size; i++)
-        dl->VtxBuffer[i].col = UiWithAlpha(dl->VtxBuffer[i].col, alpha);
+    for (const ImGuiCol idx : cols)
+        PushStyleColor(idx, ImVec4(0, 0, 0, 0));
+    return (int)cols.size();
 }
 
-// fades everything drawn into dl while it lives
-struct AlphaScope {
-    ImDrawList* dl;
-    int start;
-    float alpha;
-
-    AlphaScope(ImDrawList* drawList, float fade) : dl(drawList), start(drawList->VtxBuffer.Size), alpha(fade) {}
-    ~AlphaScope()
-    {
-        if (alpha < 1.f) ScaleVtxAlpha(dl, start, alpha);
-    }
-};
-
-// ascii-uppercased copy for silkscreen, tapes and the like
-struct Upper {
+struct AsciiUpper {
     char buf[256];
 
-    explicit Upper(const char* text)
+    explicit AsciiUpper(const char* text)
     {
         size_t i = 0;
         for (; text[i] && i < sizeof(buf) - 1; i++) {
@@ -89,12 +97,12 @@ struct Upper {
     operator const char*() const { return buf; }
 };
 
-// calls fn(glyphBegin, glyphEnd, penX) for each glyph; returns the pen position past the last one
-template <class Fn>
-float ForEachTrackedGlyph(ImFont* font, float size, const char* text, float tracking, float penX, Fn&& fn)
+template <std::invocable<const char*, const char*, float> Fn>
+float ForEachTrackedGlyph(ImFont* font, float size, const char* text, float tracking, float startX, Fn&& fn)
 {
     ImFontBaked* baked = font->GetFontBaked(size);
     const char* end = text + strlen(text);
+    float penX = startX;
     for (const char* p = text; p < end;) {
         unsigned int c = 0;
         const int len = ImTextCharFromUtf8(&c, p, end);
@@ -108,7 +116,7 @@ float ForEachTrackedGlyph(ImFont* font, float size, const char* text, float trac
     return penX;
 }
 
-// text whose line box is centered on center; with Archivo's metrics that also centers the capitals
+// Archivo's capitals sit centered in its line box
 void AddTextCentered(ImDrawList* dl, ImFont* font, float size, const ImVec2& center, ImU32 col, const char* text,
                      float tracking = 0.f)
 {
@@ -116,21 +124,49 @@ void AddTextCentered(ImDrawList* dl, ImFont* font, float size, const ImVec2& cen
     AddTrackedText(dl, font, size, ImVec2(center.x - width * 0.5f, center.y - size * 0.5f), col, text, tracking);
 }
 
-void PathRoundRect(ImDrawList* dl, const ImVec2& a, const ImVec2& b, const float radii[4])
+void AddTapeText(ImDrawList* dl, const ImVec2& tapePos, ImU32 col, const char* text)
 {
-    const float limit = ImMax(0.f, ImMin(b.x - a.x, b.y - a.y) * 0.5f);
+    AddTrackedText(dl, UiFonts::Bold, kTapeFontSize, tapePos + kTapeTextOffset, col, AsciiUpper(text), kTapeTracking);
+}
+
+void PathRoundRect(ImDrawList* dl, const ImVec2& min, const ImVec2& max, const float radii[UiCorner_COUNT])
+{
+    const float limit = ImMax(0.f, ImMin(max.x - min.x, max.y - min.y) * 0.5f);
     auto corner = [&](float r, const ImVec2& tip, const ImVec2& center, float angle) {
         if (r < 0.5f)
             dl->PathLineTo(tip);
         else
             dl->PathArcTo(center, r, angle, angle + IM_PI * 0.5f);
     };
-    const float r0 = ImClamp(radii[0], 0.f, limit), r1 = ImClamp(radii[1], 0.f, limit);
-    const float r2 = ImClamp(radii[2], 0.f, limit), r3 = ImClamp(radii[3], 0.f, limit);
-    corner(r0, a, ImVec2(a.x + r0, a.y + r0), IM_PI);
-    corner(r1, ImVec2(b.x, a.y), ImVec2(b.x - r1, a.y + r1), IM_PI * 1.5f);
-    corner(r2, b, ImVec2(b.x - r2, b.y - r2), 0.f);
-    corner(r3, ImVec2(a.x, b.y), ImVec2(a.x + r3, b.y - r3), IM_PI * 0.5f);
+    const float tl = ImClamp(radii[UiCorner_TopLeft], 0.f, limit);
+    const float tr = ImClamp(radii[UiCorner_TopRight], 0.f, limit);
+    const float br = ImClamp(radii[UiCorner_BottomRight], 0.f, limit);
+    const float bl = ImClamp(radii[UiCorner_BottomLeft], 0.f, limit);
+    corner(tl, min, ImVec2(min.x + tl, min.y + tl), IM_PI);
+    corner(tr, ImVec2(max.x, min.y), ImVec2(max.x - tr, min.y + tr), IM_PI * 1.5f);
+    corner(br, max, ImVec2(max.x - br, max.y - br), 0.f);
+    corner(bl, ImVec2(min.x, max.y), ImVec2(min.x + bl, max.y - bl), IM_PI * 0.5f);
+}
+
+void AddRoundRectFilled(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col,
+                        const float radii[UiCorner_COUNT])
+{
+    if ((col & IM_COL32_A_MASK) == 0 || max.x <= min.x || max.y <= min.y) return;
+    PathRoundRect(dl, min, max, radii);
+    dl->PathFillConvex(col);
+}
+
+void AddRoundRect(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col, const float radii[UiCorner_COUNT],
+                  float thickness)
+{
+    if ((col & IM_COL32_A_MASK) == 0 || max.x <= min.x || max.y <= min.y) return;
+    constexpr float kToPixelCenter = 0.5f;
+    float pixelCenterRadii[UiCorner_COUNT];
+    for (int i = 0; i < UiCorner_COUNT; i++)
+        pixelCenterRadii[i] = radii[i] - kToPixelCenter;
+    const ImVec2 inset(kToPixelCenter, kToPixelCenter);
+    PathRoundRect(dl, min + inset, max - inset, pixelCenterRadii);
+    dl->PathStroke(col, ImDrawFlags_Closed, thickness);
 }
 
 struct CapColors {
@@ -150,7 +186,6 @@ CapColors CapPalette(UiCapKind kind)
     }
 }
 
-// text color that reads on a cap of that kind
 ImU32 CapInk(UiCapKind kind)
 {
     switch (kind) {
@@ -163,56 +198,56 @@ ImU32 CapInk(UiCapKind kind)
     }
 }
 
-// lip first, then the face sunk by up to 3px; returns the face's top-left
-ImVec2 DrawCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, const float radii[4], const CapColors& colors,
-               float pressT, float lip = 4.f)
+ImVec2 DrawCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, const float radii[UiCorner_COUNT],
+               const CapColors& colors, float pressT)
 {
-    const ImVec2 face = min + ImVec2(0.f, ImMin(3.f, lip - 1.f) * pressT);
-    AddRoundRectFilled(dl, min + ImVec2(0.f, lip), min + size + ImVec2(0.f, lip), colors.lip, radii);
+    const ImVec2 lip = min + ImVec2(0.f, kUiCapLipDepth);
+    const ImVec2 face = min + ImVec2(0.f, kUiCapPressDepth * pressT);
+    AddRoundRectFilled(dl, lip, lip + size, colors.lip, radii);
     AddRoundRectFilled(dl, face, face + size, colors.face, radii);
     if (colors.stroke) AddRoundRect(dl, face, face + size, colors.stroke, radii, 1.f);
     return face;
 }
 
-// 45deg "/" stripes clipped to a rounded rect with per-corner radii
 void AddHatchRounded(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col, float spacing, float thickness,
-                     const float radii[4])
+                     const float radii[UiCorner_COUNT])
 {
-    // keep the stroke's width inside the shape
-    const float inset = thickness * 0.5f;
-    const ImVec2 a = min + ImVec2(inset, inset), b = max - ImVec2(inset, inset);
+    const float halfStroke = thickness * 0.5f;
+    const ImVec2 a = min + ImVec2(halfStroke, halfStroke), b = max - ImVec2(halfStroke, halfStroke);
     if (b.x <= a.x || b.y <= a.y || spacing <= 0.f) return;
     const ImVec2 mid = (a + b) * 0.5f;
     const float limit = ImMin(b.x - a.x, b.y - a.y) * 0.5f;
-    float r[4];
-    for (int i = 0; i < 4; i++)
-        r[i] = ImClamp(radii[i] - inset, 0.f, limit);
+    float r[UiCorner_COUNT];
+    for (int i = 0; i < UiCorner_COUNT; i++)
+        r[i] = ImClamp(radii[i] - halfStroke, 0.f, limit);
 
-    // moves p along p->q onto the corner arc when it sits in a corner outside it; false when the segment misses
-    auto clipEnd = [&](ImVec2& p, const ImVec2& q) {
-        const bool left = p.x < mid.x, top = p.y < mid.y;
-        const float rad = r[top ? (left ? 0 : 1) : (left ? 3 : 2)];
-        if (rad <= 0.f) return true;
+    auto clipIntoCornerArc = [&](const ImVec2& end, const ImVec2& toward) -> std::optional<ImVec2> {
+        const bool left = end.x < mid.x, top = end.y < mid.y;
+        const UiCorner corner =
+            top ? (left ? UiCorner_TopLeft : UiCorner_TopRight) : (left ? UiCorner_BottomLeft : UiCorner_BottomRight);
+        const float rad = r[corner];
+        if (rad <= 0.f) return end;
         const ImVec2 c(left ? a.x + rad : b.x - rad, top ? a.y + rad : b.y - rad);
-        const bool inCorner = (left ? p.x < c.x : p.x > c.x) && (top ? p.y < c.y : p.y > c.y);
-        if (!inCorner || ImLengthSqr(p - c) <= rad * rad) return true;
-        const ImVec2 d = q - p, f = p - c;
+        const bool inCornerSquare = (left ? end.x < c.x : end.x > c.x) && (top ? end.y < c.y : end.y > c.y);
+        if (!inCornerSquare || ImLengthSqr(end - c) <= rad * rad) return end;
+        const ImVec2 d = toward - end, f = end - c;
         const float qa = ImLengthSqr(d), qb = 2.f * (f.x * d.x + f.y * d.y), qc = ImLengthSqr(f) - rad * rad;
         const float disc = qb * qb - 4.f * qa * qc;
-        if (qa <= 0.f || disc < 0.f) return false;
-        const float t = (-qb - sqrtf(disc)) / (2.f * qa);
-        if (t < 0.f || t > 1.f) return false;
-        p += d * t;
-        return true;
+        if (qa <= 0.f || disc < 0.f) return std::nullopt;
+        const float nearestHitT = (-qb - sqrtf(disc)) / (2.f * qa);
+        if (nearestHitT < 0.f || nearestHitT > 1.f) return std::nullopt;
+        return end + d * nearestHitT;
     };
 
-    const float step = spacing * 1.41421356f; // perpendicular spacing -> spacing along x + y
-    for (float k = a.x + a.y + step * 0.5f; k < b.x + b.y; k += step) {
-        const float x0 = ImMax(a.x, k - b.y), x1 = ImMin(b.x, k - a.y);
+    const float xPlusYStep = spacing * std::numbers::sqrt2_v<float>;
+    for (float xPlusY = a.x + a.y + xPlusYStep * 0.5f; xPlusY < b.x + b.y; xPlusY += xPlusYStep) {
+        const float x0 = ImMax(a.x, xPlusY - b.y), x1 = ImMin(b.x, xPlusY - a.y);
         if (x1 - x0 < 0.5f) continue;
-        ImVec2 p0(x0, k - x0), p1(x1, k - x1);
-        if (!clipEnd(p0, p1) || !clipEnd(p1, p0)) continue;
-        dl->AddLine(p0, p1, col, thickness);
+        const std::optional<ImVec2> p0 = clipIntoCornerArc(ImVec2(x0, xPlusY - x0), ImVec2(x1, xPlusY - x1));
+        if (!p0) continue;
+        const std::optional<ImVec2> p1 = clipIntoCornerArc(ImVec2(x1, xPlusY - x1), *p0);
+        if (!p1) continue;
+        dl->AddLine(*p0, *p1, col, thickness);
     }
 }
 
@@ -220,12 +255,11 @@ float GlyphSize(UiGlyph glyph)
 {
     switch (glyph) {
     case UiGlyph_Gear:
-    case UiGlyph_Padlock: return 14.f;
+    case UiGlyph_Padlock:
+    case UiGlyph_Folder: return 14.f;
     case UiGlyph_Search: return 13.f;
-    case UiGlyph_Arrow: return 9.f;
+    case UiGlyph_ExternalLink: return 9.f;
     case UiGlyph_Power: return 28.f;
-    case UiGlyph_ChevronLeft:
-    case UiGlyph_ChevronRight: return 10.f;
     default: return 12.f;
     }
 }
@@ -239,10 +273,10 @@ struct KeyLook {
 
 KeyLook GetKeyLook(UiKeyKind kind, bool paused)
 {
-    const ImU32 pausedAutoDot = UiWithAlpha(UiCol::PausedAutoInk, 0.9f);
-    const ImU32 pausedTapDot = UiWithAlpha(UiCol::TapeInk, 0.9f);
-    const ImU32 whiteDot = UiWithAlpha(UiCol::White, 0.9f);
-    const ImU32 sameDot = UiWithAlpha(UiCol::SameInk, 0.7f);
+    constexpr ImU32 pausedAutoDot = UiWithAlpha(UiCol::PausedAutoInk, 0.9f);
+    constexpr ImU32 pausedTapDot = UiWithAlpha(UiCol::TapeInk, 0.9f);
+    constexpr ImU32 whiteDot = UiWithAlpha(UiCol::White, 0.9f);
+    constexpr ImU32 sameDot = UiWithAlpha(UiCol::SameInk, 0.7f);
     switch (kind) {
     case UiKeyKind_Auto:
         if (paused) return {UiCapKind_PausedAuto, UiFonts::Bold, UiCol::PausedAutoInk, pausedAutoDot, 3};
@@ -270,12 +304,11 @@ float RoundRectDistance(const ImVec2& p, const ImVec2& min, const ImVec2& max, f
     return sqrtf(ox * ox + oy * oy) + ImMin(ImMax(qx, qy), 0.f) - r;
 }
 
-// css-like box shadow (offset, gaussian blur) of a rounded rect, drawn only outside the rect: an opaque panel hides
-// the rest anyway, and it has already been drawn by the time we get here
-void AddShadow(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float rounding, const ImVec2& offset, float blur,
-               ImU32 col)
+void AddOuterBoxShadow(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float rounding, const ImVec2& offset,
+                       float blur, ImU32 col)
 {
     constexpr int kCornerSegs = 8, kPoints = (kCornerSegs + 1) * 4, kRings = 10;
+    constexpr float kRingsBunchingAtEdge = 1.5f;
     const ImVec2 centers[4] = {min + ImVec2(rounding, rounding), ImVec2(max.x - rounding, min.y + rounding),
                                max - ImVec2(rounding, rounding), ImVec2(min.x + rounding, max.y - rounding)};
     ImVec2 dirs[kPoints];
@@ -295,14 +328,13 @@ void AddShadow(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float round
     dl->PrimReserve(kRings * kPoints * 6, (kRings + 1) * kPoints);
     const unsigned base = dl->_VtxCurrentIdx;
     for (int i = 0; i <= kRings; i++) {
-        // rings bunch up near the edge where the falloff is steepest
-        const float t = powf((float)i / kRings, 1.5f);
+        const float t = powf((float)i / kRings, kRingsBunchingAtEdge);
         for (int j = 0; j < kPoints; j++) {
             const ImVec2 d = dirs[j], at = centers[j / (kCornerSegs + 1)];
             const ImVec2 p(at.x + d.x * (rounding + t * reachX),
                            at.y + d.y * (rounding + t * (d.y > 0.f ? reachDown : reachUp)));
             const float dist = RoundRectDistance(p, shadowMin, shadowMax, rounding);
-            const float k = i == kRings ? 0.f : 0.5f * std::erfc(dist / (sigma * 1.41421356f));
+            const float k = i == kRings ? 0.f : 0.5f * std::erfc(dist / (sigma * std::numbers::sqrt2_v<float>));
             dl->PrimWriteVtx(p, uv, UiWithAlpha(col, k));
         }
     }
@@ -320,7 +352,7 @@ void AddShadow(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float round
 
 bool BeginPopupAnimated(const char* str_id, bool modal)
 {
-    const ImGuiID animId = SubId(GetID(str_id), AnimSlot_Popup);
+    const ImGuiID animId = AnimId(GetID(str_id), AnimSlot_Popup);
     float eased = 1.f;
     if (!IsPopupOpen(str_id)) {
         s_animStorage.SetFloat(animId, 0.f);
@@ -332,27 +364,33 @@ bool BeginPopupAnimated(const char* str_id, bool modal)
             g.NextWindowData.PosVal.y -= 8.f * (1.f - eased);
     }
 
-    // a modal takes the regular window style, a popup the popup style: make both look like a panel
     PushStyleVar(ImGuiStyleVar_Alpha, eased);
-    PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.f, 18.f));
+    PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kUiPopupPad, kUiPopupPad));
+    // modals take the window rounding and border, popups the popup ones
     PushStyleVar(ImGuiStyleVar_WindowRounding, 14.f);
     PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
     PushStyleColor(ImGuiCol_WindowBg, UiCol::Panel);
-    const bool open = modal ? BeginPopupModal(str_id, nullptr,
-                                              ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
-                                                  ImGuiWindowFlags_NoSavedSettings)
-                            : BeginPopup(str_id);
+    const bool open =
+        modal ? BeginPopupModal(str_id, nullptr,
+                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)
+              : BeginPopup(str_id);
     if (!open) {
         PopStyleColor();
         PopStyleVar(4);
         return false;
     }
     const ImGuiWindow* window = GetCurrentWindow();
-    AddShadow(window->DrawList, window->Pos, window->Pos + window->Size, window->WindowRounding, ImVec2(0.f, 14.f),
-              36.f, UiWithAlpha(UiCol::Shadow, 0.22f * GetStyle().Alpha));
-    s_popupVtxStart.push_back(window->DrawList->VtxBuffer.Size);
+    AddOuterBoxShadow(window->DrawList, window->Pos, window->Pos + window->Size, window->WindowRounding,
+                      ImVec2(0.f, 14.f), 36.f, UiWithAlpha(UiCol::Shadow, 0.22f * GetStyle().Alpha));
+    s_popupContentVtxStart.push_back(window->DrawList->VtxBuffer.Size);
     return true;
+}
+
+void EndPanelRow(const ImVec2& rowPos, float width)
+{
+    SetCursorScreenPos(rowPos);
+    Dummy(ImVec2(width, kPanelRowHeight));
 }
 } // namespace
 
@@ -383,9 +421,9 @@ void ImGui::LoadUiFonts()
 
     ImFontConfig cfg;
     cfg.FontDataOwnedByAtlas = false;
-    // ImGui sizes a font by ascent - descent, 1.088em for Archivo; scale glyphs up so sizes are em sizes like the
-    // mockups' (the line box stays at the requested size)
-    cfg.ExtraSizeScale = 1.088f;
+    // ImGui sizes a font by ascent - descent, not by em
+    constexpr float kArchivoAscentMinusDescentEm = 1.088f;
+    cfg.ExtraSizeScale = kArchivoAscentMinusDescentEm;
 
     auto add = [&](const unsigned char* data, unsigned int size) {
         return io.Fonts->AddFontFromMemoryTTF((void*)data, (int)size, 13.f, &cfg);
@@ -402,15 +440,10 @@ void ImGui::LoadUiStyle()
 {
     ImGuiStyle& style = GetStyle();
     StyleColorsLight(&style);
-    // the main window is laid out in absolute coordinates and its padding would only clip its edges; popups and
-    // tooltips push their own
     style.WindowPadding = ImVec2(0.f, 0.f);
     style.FramePadding = ImVec2(10.f, 6.f);
-    style.CellPadding = ImVec2(6.f, 6.f);
-    // panel rows carry their own spacing
     style.ItemSpacing = ImVec2(8.f, 0.f);
     style.ItemInnerSpacing = ImVec2(6.f, 6.f);
-    style.IndentSpacing = 20.f;
     style.ScrollbarSize = 8.f;
     style.WindowBorderSize = 0.f;
     style.ChildBorderSize = 1.f;
@@ -421,8 +454,6 @@ void ImGui::LoadUiStyle()
     style.FrameRounding = 8.f;
     style.PopupRounding = 14.f;
     style.ScrollbarRounding = 9.f;
-    style.GrabRounding = 6.f;
-    style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
 
     static constexpr struct {
         ImGuiCol idx;
@@ -438,17 +469,10 @@ void ImGui::LoadUiStyle()
         {ImGuiCol_FrameBg, UiCol::Recess},
         {ImGuiCol_FrameBgHovered, IM_COL32(0xCF, 0xC9, 0xBF, 0xFF)},
         {ImGuiCol_FrameBgActive, UiCol::RecessStroke},
-        {ImGuiCol_TitleBg, UiCol::Chassis},
-        {ImGuiCol_TitleBgActive, UiCol::Chassis},
-        {ImGuiCol_TitleBgCollapsed, UiCol::Chassis},
-        {ImGuiCol_MenuBarBg, UiCol::Chassis},
         {ImGuiCol_ScrollbarBg, 0},
         {ImGuiCol_ScrollbarGrab, UiCol::CapLip},
         {ImGuiCol_ScrollbarGrabHovered, UiCol::Ink3},
         {ImGuiCol_ScrollbarGrabActive, UiCol::Ink2},
-        {ImGuiCol_CheckMark, UiCol::Signal},
-        {ImGuiCol_SliderGrab, UiCol::Signal},
-        {ImGuiCol_SliderGrabActive, UiCol::SignalLip},
         {ImGuiCol_Button, UiCol::Cap},
         {ImGuiCol_ButtonHovered, UiCol::RowHover},
         {ImGuiCol_ButtonActive, UiCol::Recess},
@@ -459,21 +483,12 @@ void ImGui::LoadUiStyle()
         {ImGuiCol_SeparatorHovered, UiCol::Line},
         {ImGuiCol_SeparatorActive, UiCol::Ink3},
         {ImGuiCol_InputTextCursor, UiCol::Ink},
-        {ImGuiCol_TextLink, UiCol::Signal},
         {ImGuiCol_TextSelectedBg, UiWithAlpha(UiCol::Signal, 0.3f)},
         {ImGuiCol_NavCursor, UiWithAlpha(UiCol::Signal, 0.6f)},
         {ImGuiCol_ModalWindowDimBg, UiWithAlpha(UiCol::Chassis, 0.6f)},
     };
     for (const auto& [idx, col] : s_colors)
         style.Colors[idx] = ColorConvertU32ToFloat4(col);
-}
-
-float ImGui::UiAnim(ImGuiID id, float target, float speed, float initial)
-{
-    float* v = s_animStorage.GetFloatRef(id, initial == FLT_MAX ? target : initial);
-    *v += (target - *v) * (1.f - expf(-speed * GImGui->IO.DeltaTime));
-    if (fabsf(target - *v) < 0.001f) *v = target;
-    return *v;
 }
 
 ImU32 ImGui::UiMixColor(ImU32 a, ImU32 b, float t)
@@ -493,7 +508,6 @@ bool ImGui::UiBeginPopup(const char* str_id)
     return BeginPopupAnimated(str_id, false);
 }
 
-// dims and blocks everything underneath; the caller decides how it gets dismissed
 bool ImGui::UiBeginModal(const char* str_id)
 {
     return BeginPopupAnimated(str_id, true);
@@ -501,30 +515,26 @@ bool ImGui::UiBeginModal(const char* str_id)
 
 void ImGui::UiEndPopup()
 {
-    if (!s_popupVtxStart.empty()) {
-        // our draw-list content ignores style alpha, fade it in with the window
-        const float alpha = GetStyle().Alpha;
-        if (alpha < 1.f) ScaleVtxAlpha(GetWindowDrawList(), s_popupVtxStart.back(), alpha);
-        s_popupVtxStart.pop_back();
+    if (!s_popupContentVtxStart.empty()) {
+        const float styleAlpha = GetStyle().Alpha;
+        if (styleAlpha < 1.f) {
+            ImVector<ImDrawVert>& vtx = GetWindowDrawList()->VtxBuffer;
+            for (int i = s_popupContentVtxStart.back(); i < vtx.Size; i++)
+                vtx[i].col = UiWithAlpha(vtx[i].col, styleAlpha);
+        }
+        s_popupContentVtxStart.pop_back();
     }
     EndPopup();
     PopStyleColor();
     PopStyleVar(4);
 }
 
-// ---- text
-
 float ImGui::UiTextWidth(ImFont* font, float size, const char* text, float tracking)
 {
     if (tracking == 0.f) return font->CalcTextSizeA(size, FLT_MAX, 0.f, text).x;
-    return CalcTrackedTextSize(font, size, text, tracking).x;
-}
-
-ImVec2 ImGui::CalcTrackedTextSize(ImFont* font, float size, const char* text, float tracking)
-{
-    float width = ForEachTrackedGlyph(font, size, text, tracking, 0.f, [](const char*, const char*, float) {});
-    if (width > 0.f) width -= tracking;
-    return ImVec2(width, size);
+    const float widthWithTrailingTracking =
+        ForEachTrackedGlyph(font, size, text, tracking, 0.f, [](const char*, const char*, float) {});
+    return widthWithTrailingTracking > 0.f ? widthWithTrailingTracking - tracking : 0.f;
 }
 
 void ImGui::AddTrackedText(ImDrawList* dl, ImFont* font, float size, const ImVec2& pos, ImU32 col, const char* text,
@@ -534,32 +544,30 @@ void ImGui::AddTrackedText(ImDrawList* dl, ImFont* font, float size, const ImVec
         dl->AddText(font, size, pos, col, text);
         return;
     }
-    ForEachTrackedGlyph(font, size, text, tracking, pos.x, [&](const char* begin, const char* end, float x) {
-        dl->AddText(font, size, ImVec2(x, pos.y), col, begin, end);
+    ForEachTrackedGlyph(font, size, text, tracking, pos.x, [&](const char* glyphBegin, const char* glyphEnd, float x) {
+        dl->AddText(font, size, ImVec2(x, pos.y), col, glyphBegin, glyphEnd);
     });
 }
 
-void ImGui::AddSilk(ImDrawList* dl, const ImVec2& pos, const char* text, ImU32 col)
+void ImGui::AddSilk(ImDrawList* dl, const ImVec2& topLeft, const char* text, ImU32 col)
 {
-    AddTrackedText(dl, UiFonts::SemiBold, 9.f, pos, col, Upper(text), 1.6f);
+    AddTrackedText(dl, UiFonts::SemiBold, kSilkFontSize, topLeft, col, AsciiUpper(text), kSilkTracking);
 }
 
 float ImGui::SilkWidth(const char* text)
 {
-    return UiTextWidth(UiFonts::SemiBold, 9.f, Upper(text), 1.6f);
+    return UiTextWidth(UiFonts::SemiBold, kSilkFontSize, AsciiUpper(text), kSilkTracking);
 }
-
-// ---- drawing primitives
 
 ImVec2 ImGui::AddCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, UiCapKind kind, float rounding,
                      float pressT, float hoverT)
 {
-    const float radii[4] = {rounding, rounding, rounding, rounding};
+    const float radii[UiCorner_COUNT] = {rounding, rounding, rounding, rounding};
     return AddCap(dl, min, size, kind, radii, pressT, hoverT);
 }
 
-ImVec2 ImGui::AddCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, UiCapKind kind, const float radii[4],
-                     float pressT, float hoverT)
+ImVec2 ImGui::AddCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, UiCapKind kind,
+                     const float radii[UiCorner_COUNT], float pressT, float hoverT)
 {
     CapColors colors = CapPalette(kind);
     const bool outlineHover = kind == UiCapKind_Plain;
@@ -568,29 +576,6 @@ ImVec2 ImGui::AddCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, UiCa
     if (outlineHover && hoverT > 0.01f)
         AddRoundRect(dl, face, face + size, UiWithAlpha(UiCol::Ink2, hoverT), radii, 1.5f);
     return face;
-}
-
-void ImGui::AddRoundRectFilled(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col, const float radii[4])
-{
-    if ((col & IM_COL32_A_MASK) == 0 || max.x <= min.x || max.y <= min.y) return;
-    PathRoundRect(dl, min, max, radii);
-    dl->PathFillConvex(col);
-}
-
-void ImGui::AddRoundRect(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col, const float radii[4],
-                         float thickness)
-{
-    if ((col & IM_COL32_A_MASK) == 0 || max.x <= min.x || max.y <= min.y) return;
-    // like AddRect: stroke the half-pixel inset path so a 1px line lands on whole pixels
-    const float inset[4] = {radii[0] - 0.5f, radii[1] - 0.5f, radii[2] - 0.5f, radii[3] - 0.5f};
-    PathRoundRect(dl, min + ImVec2(0.5f, 0.5f), max - ImVec2(0.5f, 0.5f), inset);
-    dl->PathStroke(col, ImDrawFlags_Closed, thickness);
-}
-
-void ImGui::AddHatch(ImDrawList* dl, const ImVec2& min, const ImVec2& max, ImU32 col, float spacing, float thickness)
-{
-    const float square[4] = {};
-    AddHatchRounded(dl, min, max, col, spacing, thickness, square);
 }
 
 void ImGui::AddGlyph(ImDrawList* dl, const ImVec2& c, float size, UiGlyph glyph, ImU32 col)
@@ -613,13 +598,13 @@ void ImGui::AddGlyph(ImDrawList* dl, const ImVec2& c, float size, UiGlyph glyph,
     case UiGlyph_Plus: dl->AddLine(c - ImVec2(0.f, h), c + ImVec2(0.f, h), col, size * (1.6f / 12.f)); [[fallthrough]];
     case UiGlyph_Minus: dl->AddLine(c - ImVec2(h, 0.f), c + ImVec2(h, 0.f), col, size * (1.6f / 12.f)); break;
     case UiGlyph_Search: {
-        // drawn on a 13px grid: an 11px ring up-left, the handle down-right
-        const float s = size / 13.f, t = 1.6f * s;
-        dl->AddCircle(c - ImVec2(s, s), 5.5f * s - t * 0.5f, col, 0, t);
-        dl->AddLine(c + ImVec2(2.6f, 2.6f) * s, c + ImVec2(6.5f, 6.5f) * s, col, t);
+        const float px = size / GlyphSize(UiGlyph_Search), t = 1.6f * px;
+        const ImVec2 ringCenter = c - ImVec2(px, px);
+        dl->AddCircle(ringCenter, 5.5f * px - t * 0.5f, col, 0, t);
+        dl->AddLine(c + ImVec2(2.6f, 2.6f) * px, c + ImVec2(6.5f, 6.5f) * px, col, t);
         break;
     }
-    case UiGlyph_Arrow: {
+    case UiGlyph_ExternalLink: {
         const float t = ImMax(1.2f, size * 0.17f);
         dl->AddLine(c + ImVec2(-h, h), c + ImVec2(h, -h), col, t);
         dl->PathLineTo(ImVec2(c.x - h * 0.3f, c.y - h));
@@ -629,37 +614,34 @@ void ImGui::AddGlyph(ImDrawList* dl, const ImVec2& c, float size, UiGlyph glyph,
         break;
     }
     case UiGlyph_Power: {
-        const float t = size * (3.f / 28.f), r = h - t * 0.5f, gap = 0.62f;
-        const float a0 = -IM_PI * 0.5f + gap, a1 = IM_PI * 1.5f - gap;
+        const float t = size * (3.f / 28.f), r = h - t * 0.5f, halfGap = 0.62f;
+        auto addRoundCap = [&](const ImVec2& p) { dl->AddCircleFilled(p, t * 0.5f, col); };
+        const float a0 = -IM_PI * 0.5f + halfGap, a1 = IM_PI * 1.5f - halfGap;
         dl->PathArcTo(c, r, a0, a1);
         dl->PathStroke(col, 0, t);
-        // round caps
-        dl->AddCircleFilled(c + ImVec2(cosf(a0), sinf(a0)) * r, t * 0.5f, col);
-        dl->AddCircleFilled(c + ImVec2(cosf(a1), sinf(a1)) * r, t * 0.5f, col);
+        addRoundCap(c + ImVec2(cosf(a0), sinf(a0)) * r);
+        addRoundCap(c + ImVec2(cosf(a1), sinf(a1)) * r);
         const ImVec2 top(c.x, c.y - h), bottom(c.x, c.y - h * 0.08f);
         dl->AddLine(top, bottom, col, t);
-        dl->AddCircleFilled(top, t * 0.5f, col);
-        dl->AddCircleFilled(bottom, t * 0.5f, col);
+        addRoundCap(top);
+        addRoundCap(bottom);
         break;
     }
     case UiGlyph_Padlock: {
-        // body in the lower half, shackle above it; size is the height
-        const float t = size * 0.11f, w = size * 0.36f, rs = size * 0.22f;
-        dl->AddRectFilled(ImVec2(c.x - w, c.y - size * 0.04f), ImVec2(c.x + w, c.y + h), col, size * 0.12f);
-        const float shackleY = c.y - h + rs + t * 0.5f;
-        dl->PathLineTo(ImVec2(c.x - rs, c.y));
-        dl->PathArcTo(ImVec2(c.x, shackleY), rs, IM_PI, IM_PI * 2.f);
-        dl->PathLineTo(ImVec2(c.x + rs, c.y));
+        const float t = size * 0.11f, bodyHalfW = size * 0.36f, shackleR = size * 0.22f;
+        const float bodyTop = c.y - size * 0.04f, bottom = c.y + h;
+        dl->AddRectFilled(ImVec2(c.x - bodyHalfW, bodyTop), ImVec2(c.x + bodyHalfW, bottom), col, size * 0.12f);
+        const float shackleArcY = c.y - h + shackleR + t * 0.5f;
+        dl->PathLineTo(ImVec2(c.x - shackleR, c.y));
+        dl->PathArcTo(ImVec2(c.x, shackleArcY), shackleR, IM_PI, IM_PI * 2.f);
+        dl->PathLineTo(ImVec2(c.x + shackleR, c.y));
         dl->PathStroke(col, 0, t);
         break;
     }
-    case UiGlyph_ChevronLeft:
-    case UiGlyph_ChevronRight: {
-        const float dir = glyph == UiGlyph_ChevronLeft ? 1.f : -1.f, w = size * 0.15f * dir;
-        dl->PathLineTo(ImVec2(c.x + w, c.y - h));
-        dl->PathLineTo(ImVec2(c.x - w, c.y));
-        dl->PathLineTo(ImVec2(c.x + w, c.y + h));
-        dl->PathStroke(col, 0, size * 0.16f);
+    case UiGlyph_Folder: {
+        const float r = size * 0.08f, top = c.y - size * 0.4f, bodyTop = c.y - size * 0.24f, bottom = c.y + size * 0.4f;
+        dl->AddRectFilled(ImVec2(c.x - h, top), ImVec2(c.x - h * 0.1f, bodyTop + r), col, r);
+        dl->AddRectFilled(ImVec2(c.x - h, bodyTop), ImVec2(c.x + h, bottom), col, r);
         break;
     }
     }
@@ -671,36 +653,36 @@ void ImGui::AddRecess(ImDrawList* dl, const ImVec2& min, const ImVec2& max, floa
     dl->AddRect(min, max, UiCol::RecessStroke, rounding);
 }
 
-void ImGui::AddRateBadge(ImDrawList* dl, const ImVec2& anchor, const char* text, float alpha, float pop)
+void ImGui::AddRateBadge(ImDrawList* dl, const ImVec2& pointerTip, const char* text, float alpha, float textScale)
 {
     if (alpha <= 0.f) return;
+    constexpr float kPointerHalfW = 5.f, kPointerH = 5.f, kSeamOverlap = 0.5f;
     const float width = ImMax(60.f, UiTextWidth(UiFonts::Bold, 11.f, text) + 20.f);
-    const ImVec2 max(anchor.x + width * 0.5f, anchor.y - 5.f);
-    const ImVec2 min(anchor.x - width * 0.5f, max.y - 22.f);
+    const ImVec2 max(pointerTip.x + width * 0.5f, pointerTip.y - kPointerH);
+    const ImVec2 min(pointerTip.x - width * 0.5f, max.y - 22.f);
     const ImU32 fill = UiWithAlpha(UiCol::Ink, alpha);
     dl->AddRectFilled(min, max, fill, 5.f);
-    // overlaps the box by half a pixel so no seam shows; clockwise for the anti-aliased fringe
-    dl->AddTriangleFilled(ImVec2(anchor.x - 5.f, max.y - 0.5f), ImVec2(anchor.x + 5.f, max.y - 0.5f), anchor, fill);
-    AddTextCentered(dl, UiFonts::Bold, 11.f * pop, (min + max) * 0.5f, UiWithAlpha(UiCol::White, alpha), text);
+    const float pointerBaseY = max.y - kSeamOverlap;
+    // clockwise, or ImGui's anti-aliasing fringe goes inward
+    dl->AddTriangleFilled(ImVec2(pointerTip.x - kPointerHalfW, pointerBaseY),
+                          ImVec2(pointerTip.x + kPointerHalfW, pointerBaseY), pointerTip, fill);
+    AddTextCentered(dl, UiFonts::Bold, 11.f * textScale, (min + max) * 0.5f, UiWithAlpha(UiCol::White, alpha), text);
 }
 
 float ImGui::TapeWidth(const char* text)
 {
-    return UiTextWidth(UiFonts::Bold, 10.f, Upper(text), 1.2f) + 20.f;
+    return UiTextWidth(UiFonts::Bold, kTapeFontSize, AsciiUpper(text), kTapeTracking) + kTapeTextOffset.x * 2.f;
 }
 
 void ImGui::AddTape(ImDrawList* dl, const ImVec2& pos, const char* text)
 {
-    dl->AddRectFilled(pos, pos + ImVec2(TapeWidth(text), 24.f), UiCol::Tape, 2.f);
-    AddTrackedText(dl, UiFonts::Bold, 10.f, pos + ImVec2(10.f, 7.f), UiCol::TapeInk, Upper(text), 1.2f);
+    dl->AddRectFilled(pos, pos + ImVec2(TapeWidth(text), kTapeHeight), UiCol::Tape, 2.f);
+    AddTapeText(dl, pos, UiCol::TapeInk, text);
 }
-
-// ---- controls
 
 UiCapHit ImGui::UiCapFrame(const char* id, const ImVec2& pos, const ImVec2& size, UiCapKind kind, float rounding)
 {
-    // the hit box covers the lip too
-    const HitBox hit = PlaceInvisibleButton(id, pos, size + ImVec2(0.f, 4.f));
+    const HitBox hit = PlaceInvisibleButton(id, pos, size + ImVec2(0.f, kUiCapLipDepth));
     UiCapHit out;
     out.clicked = hit.clicked;
     out.hoverT = hit.HoverAnim();
@@ -711,9 +693,9 @@ UiCapHit ImGui::UiCapFrame(const char* id, const ImVec2& pos, const ImVec2& size
 
 bool ImGui::UiButton(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, UiButtonKind kind)
 {
-    const UiCapHit hit = UiCapFrame(id, pos, size, kind == UiButtonKind_Primary ? UiCapKind_Signal : UiCapKind_Plain,
-                                    8.f);
-    const ImU32 col = kind == UiButtonKind_Primary ? UiCol::White
+    const UiCapHit hit =
+        UiCapFrame(id, pos, size, kind == UiButtonKind_Primary ? UiCapKind_Signal : UiCapKind_Plain, 8.f);
+    const ImU32 col = kind == UiButtonKind_Primary  ? UiCol::White
                       : kind == UiButtonKind_Danger ? UiCol::Block
                                                     : UiCol::Ink;
     AddTextCentered(GetWindowDrawList(), UiFonts::Bold, 13.f, hit.face + size * 0.5f, col, label);
@@ -744,14 +726,9 @@ bool ImGui::UiIconButton(const char* id, const ImVec2& pos, float size, UiGlyph 
     return hit.clicked;
 }
 
-float ImGui::OutlineButtonWidth(const char* label)
-{
-    return UiTextWidth(UiFonts::Bold, 10.f, Upper(label), 1.2f) + 20.f;
-}
-
 bool ImGui::UiOutlineButton(const char* id, const ImVec2& pos, const char* label)
 {
-    const ImVec2 size(OutlineButtonWidth(label), 24.f);
+    const ImVec2 size(TapeWidth(label), kTapeHeight);
     const HitBox hit = PlaceInvisibleButton(id, pos, size);
     const float hoverT = hit.HoverAnim();
     const float pressT = hit.PressAnim();
@@ -761,48 +738,67 @@ bool ImGui::UiOutlineButton(const char* id, const ImVec2& pos, const char* label
     if (hoverT > 0.01f)
         dl->AddRectFilled(pos, max, UiWithAlpha(UiMixColor(UiCol::Recess, UiCol::RecessStroke, pressT), hoverT), 2.f);
     dl->AddRect(pos, max, UiCol::Ink3, 2.f);
-    AddTrackedText(dl, UiFonts::Bold, 10.f, pos + ImVec2(10.f, 7.f), UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT),
-                   Upper(label), 1.2f);
+    AddTapeText(dl, pos, UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), label);
     return hit.clicked;
 }
 
-bool ImGui::UiToggle(const char* id, const ImVec2& pos, bool on, bool dim)
+bool ImGui::UiBrowseButton(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, const char* hint,
+                           ImU32 hintCol)
 {
-    const ImVec2 size(46.f, 26.f);
-    const HitBox hit = PlaceInvisibleButton(id, pos, size);
+    constexpr float kPadX = 16.f, kGlyphSize = 14.f, kGlyphGap = 10.f;
+    const UiCapHit hit = UiCapFrame(id, pos, size, UiCapKind_Plain, 8.f);
+    ImDrawList* dl = GetWindowDrawList();
+    const float centerY = hit.face.y + size.y * 0.5f;
+    AddGlyph(dl, ImVec2(hit.face.x + kPadX + kGlyphSize * 0.5f, centerY), kGlyphSize, UiGlyph_Folder,
+             UiMixColor(UiCol::Ink2, UiCol::Signal, hit.hoverT));
+    auto topForCenteredY = [centerY](ImFont* font, float fontSize, const char* text) {
+        return ImFloor(centerY - font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, text).y * 0.5f);
+    };
+    const float labelX = hit.face.x + kPadX + kGlyphSize + kGlyphGap;
+    dl->AddText(UiFonts::Bold, 13.f, ImVec2(labelX, topForCenteredY(UiFonts::Bold, 13.f, label)), UiCol::Ink, label);
+    if (hint && *hint) {
+        const float hintX = hit.face.x + size.x - kPadX - UiTextWidth(UiFonts::Medium, 12.f, hint);
+        dl->AddText(UiFonts::Medium, 12.f, ImVec2(hintX, topForCenteredY(UiFonts::Medium, 12.f, hint)), hintCol, hint);
+    }
+    return hit.clicked;
+}
+
+bool ImGui::UiToggle(const char* id, const ImVec2& pos, bool on)
+{
+    constexpr float kTrackR = kUiToggleSize.y * 0.5f, kKnobR = 10.f, kKnobTravel = 20.f, kKnobLipDepth = 2.f;
+    const HitBox hit = PlaceInvisibleButton(id, pos, kUiToggleSize);
     const float hoverT = hit.HoverAnim();
     const float t = hit.Anim(AnimSlot_State, on, 16.f);
     const float eased = t * t * (3.f - 2.f * t);
+    const float offT = 1.f - eased;
 
     ImDrawList* dl = GetWindowDrawList();
-    const AlphaScope fade(dl, dim ? 0.5f : 1.f);
-    const ImVec2 max = pos + size;
-    dl->AddRectFilled(pos, max, UiCol::Recess, 13.f);
-    if (eased < 1.f)
-        dl->AddRect(pos, max, UiWithAlpha(UiMixColor(UiCol::RecessStroke, UiCol::Ink3, 0.6f * hoverT), 1.f - eased),
-                    13.f);
+    const ImVec2 max = pos + kUiToggleSize;
+    dl->AddRectFilled(pos, max, UiCol::Recess, kTrackR);
+    if (offT > 0.f)
+        dl->AddRect(pos, max, UiWithAlpha(UiMixColor(UiCol::RecessStroke, UiCol::Ink3, 0.6f * hoverT), offT), kTrackR);
     if (eased > 0.f)
-        dl->AddRectFilled(pos, max, UiWithAlpha(UiMixColor(UiCol::Signal, UiCol::White, 0.08f * hoverT), eased), 13.f);
+        dl->AddRectFilled(pos, max, UiWithAlpha(UiMixColor(UiCol::Signal, UiCol::White, 0.08f * hoverT), eased),
+                          kTrackR);
 
-    // off: a plain cap with a 2px lip at the left; on: a flat white disc at the right
-    const ImVec2 knob(pos.x + 13.f + 20.f * eased, pos.y + 13.f);
-    if (eased < 1.f) dl->AddCircleFilled(knob + ImVec2(0.f, 2.f), 10.f, UiWithAlpha(UiCol::CapLip, 1.f - eased));
-    dl->AddCircleFilled(knob, 10.f, UiMixColor(UiCol::Cap, UiCol::White, eased));
-    if (eased < 1.f) dl->AddCircle(knob, 9.5f, UiWithAlpha(UiCol::CapStroke, 1.f - eased));
+    const ImVec2 knob(pos.x + kTrackR + kKnobTravel * eased, pos.y + kTrackR);
+    if (offT > 0.f) dl->AddCircleFilled(knob + ImVec2(0.f, kKnobLipDepth), kKnobR, UiWithAlpha(UiCol::CapLip, offT));
+    dl->AddCircleFilled(knob, kKnobR, UiMixColor(UiCol::Cap, UiCol::White, eased));
+    if (offT > 0.f) dl->AddCircle(knob, kKnobR - 0.5f, UiWithAlpha(UiCol::CapStroke, offT));
     return hit.clicked;
 }
 
 float ImGui::TabWidth(const char* label)
 {
-    return 28.f + UiTextWidth(UiFonts::Bold, 13.f, label) + 21.f;
+    return kTabTextX + UiTextWidth(UiFonts::Bold, 13.f, label) + kTabPadRight;
 }
 
 bool ImGui::UiTab(const char* id, const ImVec2& pos, const char* label, bool selected, bool lit, bool dim)
 {
-    const ImVec2 size(TabWidth(label), 34.f);
-    const HitBox hit = PlaceInvisibleButton(id, pos, size + ImVec2(0.f, selected ? 4.f : 0.f));
+    const ImVec2 size(TabWidth(label), kTabHeight);
+    const HitBox hit = PlaceInvisibleButton(id, pos, size + ImVec2(0.f, selected ? kUiCapLipDepth : 0.f));
     const float hoverT = hit.HoverAnim();
-    const float pressT = hit.Anim(AnimSlot_Press, selected && IsItemActive(), 28.f);
+    const float pressT = hit.Anim(AnimSlot_Press, selected && hit.active, 28.f);
 
     ImDrawList* dl = GetWindowDrawList();
     ImVec2 face = pos;
@@ -815,19 +811,20 @@ bool ImGui::UiTab(const char* id, const ImVec2& pos, const char* label, bool sel
 
     const ImU32 dot = !lit ? UiCol::DotOff : dim ? UiCol::Ink3 : UiCol::Signal;
     dl->AddCircleFilled(face + ImVec2(16.f, 17.f), 3.f, dot);
-    dl->AddText(selected ? UiFonts::Bold : UiFonts::SemiBold, 13.f, face + ImVec2(28.f, 9.f),
+    dl->AddText(selected ? UiFonts::Bold : UiFonts::SemiBold, 13.f, face + ImVec2(kTabTextX, 9.f),
                 selected ? UiCol::Ink : UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), label);
     return hit.clicked;
 }
 
 bool ImGui::UiSegmented(const char* id, const ImVec2& pos, const ImVec2& size, std::span<const char* const> labels,
-                        int& index, bool uppercase, const UiCapKind* chosenKinds, bool dim)
+                        int& index, UiLabelCase labelCase, std::span<const UiCapKind> chosenKinds)
 {
+    IM_ASSERT(chosenKinds.empty() || chosenKinds.size() == labels.size());
     const int count = (int)labels.size();
     const HitBox hit = PlaceInvisibleButton(id, pos, size);
     if (count == 0) return false;
     const float segW = size.x / (float)count;
-    const int hovered = IsItemHovered() ? ImClamp((int)((GetMousePos().x - pos.x) / segW), 0, count - 1) : -1;
+    const int hovered = hit.hovered ? ImClamp((int)((GetMousePos().x - pos.x) / segW), 0, count - 1) : -1;
 
     bool changed = false;
     if (hit.clicked && hovered >= 0 && hovered != index) {
@@ -835,25 +832,24 @@ bool ImGui::UiSegmented(const char* id, const ImVec2& pos, const ImVec2& size, s
         changed = true;
     }
     const int chosen = ImClamp(index, 0, count - 1);
-    const float slide = UiAnim(SubId(hit.id, AnimSlot_State), (float)chosen, 20.f);
-    const float pressT = hit.Anim(AnimSlot_Press, IsItemActive() && hovered == chosen, 28.f);
+    const float slide = UiAnim(AnimId(hit.id, AnimSlot_State), (float)chosen, 20.f);
+    const float pressT = hit.Anim(AnimSlot_Press, hit.active && hovered == chosen, 28.f);
 
     ImDrawList* dl = GetWindowDrawList();
-    const AlphaScope fade(dl, dim ? 0.5f : 1.f);
     AddRecess(dl, pos, pos + size, size.y <= 32.f ? 8.f : 9.f);
-    const UiCapKind kind = chosenKinds ? chosenKinds[chosen] : UiCapKind_Plain;
+    const UiCapKind kind = chosenKinds.empty() ? UiCapKind_Plain : chosenKinds[chosen];
     const float capH = size.y - 9.f;
     AddCap(dl, ImVec2(pos.x + slide * segW + 3.f, pos.y + 3.f), ImVec2(segW - 6.f, capH), kind, 6.f, pressT);
 
+    const bool uppercase = labelCase == UiLabelCase_Upper;
     const float textSize = uppercase ? 11.f : 12.f, tracking = uppercase ? 0.6f : 0.f;
     const float centerY = pos.y + 3.f + capH * 0.5f;
     for (int i = 0; i < count; i++) {
-        const Upper upper(labels[i]);
+        const AsciiUpper upper(labels[i]);
         const char* text = uppercase ? (const char*)upper : labels[i];
-        const float hoverT = UiAnim(SubId(hit.id, AnimSlot_Hover, i), hovered == i ? 1.f : 0.f, 18.f);
-        // the text takes the cap's ink as the cap slides under it
-        const float under = ImSaturate(1.f - fabsf(slide - (float)i));
-        const ImU32 col = UiMixColor(UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), CapInk(kind), under);
+        const float hoverT = UiAnim(AnimId(hit.id, AnimSlot_Hover, i), hovered == i ? 1.f : 0.f, 18.f);
+        const float capUnderText = ImSaturate(1.f - fabsf(slide - (float)i));
+        const ImU32 col = UiMixColor(UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), CapInk(kind), capUnderText);
         const bool isChosen = i == chosen;
         AddTextCentered(dl, isChosen ? UiFonts::Bold : UiFonts::SemiBold, textSize,
                         ImVec2(pos.x + segW * ((float)i + 0.5f), centerY + (isChosen ? 3.f * pressT : 0.f)), col, text,
@@ -862,10 +858,49 @@ bool ImGui::UiSegmented(const char* id, const ImVec2& pos, const ImVec2& size, s
     return changed;
 }
 
+bool ImGui::UiSegmentedFlags(const char* id, const ImVec2& pos, const ImVec2& size, const char* noFlagsLabel,
+                             std::span<const UiFlagSegment> flagSegments, unsigned& flags, UiLabelCase labelCase)
+{
+    boost::container::small_vector<UiFlagSegment, 8> segments = {{noFlagsLabel, 0u}};
+    segments.insert(segments.end(), flagSegments.begin(), flagSegments.end());
+    const int count = (int)segments.size();
+    const HitBox hit = PlaceInvisibleButton(id, pos, size);
+    const float segW = size.x / (float)count;
+    const int hovered = hit.hovered ? ImClamp((int)((GetMousePos().x - pos.x) / segW), 0, count - 1) : -1;
+
+    const unsigned before = flags;
+    if (hit.clicked && hovered >= 0) {
+        const unsigned clickedFlag = segments[hovered].flag;
+        flags = clickedFlag ? flags ^ clickedFlag : 0u;
+    }
+
+    ImDrawList* dl = GetWindowDrawList();
+    AddRecess(dl, pos, pos + size, size.y <= 32.f ? 8.f : 9.f);
+    const float capH = size.y - 9.f;
+    const bool uppercase = labelCase == UiLabelCase_Upper;
+    const float textSize = uppercase ? 11.f : 12.f, tracking = uppercase ? 0.6f : 0.f;
+    const float centerY = pos.y + 3.f + capH * 0.5f;
+    for (int i = 0; i < count; i++) {
+        const UiFlagSegment& segment = segments[i];
+        const bool lit = segment.flag ? (flags & segment.flag) != 0 : flags == 0;
+        const float litT = UiAnim(AnimId(hit.id, AnimSlot_State, i), lit ? 1.f : 0.f, 20.f);
+        const float hoverT = UiAnim(AnimId(hit.id, AnimSlot_Hover, i), hovered == i ? 1.f : 0.f, 18.f);
+        const float pressT = UiAnim(AnimId(hit.id, AnimSlot_Press, i), hit.active && hovered == i ? 1.f : 0.f, 28.f);
+        const float segX = pos.x + segW * (float)i;
+        if (lit) AddCap(dl, ImVec2(segX + 3.f, pos.y + 3.f), ImVec2(segW - 6.f, capH), UiCapKind_Plain, 6.f, pressT);
+
+        const AsciiUpper upper(segment.label);
+        const char* text = uppercase ? (const char*)upper : segment.label;
+        const ImU32 col = UiMixColor(UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), CapInk(UiCapKind_Plain), litT);
+        AddTextCentered(dl, lit ? UiFonts::Bold : UiFonts::SemiBold, textSize,
+                        ImVec2(segX + segW * 0.5f, centerY + (lit ? 3.f * pressT : 0.f)), col, text, tracking);
+    }
+    return flags != before;
+}
+
 bool ImGui::UiStepper(const char* id, const ImVec2& pos, const ImVec2& size, const char* value, int& index, int count)
 {
     const HitBox hit = PlaceInvisibleButton(id, pos, size);
-    const bool hovered = IsItemHovered();
     const float midX = pos.x + size.x * 0.5f;
     const bool leftHalf = GetMousePos().x < midX;
     const int last = ImMax(count - 1, 0);
@@ -876,8 +911,8 @@ bool ImGui::UiStepper(const char* id, const ImVec2& pos, const ImVec2& size, con
         changed = next != index;
         index = next;
     }
-    const float leftT = UiAnim(SubId(hit.id, AnimSlot_Hover, 0), hovered && leftHalf ? 1.f : 0.f, 18.f);
-    const float rightT = UiAnim(SubId(hit.id, AnimSlot_Hover, 1), hovered && !leftHalf ? 1.f : 0.f, 18.f);
+    const float leftT = UiAnim(AnimId(hit.id, AnimSlot_Hover, 0), hit.hovered && leftHalf ? 1.f : 0.f, 18.f);
+    const float rightT = UiAnim(AnimId(hit.id, AnimSlot_Hover, 1), hit.hovered && !leftHalf ? 1.f : 0.f, 18.f);
 
     ImDrawList* dl = GetWindowDrawList();
     AddRecess(dl, pos, pos + size, 7.f);
@@ -894,7 +929,7 @@ bool ImGui::UiPowerButton(const char* id, const ImVec2& center, bool on)
 {
     constexpr float r = 37.f;
     const ImVec2 min = center - ImVec2(r, r), size(r * 2.f, r * 2.f);
-    const HitBox hit = PlaceInvisibleButton(id, min, size + ImVec2(0.f, 4.f));
+    const HitBox hit = PlaceInvisibleButton(id, min, size + ImVec2(0.f, kUiCapLipDepth));
     const float hoverT = hit.HoverAnim();
     const float pressT = hit.PressAnim();
     const float t = hit.Anim(AnimSlot_State, on, 12.f);
@@ -904,7 +939,7 @@ bool ImGui::UiPowerButton(const char* id, const ImVec2& center, bool on)
         UiMixColor(UiCol::CapLip, UiCol::SignalLip, t),
         UiWithAlpha(UiCol::CapStroke, 1.f - t),
     };
-    const float radii[4] = {r, r, r, r};
+    const float radii[UiCorner_COUNT] = {r, r, r, r};
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 face = DrawCap(dl, min, size, radii, colors, pressT);
     AddGlyph(dl, face + ImVec2(r, r), 28.f, UiGlyph_Power, UiMixColor(UiCol::Ink3, UiCol::White, t));
@@ -915,27 +950,26 @@ bool ImGui::UiKnob(const char* id, const ImVec2& center, float& t, const char* m
 {
     constexpr float r = 36.f;
     const ImVec2 min = center - ImVec2(r, r);
-    const HitBox hit = PlaceInvisibleButton(id, min, ImVec2(r * 2.f, r * 2.f + 4.f));
-    const bool active = IsItemActive();
-    const bool hovered = IsItemHovered();
+    const HitBox hit = PlaceInvisibleButton(id, min, ImVec2(r * 2.f, r * 2.f + kUiCapLipDepth));
+    const bool dragging = hit.active;
     const ImGuiIO& io = GetIO();
 
     const float before = t;
-    if (active) t += (io.MouseDelta.x - io.MouseDelta.y) * 0.004f;
-    if (hovered && SetItemKeyOwner(ImGuiKey_MouseWheelY) && io.MouseWheel != 0.f) t += io.MouseWheel * 0.02f;
+    if (dragging) t += (io.MouseDelta.x - io.MouseDelta.y) * 0.004f;
+    if (hit.hovered && SetItemKeyOwner(ImGuiKey_MouseWheelY) && io.MouseWheel != 0.f) t += io.MouseWheel * 0.02f;
     t = ImClamp(t, 0.f, 1.f);
     const bool changed = t != before;
 
-    // follows the hand directly while dragging, eases when stepped from elsewhere
-    const ImGuiID shownId = SubId(hit.id, AnimSlot_State);
-    if (active) s_animStorage.SetFloat(shownId, t);
+    const ImGuiID shownId = AnimId(hit.id, AnimSlot_State);
+    if (dragging) s_animStorage.SetFloat(shownId, t);
     const float shown = UiAnim(shownId, t, 18.f);
-    const float hoverT = UiAnim(SubId(hit.id, AnimSlot_Hover), hovered || active ? 1.f : 0.f, 18.f);
+    const float hoverT = UiAnim(AnimId(hit.id, AnimSlot_Hover), hit.hovered || dragging ? 1.f : 0.f, 18.f);
 
     ImDrawList* dl = GetWindowDrawList();
     auto dirAt = [](float f) {
-        const float a = (-135.f + 270.f * f) * (IM_PI / 180.f); // from straight up, clockwise
-        return ImVec2(sinf(a), -cosf(a));
+        constexpr float kSweepDeg = 270.f;
+        const float clockwiseFromUp = (-kSweepDeg * 0.5f + kSweepDeg * f) * (IM_PI / 180.f);
+        return ImVec2(sinf(clockwiseFromUp), -cosf(clockwiseFromUp));
     };
     for (int i = 0; i <= 20; i++) {
         const float f = (float)i / 20.f;
@@ -961,14 +995,14 @@ bool ImGui::UiKnob(const char* id, const ImVec2& center, float& t, const char* m
 bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const UiKeyDesc& desc)
 {
     const bool interactive = desc.kind != UiKeyKind_Fixed && desc.kind != UiKeyKind_Locked;
-    const HitBox hit = PlaceInvisibleButton(id, pos, size + ImVec2(0.f, 4.f));
-    const float hoverT = hit.Anim(AnimSlot_Hover, interactive && IsItemHovered(), 18.f);
-    const float pressT = hit.Anim(AnimSlot_Press, desc.pressed || (interactive && IsItemActive()), 30.f);
+    const HitBox hit = PlaceInvisibleButton(id, pos, size + ImVec2(0.f, kUiCapLipDepth));
+    const float hoverT = hit.Anim(AnimSlot_Hover, interactive && hit.hovered, 18.f);
+    const float pressT = hit.Anim(AnimSlot_Press, desc.pressed || (interactive && hit.active), 30.f);
 
     const KeyLook look = GetKeyLook(desc.kind, desc.paused);
-    const bool narrow = size.x < 30.f; // not "small": that's a macro in rpcndr.h
+    const bool narrow = size.x < 30.f;
     const bool block = desc.kind == UiKeyKind_Block;
-    float radii[4] = {desc.radii[0], desc.radii[1], desc.radii[2], desc.radii[3]};
+    float radii[UiCorner_COUNT] = {desc.radii[0], desc.radii[1], desc.radii[2], desc.radii[3]};
     if (radii[0] == 0.f && radii[1] == 0.f && radii[2] == 0.f && radii[3] == 0.f)
         radii[0] = radii[1] = radii[2] = radii[3] = narrow ? 5.f : 7.f;
 
@@ -1014,7 +1048,7 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
 void ImGui::AddKeySwatch(ImDrawList* dl, const ImVec2& pos, UiKeyKind kind)
 {
     const ImVec2 size(24.f, 21.f);
-    const float radii[4] = {5.f, 5.f, 5.f, 5.f};
+    const float radii[UiCorner_COUNT] = {5.f, 5.f, 5.f, 5.f};
     const KeyLook look = GetKeyLook(kind, false);
     AddCap(dl, pos, size, look.cap, radii);
     if (kind == UiKeyKind_Block) AddHatchRounded(dl, pos, pos + size, UiCol::Block, 6.f, 1.2f, radii);
@@ -1022,16 +1056,12 @@ void ImGui::AddKeySwatch(ImDrawList* dl, const ImVec2& pos, UiKeyKind kind)
         dl->AddCircleFilled(pos + ImVec2(6.5f + 5.f * (float)i, 14.5f), 1.5f, look.dot);
 }
 
-// ---- panel rows
-
 bool ImGui::UiToggleRow(const char* id, const char* label, bool on, float width)
 {
     const ImVec2 pos = GetCursorScreenPos();
     GetWindowDrawList()->AddText(UiFonts::SemiBold, 13.f, pos + ImVec2(0.f, 5.f), UiCol::Ink, label);
-    const bool clicked = UiToggle(id, ImVec2(pos.x + width - 46.f, pos.y), on);
-    // the row-sized dummy goes last so the window extent is validated by an item, not by a bare cursor move
-    SetCursorScreenPos(pos);
-    Dummy(ImVec2(width, 36.f));
+    const bool clicked = UiToggle(id, ImVec2(pos.x + width - kUiToggleSize.x, pos.y), on);
+    EndPanelRow(pos, width);
     return clicked;
 }
 
@@ -1040,36 +1070,35 @@ bool ImGui::UiStepperRow(const char* id, const char* label, const char* value, i
     const ImVec2 pos = GetCursorScreenPos();
     GetWindowDrawList()->AddText(UiFonts::SemiBold, 13.f, pos + ImVec2(0.f, 6.f), UiCol::Ink, label);
     const bool changed = UiStepper(id, ImVec2(pos.x + width - 112.f, pos.y), ImVec2(112.f, 28.f), value, index, count);
-    SetCursorScreenPos(pos);
-    Dummy(ImVec2(width, 36.f));
+    EndPanelRow(pos, width);
     return changed;
 }
 
-bool ImGui::UiListRow(const char* id, const char* label, const char* hint, bool hintAlways, bool disabled, bool bold,
-                      ImU32 dotCol, bool keepOpen)
+bool ImGui::UiListRow(const char* id, const char* label, const char* hint, UiListRowFlags rowFlags, ImU32 dotCol)
 {
+    const bool hintAlways = rowFlags & UiListRowFlags_HintAlways;
+    const bool disabled = rowFlags & UiListRowFlags_Disabled;
+    const bool bold = rowFlags & UiListRowFlags_Bold;
     const ImVec2 pos = GetCursorScreenPos();
     const float width = GetContentRegionAvail().x;
     ImFont* font = bold ? UiFonts::Bold : UiFonts::Medium;
     const float labelX = dotCol ? 18.f : 0.f;
     const bool hasHint = hint && *hint;
     const float hintW = hasHint ? UiTextWidth(UiFonts::Medium, 10.5f, hint) : 0.f;
-    // what the row needs, so an auto-resizing popup grows to fit it; the hit box still spans the whole width
-    const float needW = labelX + UiTextWidth(font, 13.f, label) + (hasHint ? 16.f + hintW : 0.f);
+    const float fitWidth = labelX + UiTextWidth(font, 13.f, label) + (hasHint ? 16.f + hintW : 0.f);
 
-    // the row draws its own animated highlight instead of the Selectable's
-    for (const ImGuiCol idx : {ImGuiCol_Header, ImGuiCol_HeaderHovered, ImGuiCol_HeaderActive})
-        PushStyleColor(idx, ImVec4(0, 0, 0, 0));
-    const ImGuiSelectableFlags flags = (keepOpen ? ImGuiSelectableFlags_NoAutoClosePopups : 0) |
-                                       ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_SpanAvailWidth |
+    const int hiddenHighlights =
+        PushTransparentColors({ImGuiCol_Header, ImGuiCol_HeaderHovered, ImGuiCol_HeaderActive});
+    const ImGuiSelectableFlags flags = ImGuiSelectableFlags_NoAutoClosePopups | ImGuiSelectableFlags_AllowOverlap |
+                                       ImGuiSelectableFlags_SpanAvailWidth |
                                        (disabled ? ImGuiSelectableFlags_Disabled : 0);
     PushID(id);
-    const HitBox hit = {Selectable("##row", false, flags, ImVec2(needW, 30.f)), GetItemID()};
+    const HitBox hit = LastItemHitBox(Selectable("##row", false, flags, ImVec2(fitWidth, 30.f)));
     PopID();
-    PopStyleColor(3);
+    PopStyleColor(hiddenHighlights);
 
-    const float hoverT = hit.Anim(AnimSlot_Hover, !disabled && IsItemHovered(), 18.f);
-    const float pressT = hit.Anim(AnimSlot_Press, !disabled && IsItemActive(), 28.f);
+    const float hoverT = hit.Anim(AnimSlot_Hover, !disabled && hit.hovered, 18.f);
+    const float pressT = hit.Anim(AnimSlot_Press, !disabled && hit.active, 28.f);
 
     ImDrawList* dl = GetWindowDrawList();
     if (hoverT > 0.01f)
@@ -1088,38 +1117,40 @@ bool ImGui::UiListRow(const char* id, const char* label, const char* hint, bool 
 
 void ImGui::UiSectionLabel(const char* text)
 {
+    constexpr float kSilkLineHeight = 11.f, kGapBelow = 6.f;
     const ImVec2 pos = GetCursorScreenPos();
     AddSilk(GetWindowDrawList(), pos, text);
-    Dummy(ImVec2(SilkWidth(text), 11.f + 6.f));
+    Dummy(ImVec2(SilkWidth(text), kSilkLineHeight + kGapBelow));
 }
 
 void ImGui::UiDivider(float width)
 {
+    constexpr float kMargin = 8.f, kThickness = 1.f;
     const ImVec2 pos = GetCursorScreenPos();
-    GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + 8.f), ImVec2(pos.x + width, pos.y + 9.f), UiCol::Divider);
-    Dummy(ImVec2(width, 8.f + 1.f + 8.f));
+    GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + kMargin),
+                                       ImVec2(pos.x + width, pos.y + (kMargin + kThickness)), UiCol::Divider);
+    Dummy(ImVec2(width, kMargin + kThickness + kMargin));
 }
 
 bool ImGui::UiSearchField(const char* id, char* buf, size_t bufSize, float width, const char* hint, bool focus)
 {
-    constexpr float height = 34.f, textX = 34.f;
+    constexpr float kHeight = 34.f, kTextX = 34.f, kFontSize = 13.f;
     const ImVec2 pos = GetCursorScreenPos();
     ImDrawList* dl = GetWindowDrawList();
-    AddRecess(dl, pos, pos + ImVec2(width, height), 8.f);
+    AddRecess(dl, pos, pos + ImVec2(width, kHeight), 8.f);
     AddGlyph(dl, pos + ImVec2(19.5f, 17.5f), 13.f, UiGlyph_Search, UiCol::Ink3);
 
-    // a frameless InputText after the magnifier, as tall as the field so the text sits centered
-    SetCursorScreenPos(ImVec2(pos.x + textX, pos.y));
-    PushFont(UiFonts::Medium, 13.f);
-    PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, (height - 13.f) * 0.5f));
-    for (const ImGuiCol idx : {ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive})
-        PushStyleColor(idx, ImVec4(0, 0, 0, 0));
-    SetNextItemWidth(width - textX - 10.f);
+    SetCursorScreenPos(ImVec2(pos.x + kTextX, pos.y));
+    PushFont(UiFonts::Medium, kFontSize);
+    const float textCenteringPadY = (kHeight - kFontSize) * 0.5f;
+    PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, textCenteringPadY));
+    const int hiddenFrame = PushTransparentColors({ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive});
+    SetNextItemWidth(width - kTextX - 10.f);
     if (focus) SetKeyboardFocusHere();
     PushID(id);
     const bool edited = InputTextWithHint("##field", hint, buf, bufSize);
     PopID();
-    PopStyleColor(3);
+    PopStyleColor(hiddenFrame);
     PopStyleVar();
     PopFont();
     return edited;

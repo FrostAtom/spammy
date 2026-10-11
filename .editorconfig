@@ -13,7 +13,3 @@ indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
-
-# generated font header, stored as UTF-16 LE
-[src/Spammy/Window/Detail/ImFont_ComicSans.h]
-charset = utf-16le

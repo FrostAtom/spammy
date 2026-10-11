@@ -13,48 +13,50 @@ public:
         ErrorCode_COUNT,
     };
 
-    template <typename T>
-    struct Vec2D {
-        T x = 0, y = 0;
+    struct Vec2i {
+        int x = 0, y = 0;
     };
 
 private:
     wchar_t _wndName[64], _className[64];
     char _u8wndName[64 * 4];
     HICON _icon = nullptr;
-    HICON _trayIconOverride = nullptr; // shown in the tray instead of _icon while set
+    HICON _trayIconOverride = nullptr;
     ATOM _atom = NULL;
     HWND _hwnd = nullptr;
     ImGuiContext* _imCtx = nullptr;
     bool _wantQuit = false, _mustQuit = false;
 
-    ImGuiWindowFlags _imWndFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    bool _movable = false;
-    Vec2D<int> _size = {512, 512};
-    Vec2D<int> _position = {CW_USEDEFAULT, CW_USEDEFAULT};
+    Vec2i _size = {512, 512};
+    Vec2i _position = {CW_USEDEFAULT, CW_USEDEFAULT};
 
-    bool _moving = false;
-    Vec2D<int> _movePos;
+    bool _dragging = false;
+    Vec2i _dragOffset;
 
-    // show/hide slides the window in from the left and out to the right while fading it (a layered window meanwhile)
-    enum Swipe { Swipe_None, Swipe_In, Swipe_Out };
+    enum Swipe {
+        Swipe_None,
+        Swipe_In,
+        Swipe_Out
+    };
     Swipe _swipe = Swipe_None;
-    bool _swipeQuit = false; // the swipe out ends the app instead of hiding the window
-    float _swipeT = 0.f;
-    float _swipeFromX = 0.f, _swipeFromAlpha = 0.f; // where the current swipe started, x relative to the rest spot
-    float _swipeX = 0.f, _swipeAlpha = 1.f;         // the frame shown now
-    int _restX = 0;                                 // where the window sits when no swipe is running
+    bool _quitAfterSwipe = false;
+    float _swipeProgress = 0.f;
+    float _swipeStartOffset = 0.f, _swipeStartAlpha = 0.f;
+    float _swipeOffset = 0.f, _swipeAlpha = 1.f;
+    int _swipeRestX = 0;
 
     unsigned _dpi = 96;
     float _scaleFactor = 1.f;
     float _scale = 1.f;
-    bool _scalePending = false;
+    bool _sizeAndScalePending = false;
     bool _inFrame = false;
 
     LPDIRECT3D9 _d3d = nullptr;
     LPDIRECT3DDEVICE9 _d3dDevice = nullptr;
-    D3DPRESENT_PARAMETERS _d3dParams;
+    D3DPRESENT_PARAMETERS _d3dParams; // CreateDevice fills in the back buffer size
+    bool _needsReset = false;
     HRESULT _lastError = 0;
+    std::vector<std::unique_ptr<ImTextureData>> _textures;
     std::unique_ptr<TrayIcon> _trayIcon;
 
 public:
@@ -66,43 +68,32 @@ public:
     HWND Native() const { return _hwnd; }
     void Update();
 
-    // swipes the window out first when it's on screen
     void Close();
     void Cleanup();
     bool MustQuit() const { return _mustQuit; }
     bool WantQuit() { return std::exchange(_wantQuit, false); }
 
-    bool IsWndMaximized() const { return ShowCmd() == SW_MAXIMIZE; }
-    bool IsWndNormalized() const { return ShowCmd() == SW_NORMAL; }
-    // Show swipes in from hidden (or turns a running swipe out back), Hide swipes out; a minimized window skips it
+    bool IsOnScreen() const;
     void Show();
     void Hide();
-    // false already while swiping out
-    bool IsShown() const;
+    bool IsHiddenOrHiding() const;
     void Focus();
 
-    void EnableTitleBar(bool v = true);
-    void EnableMoving(bool v = true) { _movable = v; }
-
     void SetIcon(HICON icon);
-    // NULL restores the window icon in the tray; the caller keeps ownership of the HICON
     void SetTrayIconOverride(HICON icon);
 
-    void SetName(const wchar_t* name);
-
-    void SetSize(const Vec2D<int>& v);
+    void SetSize(const Vec2i& size);
     void SetScaleFactor(float factor);
-    void SetPosition(const Vec2D<int>& pos);
-    // centers the window on the primary monitor's work area
-    void ResetPosition();
+    void CenterOnWorkArea();
 
     static const char* FormatError(ErrorCode code);
-    // HRESULT of the last failed Initialize() step (0 if none)
-    HRESULT LastError() const { return _lastError; }
+    HRESULT LastInitError() const { return _lastError; }
 
 protected:
     virtual void Draw() = 0;
     virtual bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result);
+
+    ImTextureRef CreateTexture(int width, int height, std::span<const ImU32> pixels);
 
 private:
     bool IsReady() const { return _hwnd && _d3dDevice; }
@@ -114,24 +105,29 @@ private:
 
     bool CreateDevice();
     void CleanupDevice();
-    void ResetDevice();
+    bool ResetDevice();
     void Render();
 
-    void StartMove();
-    void StopMove() { _moving = false; }
-    void UpdateMove();
+    void StartDrag();
+    void StopDrag() { _dragging = false; }
+    void UpdateDrag();
 
     void StartSwipe(Swipe swipe);
     void StepSwipe(float dt);
     void ApplySwipeFrame();
     void FinishSwipe();
+    void JumpSwipeToEnd();
     void SetLayered(bool layered);
 
+    enum ScaleAnchor {
+        ScaleAnchor_Center,
+        ScaleAnchor_StoredPosition
+    };
     float DpiScale() const { return _scaleFactor * (float)_dpi / 96.f; }
-    void ApplyScale(bool keepCenter);
-    Vec2D<int> ScaledSize() const;
+    void RequestSizeAndScale();
+    void ApplySizeAndScale(ScaleAnchor anchor);
+    Vec2i ScaledSize() const;
 
-    int ShowCmd() const;
     HICON TrayIconImage() const { return _trayIconOverride ? _trayIconOverride : _icon; }
     void ApplyWndIcon();
     void MoveToStoredRect();

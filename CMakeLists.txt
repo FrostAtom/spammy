@@ -1,11 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 
 # cmake general
-cmake_policy(SET CMP0091 NEW)
 set(CMAKE_DISABLE_SOURCE_CHANGES ON)
-set(CMAKE_DISABLE_IN_SOURCE_BUILD OFF)
 set(CMAKE_SUPPRESS_REGENERATION ON)
-# static CRT (/MT, /MTd) via CMP0091 abstraction — keeps the exe standalone.
+# static CRT (/MT, /MTd) via CMP0091 abstraction (NEW since cmake_minimum_required 3.15) — keeps the exe standalone.
 # Setting it through the manual flags below is overridden by CMake's default /MD, so it must go here,
 # before project() — the runtime library is picked during compiler/language init.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -25,7 +23,7 @@ if(NOT DEFINED VCPKG_TARGET_TRIPLET)
 	set(VCPKG_TARGET_TRIPLET "x86-windows-static" CACHE STRING "")
 endif()
 
-project(Spammy LANGUAGES C CXX)
+project(Spammy LANGUAGES CXX)
 
 # output dirs; clang builds get their own so they don't overwrite the MSVC binaries
 set(OUTPUT_DIR ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE})
@@ -45,7 +43,7 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX23_STANDARD_COMPILE_OPTION "-std:c++latest")
 set(CMAKE_CXX23_EXTENSION_COMPILE_OPTION "-std:c++latest")
-# /utf-8: UI strings carry typographic characters (– … ‹ › ↗ ·) straight in the source
+# /utf-8: sources are UTF-8 without BOM (comments carry typographic characters)
 set(COMMON_COMPILE_FLAGS "/W3 /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS")
 # /Gy + /Gw: split functions/data into COMDATs so the linker can strip and fold them
 # /GL + /LTCG: whole-program optimization; /OPT:REF drops unused code, /OPT:ICF folds identical COMDATs
@@ -55,15 +53,11 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 		message(FATAL_ERROR "Clang build needs lld-link for LTO: use the clang-* presets or pass -DCMAKE_LINKER=lld-link -DCMAKE_AR=llvm-lib")
 	endif()
 	set(CMAKE_CXX_FLAGS_RELEASE "${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy -flto=thin /DNDEBUG")
-	set(CMAKE_C_FLAGS_RELEASE	"${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy -flto=thin /DNDEBUG")
-	set(CMAKE_CXX_FLAGS_DEBUG	"${COMMON_COMPILE_FLAGS} /Od /Zi /DDEBUG /D_DEBUG")
-	set(CMAKE_C_FLAGS_DEBUG		"${COMMON_COMPILE_FLAGS} /Od /Zi /DDEBUG /D_DEBUG")
+	set(CMAKE_CXX_FLAGS_DEBUG	"${COMMON_COMPILE_FLAGS} /Od /Zi")
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/OPT:REF /OPT:ICF /INCREMENTAL:NO")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 	set(CMAKE_CXX_FLAGS_RELEASE "${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy /GL /wd4458 /DNDEBUG")
-	set(CMAKE_C_FLAGS_RELEASE	"${COMMON_COMPILE_FLAGS} /O2 /Gw /Gy /GL /wd4458 /DNDEBUG")
-	set(CMAKE_CXX_FLAGS_DEBUG	"${COMMON_COMPILE_FLAGS} /Od /Zi /wd4458 /DDEBUG /D_DEBUG")
-	set(CMAKE_C_FLAGS_DEBUG		"${COMMON_COMPILE_FLAGS} /Od /Zi /wd4458 /DDEBUG /D_DEBUG")
+	set(CMAKE_CXX_FLAGS_DEBUG	"${COMMON_COMPILE_FLAGS} /Od /Zi /wd4458")
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO")
 	# /GL objects require /LTCG when archived into the static lib too
 	set(CMAKE_STATIC_LINKER_FLAGS_RELEASE "/LTCG")
@@ -71,8 +65,6 @@ else()
 	message(FATAL_ERROR "Unsupported toolset, use MSVC or Clang for build")
 endif()
 
-set(OUT_DIR "" CACHE PATH "Dist dir")
-
 # sources
-add_subdirectory( deps )
-add_subdirectory( src )
+add_subdirectory( deps/imgui )
+add_subdirectory( src/Spammy )

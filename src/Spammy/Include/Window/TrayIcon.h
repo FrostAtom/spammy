@@ -1,7 +1,6 @@
 #pragma once
 #include "Headers.h"
 
-// popup menu built from scratch every time the tray icon is right-clicked
 class TrayIconMenu {
     friend class TrayIcon;
 
@@ -12,7 +11,6 @@ public:
 private:
     HWND _hwnd;
     HMENU _menu;
-    // menu item id == index + 1, returned by TrackPopupMenuEx
     boost::container::static_vector<Callback_t, MaxItems> _items;
 
 public:
@@ -30,18 +28,16 @@ private:
     void Track(int x, int y);
 };
 
-class Window;
 class TrayIcon {
-    friend Window;
+    friend class Window;
 
 public:
     using MenuCallback_t = std::function<void(TrayIconMenu&)>;
-    using ClickCallback_t = std::function<void()>;
 
 private:
     inline static UINT s_idCounter = 0;
     NOTIFYICONDATAW _data;
-    ClickCallback_t _clickFunc;
+    std::function<void()> _clickFunc;
     MenuCallback_t _menuFunc;
 
 public:
@@ -49,18 +45,14 @@ public:
     ~TrayIcon();
     void SetTip(const wchar_t* tip);
 
-    void SetOnClick(ClickCallback_t&& func);
+    void SetOnClick(std::function<void()>&& func);
     void SetMenu(MenuCallback_t&& func);
 
 private:
-    // bound to a window; the icon itself may be missing from the tray until the next TaskbarCreated
-    bool IsCreated() const { return _data.hWnd != nullptr; }
-    bool Create(HWND hwnd, HICON icon);
-    // (re)adds the icon with everything set so far
-    bool Add();
+    bool IsAttached() const { return _data.hWnd != nullptr; }
+    void Attach(HWND hwnd, HICON icon);
+    void TryAddToTray();
     static UINT TaskbarCreatedMsg();
-    void Cleanup();
-    void Reset();
     bool Notify(DWORD message);
     void UpdateIcon(HICON icon);
     bool HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);

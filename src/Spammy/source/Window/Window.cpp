@@ -1,32 +1,69 @@
 #include "Window/Window.h"
 #include "ImGui.h"
 
-static constexpr std::array<const char*, Window::ErrorCode_COUNT> s_errorCodeNames = {
+static constexpr std::array<const char*, Window::ErrorCode_COUNT> kErrorCodeNames = {
     "OK", "Invalid call", "Windows error", "Renderer error", "ImGui error",
 };
 
-static constexpr float s_swipeDistance = 56.f; // logical px the window travels on show / hide
-static constexpr float s_swipeInSec = 0.22f;
-static constexpr float s_swipeOutSec = 0.16f;
+static constexpr float kSwipeDistance = 56.f;
+static constexpr float kSwipeInSec = 0.22f;
+static constexpr float kSwipeOutSec = 0.16f;
+static constexpr float kMaxSwipeStepSec = 1.f / 30.f;
+
+static constexpr D3DCOLOR kBackgroundColor = D3DCOLOR_RGBA(0xE2, 0xDE, 0xD6, 255);
+
+static float EaseOutCubic(float t)
+{
+    const float left = 1.f - t;
+    return 1.f - left * left * left;
+}
+
+static float EaseInQuad(float t)
+{
+    return t * t;
+}
+
+static void ConvertInputToLogicalUnits(ImGuiIO& io, ImVector<ImGuiInputEvent>& inputEvents, float scale)
+{
+    io.DisplaySize /= scale;
+    for (ImGuiInputEvent& event : inputEvents)
+        if (event.Type == ImGuiInputEventType_MousePos && event.MousePos.PosX != -FLT_MAX) {
+            event.MousePos.PosX /= scale;
+            event.MousePos.PosY /= scale;
+        }
+}
+
+static void ConvertDrawDataToPhysicalPixels(ImDrawData& drawData, float scale)
+{
+    drawData.DisplaySize *= scale;
+    drawData.FramebufferScale = ImVec2(1.f, 1.f);
+    for (ImDrawList* cmdList : drawData.CmdLists) {
+        for (ImDrawVert& vertex : cmdList->VtxBuffer)
+            vertex.pos *= scale;
+        for (ImDrawCmd& cmd : cmdList->CmdBuffer)
+            cmd.ClipRect *= scale;
+    }
+}
 
 const char* Window::FormatError(ErrorCode code)
 {
-    return s_errorCodeNames[code];
+    return kErrorCodeNames[code];
 }
 
 Window::Window(const wchar_t* className, const wchar_t* wndName)
 {
     wcsncpy_s(_className, className, std::size(_className));
-    SetName(wndName ? wndName : className);
+    if (!wndName) wndName = className;
+    wcsncpy_s(_wndName, wndName, std::size(_wndName));
+    _u8wndName[0] = '\0';
+    WideCharToMultiByte(CP_UTF8, 0, wndName, -1, _u8wndName, (int)std::size(_u8wndName), nullptr, nullptr);
 
     _d3dParams = {
-        // D3DFMT_UNKNOWN: an explicit format with alpha is needed only for per-pixel alpha composition
         .BackBufferFormat = D3DFMT_UNKNOWN,
         .SwapEffect = D3DSWAPEFFECT_DISCARD,
         .Windowed = TRUE,
-        .EnableAutoDepthStencil = TRUE,
-        .AutoDepthStencilFormat = D3DFMT_D16,
-        .PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE, // no vsync
+        .EnableAutoDepthStencil = FALSE,
+        .PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE,
     };
 }
 
@@ -43,15 +80,12 @@ Window::ErrorCode Window::Initialize()
     _imCtx = ImGui::CreateContext();
     if (!_imCtx) return ErrorCode_ImGuiError;
 
-    // Cleanup() also undoes whatever a failed step managed to create
-    if (!CreateWnd()) {
+    const auto rollBack = [this](ErrorCode code) {
         Cleanup();
-        return ErrorCode_WinError;
-    }
-    if (!CreateDevice()) {
-        Cleanup();
-        return ErrorCode_RendererError;
-    }
+        return code;
+    };
+    if (!CreateWnd()) return rollBack(ErrorCode_WinError);
+    if (!CreateDevice()) return rollBack(ErrorCode_RendererError);
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigWindowsResizeFromEdges = false;
@@ -60,7 +94,7 @@ Window::ErrorCode Window::Initialize()
 
     ImGui::LoadUiFonts();
 
-    if (_trayIcon) _trayIcon->Create(_hwnd, TrayIconImage());
+    if (_trayIcon) _trayIcon->Attach(_hwnd, TrayIconImage());
 
     return ErrorCode_OK;
 }
@@ -68,7 +102,7 @@ Window::ErrorCode Window::Initialize()
 void Window::SetTrayIcon(std::unique_ptr<TrayIcon> icon)
 {
     _trayIcon = std::move(icon);
-    if (_hwnd && _trayIcon) _trayIcon->Create(_hwnd, TrayIconImage());
+    if (_hwnd && _trayIcon) _trayIcon->Attach(_hwnd, TrayIconImage());
 }
 
 void Window::SetTrayIconOverride(HICON icon)
@@ -84,9 +118,23 @@ void Window::Cleanup()
     CleanupDevice();
     CleanupWnd();
     if (_imCtx) {
+        for (const std::unique_ptr<ImTextureData>& texture : _textures)
+            ImGui::UnregisterUserTexture(texture.get());
+        _textures.clear();
         ImGui::DestroyContext(_imCtx);
         _imCtx = nullptr;
     }
+}
+
+ImTextureRef Window::CreateTexture(int width, int height, std::span<const ImU32> pixels)
+{
+    IM_ASSERT(pixels.size() == (size_t)width * height);
+    ImTextureData& texture = *_textures.emplace_back(std::make_unique<ImTextureData>());
+    texture.Create(ImTextureFormat_RGBA32, width, height);
+    texture.UseColors = true;
+    std::ranges::copy(pixels, (ImU32*)texture.GetPixels());
+    ImGui::RegisterUserTexture(&texture);
+    return texture.GetTexRef();
 }
 
 void Window::ApplyWndIcon()
@@ -108,45 +156,42 @@ void Window::Focus()
     if (_hwnd) SetForegroundWindow(_hwnd);
 }
 
-int Window::ShowCmd() const
+bool Window::IsOnScreen() const
 {
-    if (!_hwnd) return SW_HIDE;
-    WINDOWPLACEMENT placement = {sizeof(placement)};
-    GetWindowPlacement(_hwnd, &placement);
-    return placement.showCmd;
+    return _hwnd && IsWindowVisible(_hwnd) && !IsIconic(_hwnd);
 }
 
 void Window::Show()
 {
-    if (!_hwnd) return;
-    // a minimized window comes back with the system restore animation instead
-    if (!IsIconic(_hwnd) && (!IsWindowVisible(_hwnd) || _swipe == Swipe_Out)) StartSwipe(Swipe_In);
+    const bool exiting = _quitAfterSwipe;
+    if (!_hwnd || exiting) return;
+    const bool systemAnimatesRestore = IsIconic(_hwnd);
+    if (IsHiddenOrHiding() && !systemAnimatesRestore) StartSwipe(Swipe_In);
     ShowWindow(_hwnd, SW_SHOWNORMAL);
 }
 
 void Window::Hide()
 {
     if (!_hwnd || _swipe == Swipe_Out) return;
-    // Update() doesn't run for a minimized window, so there'd be nothing to drive the swipe
-    if (IsIconic(_hwnd) || !IsWindowVisible(_hwnd))
-        ShowWindow(_hwnd, SW_HIDE);
-    else
+    if (IsOnScreen())
         StartSwipe(Swipe_Out);
+    else
+        ShowWindow(_hwnd, SW_HIDE);
 }
 
 void Window::Close()
 {
-    if (!_hwnd || IsIconic(_hwnd) || !IsWindowVisible(_hwnd)) {
+    if (!IsOnScreen()) {
         _mustQuit = true;
         return;
     }
-    _swipeQuit = true;
+    _quitAfterSwipe = true;
     if (_swipe != Swipe_Out) StartSwipe(Swipe_Out);
 }
 
-bool Window::IsShown() const
+bool Window::IsHiddenOrHiding() const
 {
-    return _hwnd && IsWindowVisible(_hwnd) && _swipe != Swipe_Out;
+    return !_hwnd || !IsWindowVisible(_hwnd) || _swipe == Swipe_Out;
 }
 
 void Window::SetLayered(bool layered)
@@ -160,17 +205,15 @@ void Window::StartSwipe(Swipe swipe)
     if (_swipe == Swipe_None) {
         RECT rect;
         GetWindowRect(_hwnd, &rect);
-        _restX = rect.left;
-        // from hidden it comes in from the left, from the screen it leaves from where it stands
-        _swipeX = swipe == Swipe_In ? -s_swipeDistance : 0.f;
+        _swipeRestX = rect.left;
+        _swipeOffset = swipe == Swipe_In ? -kSwipeDistance : 0.f;
         _swipeAlpha = swipe == Swipe_In ? 0.f : 1.f;
-        SetLayered(true); // the alpha below must follow right away: a layered window without one isn't drawn
+        SetLayered(true); // invisible until ApplySwipeFrame sets its alpha
     }
-    // a swipe that turns around midway continues from wherever the previous one got to
     _swipe = swipe;
-    _swipeT = 0.f;
-    _swipeFromX = _swipeX;
-    _swipeFromAlpha = _swipeAlpha;
+    _swipeProgress = 0.f;
+    _swipeStartOffset = _swipeOffset;
+    _swipeStartAlpha = _swipeAlpha;
     ApplySwipeFrame();
 }
 
@@ -178,77 +221,67 @@ void Window::StepSwipe(float dt)
 {
     if (_swipe == Swipe_None) return;
     const bool in = _swipe == Swipe_In;
-    _swipeT = ImMin(_swipeT + dt / (in ? s_swipeInSec : s_swipeOutSec), 1.f);
-    // decelerates into place, accelerates away
-    const float left = 1.f - _swipeT;
-    const float eased = in ? 1.f - left * left * left : _swipeT * _swipeT;
-    _swipeX = ImLerp(_swipeFromX, in ? 0.f : s_swipeDistance, eased);
-    _swipeAlpha = ImLerp(_swipeFromAlpha, in ? 1.f : 0.f, in ? eased : _swipeT);
+    _swipeProgress = ImMin(_swipeProgress + dt / (in ? kSwipeInSec : kSwipeOutSec), 1.f);
+    const float eased = in ? EaseOutCubic(_swipeProgress) : EaseInQuad(_swipeProgress);
+    _swipeOffset = ImLerp(_swipeStartOffset, in ? 0.f : kSwipeDistance, eased);
+    _swipeAlpha = ImLerp(_swipeStartAlpha, in ? 1.f : 0.f, in ? eased : _swipeProgress);
     ApplySwipeFrame();
-    if (_swipeT >= 1.f) FinishSwipe();
+    if (_swipeProgress >= 1.f) FinishSwipe();
 }
 
 void Window::ApplySwipeFrame()
 {
     SetLayeredWindowAttributes(_hwnd, 0, (BYTE)lroundf(_swipeAlpha * 255.f), LWA_ALPHA);
-    // the user grabbed the window mid-swipe: it's theirs to place now
-    if (!_moving)
-        SetWindowPos(_hwnd, nullptr, _restX + (int)lroundf(_swipeX * _scale), _position.y, 0, 0,
+    if (!_dragging)
+        SetWindowPos(_hwnd, nullptr, _swipeRestX + (int)lroundf(_swipeOffset * _scale), _position.y, 0, 0,
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void Window::FinishSwipe()
 {
-    if (std::exchange(_swipe, Swipe_None) == Swipe_In) {
-        SetLayered(false); // a layered window composes slower, keep it only for the fades
-        return;
+    // a WM_DPICHANGED sent from inside ApplySwipeFrame may have finished it already
+    const Swipe finished = std::exchange(_swipe, Swipe_None);
+    if (finished == Swipe_None) return;
+    if (finished == Swipe_Out) {
+        if (std::exchange(_quitAfterSwipe, false)) {
+            _mustQuit = true;
+            return;
+        }
+        ShowWindow(_hwnd, SW_HIDE);
+        SetWindowPos(_hwnd, nullptr, _swipeRestX, _position.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    if (std::exchange(_swipeQuit, false)) {
-        _mustQuit = true;
-        return;
-    }
-    ShowWindow(_hwnd, SW_HIDE);
-    // back to the rest spot while hidden, so the next swipe in lands where the window was
-    SetWindowPos(_hwnd, nullptr, _restX, _position.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     SetLayered(false);
 }
 
-void Window::SetName(const wchar_t* name)
+void Window::JumpSwipeToEnd()
 {
-    wcsncpy_s(_wndName, name, std::size(_wndName));
-    _u8wndName[0] = '\0';
-    WideCharToMultiByte(CP_UTF8, 0, name, -1, _u8wndName, (int)std::size(_u8wndName), nullptr, nullptr);
-    if (_hwnd) SetWindowTextW(_hwnd, name);
+    if (_swipe != Swipe_None) StepSwipe(1.f);
 }
 
 void Window::MoveToStoredRect()
 {
     if (!_hwnd) return;
-    const Vec2D<int> scaled = ScaledSize();
+    JumpSwipeToEnd();
+    const Vec2i scaled = ScaledSize();
     MoveWindow(_hwnd, _position.x, _position.y, scaled.x, scaled.y, FALSE);
 }
 
-void Window::SetSize(const Vec2D<int>& size)
+void Window::SetSize(const Vec2i& size)
 {
     _size = size;
-    MoveToStoredRect();
+    RequestSizeAndScale();
 }
 
-void Window::SetPosition(const Vec2D<int>& position)
-{
-    _position = position;
-    MoveToStoredRect();
-}
-
-void Window::ResetPosition()
+void Window::CenterOnWorkArea()
 {
     RECT work;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-    const Vec2D<int> size = ScaledSize();
-    SetPosition({(work.right - work.left - size.x) / 2, (work.bottom - work.top - size.y) / 2});
+    const Vec2i size = ScaledSize();
+    _position = {work.left + (work.right - work.left - size.x) / 2, work.top + (work.bottom - work.top - size.y) / 2};
+    MoveToStoredRect();
 }
 
-Window::Vec2D<int> Window::ScaledSize() const
+Window::Vec2i Window::ScaledSize() const
 {
     return {(int)lroundf(_size.x * _scale), (int)lroundf(_size.y * _scale)};
 }
@@ -256,15 +289,21 @@ Window::Vec2D<int> Window::ScaledSize() const
 void Window::SetScaleFactor(float factor)
 {
     _scaleFactor = factor;
-    // resizing mid-frame would desync ImGui's display size from the backbuffer
-    if (_inFrame)
-        _scalePending = true;
-    else
-        ApplyScale(true);
+    RequestSizeAndScale();
 }
 
-void Window::ApplyScale(bool keepCenter)
+void Window::RequestSizeAndScale()
 {
+    // resizing mid-frame would desync ImGui's display size from the back buffer
+    if (_inFrame)
+        _sizeAndScalePending = true;
+    else
+        ApplySizeAndScale(ScaleAnchor_Center);
+}
+
+void Window::ApplySizeAndScale(ScaleAnchor anchor)
+{
+    if (_hwnd) JumpSwipeToEnd();
     float scale = DpiScale();
     MONITORINFO monitor = {sizeof(monitor)};
     const bool hasMonitor = _hwnd && GetMonitorInfoW(MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST), &monitor);
@@ -283,9 +322,9 @@ void Window::ApplyScale(bool keepCenter)
     }
 
     if (!_hwnd) return;
-    const Vec2D<int> size = ScaledSize();
-    Vec2D<int> pos = _position;
-    if (keepCenter) {
+    const Vec2i size = ScaledSize();
+    Vec2i pos = _position;
+    if (anchor == ScaleAnchor_Center) {
         RECT rect;
         GetWindowRect(_hwnd, &rect);
         pos = {((int)rect.left + (int)rect.right - size.x) / 2, ((int)rect.top + (int)rect.bottom - size.y) / 2};
@@ -299,20 +338,11 @@ void Window::ApplyScale(bool keepCenter)
 
 void Window::Update()
 {
-    if (std::exchange(_scalePending, false)) ApplyScale(true);
+    if (std::exchange(_sizeAndScalePending, false)) ApplySizeAndScale(ScaleAnchor_Center);
     if (!IsReady()) return;
     if (BeginFrame()) Draw();
     EndFrame();
-    // capped so a hitch doesn't skip the swipe altogether
-    StepSwipe(ImMin(ImGui::GetIO().DeltaTime, 1.f / 30.f));
-}
-
-void Window::EnableTitleBar(bool v)
-{
-    if (v)
-        _imWndFlags &= ~ImGuiWindowFlags_NoTitleBar;
-    else
-        _imWndFlags |= ImGuiWindowFlags_NoTitleBar;
+    StepSwipe(ImMin(ImGui::GetIO().DeltaTime, kMaxSwipeStepSec));
 }
 
 bool Window::BeginFrame()
@@ -322,31 +352,20 @@ bool Window::BeginFrame()
     ImGui_ImplWin32_NewFrame();
     ImGuiIO& io = ImGui::GetIO();
     io.DisplayFramebufferScale = ImVec2(_scale, _scale);
-    if (_scale != 1.f) {
-        // ImGui runs in unscaled logical units; the backend reports physical pixels
-        io.DisplaySize /= _scale;
-        for (ImGuiInputEvent& event : GImGui->InputEventsQueue)
-            if (event.Type == ImGuiInputEventType_MousePos && event.MousePos.PosX != -FLT_MAX) {
-                event.MousePos.PosX /= _scale;
-                event.MousePos.PosY /= _scale;
-            }
-    }
+    if (_scale != 1.f) ConvertInputToLogicalUnits(io, _imCtx->InputEventsQueue, _scale);
     ImGui::NewFrame();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
-    bool isOpen = true; // cleared by the title bar's close button
-    const ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus | _imWndFlags;
-    const bool visible = ImGui::Begin(_u8wndName, &isOpen, flags);
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                                       ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    const bool visible = ImGui::Begin(_u8wndName, nullptr, flags);
 
-    ImGuiContext* ctx = ImGui::GetCurrentContext();
-    if (ctx->CurrentWindow && ctx->MovingWindow == ctx->CurrentWindow)
-        StartMove();
+    if (_imCtx->CurrentWindow && _imCtx->MovingWindow == _imCtx->CurrentWindow)
+        StartDrag();
     else
-        StopMove();
-
-    if (!isOpen) _wantQuit = true;
+        StopDrag();
     return visible;
 }
 
@@ -377,9 +396,8 @@ bool Window::CreateWnd()
     }
     if (_icon) ApplyWndIcon();
 
-    // a 1px DWM frame gives the borderless popup the system drop shadow
-    const MARGINS shadowMargins = {1, 1, 1, 1};
-    DwmExtendFrameIntoClientArea(_hwnd, &shadowMargins);
+    const MARGINS dropShadowFrame = {1, 1, 1, 1};
+    DwmExtendFrameIntoClientArea(_hwnd, &dropShadowFrame);
 
     _dpi = GetDpiForWindow(_hwnd);
     _scale = DpiScale();
@@ -409,16 +427,15 @@ bool Window::CreateDevice()
         return false;
     }
 
-    // hardware T&L is missing on basic display adapters, RDP sessions, VMs and some old iGPUs
-    static constexpr DWORD s_vertexProcessingFallbacks[] = {
+    static constexpr DWORD kVertexProcessingFallbacks[] = {
         D3DCREATE_HARDWARE_VERTEXPROCESSING,
         D3DCREATE_MIXED_VERTEXPROCESSING,
         D3DCREATE_SOFTWARE_VERTEXPROCESSING,
     };
     HRESULT hRes = E_FAIL;
-    for (const DWORD flags : s_vertexProcessingFallbacks)
-        if (SUCCEEDED(hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, flags, &_d3dParams,
-                                                &_d3dDevice)))
+    for (const DWORD flags : kVertexProcessingFallbacks)
+        if (SUCCEEDED(
+                hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, flags, &_d3dParams, &_d3dDevice)))
             break;
     if (FAILED(hRes)) {
         _lastError = hRes;
@@ -441,72 +458,60 @@ void Window::CleanupDevice()
     }
 }
 
-void Window::ResetDevice()
+bool Window::ResetDevice()
 {
-    if (!_d3dDevice) return;
+    const bool resetAllowed = _d3dDevice->TestCooperativeLevel() != D3DERR_DEVICELOST;
+    if (!resetAllowed) return false;
     ImGui_ImplDX9_InvalidateDeviceObjects();
-    _d3dDevice->Reset(&_d3dParams);
+    if (FAILED(_d3dDevice->Reset(&_d3dParams))) return false;
     ImGui_ImplDX9_CreateDeviceObjects();
+    _needsReset = false;
+    return true;
 }
 
 void Window::Render()
 {
-    _d3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
-    _d3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-    _d3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-    _d3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_RGBA(0xE2, 0xDE, 0xD6, 255), 1.0f, 0);
+    if (_needsReset && !ResetDevice()) return;
+    _d3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET, kBackgroundColor, 1.0f, 0);
     if (_d3dDevice->BeginScene() >= 0) {
         ImGui::Render();
         ImDrawData* drawData = ImGui::GetDrawData();
-        if (_scale != 1.f) {
-            // scale the logical-unit draw data back to physical pixels (see BeginFrame)
-            drawData->DisplaySize *= _scale;
-            drawData->FramebufferScale = ImVec2(1.f, 1.f);
-            for (ImDrawList* cmdList : drawData->CmdLists) {
-                for (ImDrawVert& vertex : cmdList->VtxBuffer)
-                    vertex.pos *= _scale;
-                for (ImDrawCmd& cmd : cmdList->CmdBuffer)
-                    cmd.ClipRect *= _scale;
-            }
-        }
+        if (_scale != 1.f) ConvertDrawDataToPhysicalPixels(*drawData, _scale);
         ImGui_ImplDX9_RenderDrawData(drawData);
         _d3dDevice->EndScene();
     }
-    if (_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr) == D3DERR_DEVICELOST &&
-        _d3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
-        ResetDevice();
+    if (_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr) == D3DERR_DEVICELOST) _needsReset = true;
 }
 
-void Window::StartMove()
+void Window::StartDrag()
 {
-    if (!_movable || _moving) return;
+    if (_dragging) return;
     POINT cursor;
     GetCursorPos(&cursor);
     RECT rect;
     GetWindowRect(_hwnd, &rect);
-    _movePos = {cursor.x - rect.left, cursor.y - rect.top};
-    _moving = true;
+    _dragOffset = {cursor.x - rect.left, cursor.y - rect.top};
+    _dragging = true;
 }
 
-void Window::UpdateMove()
+void Window::UpdateDrag()
 {
-    if (!_moving) return;
-    if (!_movable) return StopMove();
+    if (!_dragging) return;
     POINT cursor;
     GetCursorPos(&cursor);
     RECT rect;
     GetWindowRect(_hwnd, &rect);
-    MoveWindow(_hwnd, cursor.x - _movePos.x, cursor.y - _movePos.y, rect.right - rect.left, rect.bottom - rect.top,
-               TRUE);
+    MoveWindow(_hwnd, cursor.x - _dragOffset.x, cursor.y - _dragOffset.y, rect.right - rect.left,
+               rect.bottom - rect.top, TRUE);
 }
 
-// imgui_impl_win32.h keeps this declaration in '#if 0' to avoid including <windows.h>
+// imgui_impl_win32.h keeps this declaration under '#if 0'
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
 {
-    // a window swiping out is already gone for the user, it must not take clicks meant for what's under it
-    *result = _swipe == Swipe_Out ? 0 : ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam);
+    const bool ignoresInput = _swipe == Swipe_Out;
+    *result = ignoresInput ? 0 : ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam);
     if (*result) return true;
     if (_trayIcon && _trayIcon->HandleMessage(msg, wParam, lParam)) return true;
 
@@ -514,40 +519,48 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
     case WM_CLOSE: _wantQuit = true; return true;
     case WM_ENDSESSION: _mustQuit = true; return true;
     case WM_SIZING:
-        // keep rendering while the modal size loop blocks the message pump
+        // the modal size loop blocks the app's message loop
         Update();
         *result = TRUE;
         return true;
     case WM_MOVE: _position = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; return true;
-    case WM_SIZE:
-        if (wParam != SIZE_MINIMIZED && _d3dDevice) {
-            _d3dParams.BackBufferWidth = LOWORD(lParam);
-            _d3dParams.BackBufferHeight = HIWORD(lParam);
-            ResetDevice();
+    case WM_SIZE: {
+        const UINT width = LOWORD(lParam), height = HIWORD(lParam);
+        const bool backBufferFits = width == _d3dParams.BackBufferWidth && height == _d3dParams.BackBufferHeight;
+        if (wParam != SIZE_MINIMIZED && _d3dDevice && !backBufferFits) {
+            _d3dParams.BackBufferWidth = width;
+            _d3dParams.BackBufferHeight = height;
+            _needsReset = true;
         }
         return true;
+    }
     case WM_DPICHANGED: {
         _dpi = HIWORD(wParam);
+        JumpSwipeToEnd(); // first: its last frame's WM_MOVE would overwrite _position
         const RECT* suggested = (const RECT*)lParam;
         _position = {(int)suggested->left, (int)suggested->top};
-        ApplyScale(false);
+        ApplySizeAndScale(ScaleAnchor_StoredPosition);
         return true;
     }
     case WM_MOUSEMOVE:
-        if (wParam & MK_LBUTTON) UpdateMove();
+        if (wParam & MK_LBUTTON) UpdateDrag();
         return true;
-    case WM_SYSCOMMAND:
-        // Alt alone would otherwise open the (non-existent) system menu and steal focus
-        if ((wParam & 0xfff0) == SC_KEYMENU) return true;
+    case WM_SYSCOMMAND: {
+        const bool altOpensSystemMenu = (wParam & 0xfff0) == SC_KEYMENU;
+        if (altOpensSystemMenu) return true;
         break;
-    case WM_NCACTIVATE:
-        // lParam=-1 tells DefWindowProc not to repaint the non-client area, which we don't have
-        *result = DefWindowProcW(_hwnd, msg, wParam, -1);
+    }
+    case WM_NCACTIVATE: {
+        constexpr LPARAM kSkipNonClientRepaint = -1;
+        *result = DefWindowProcW(_hwnd, msg, wParam, kSkipNonClientRepaint);
         return true;
-    case WM_NCCALCSIZE:
-        // returning 0 keeps the whole WS_THICKFRAME window as client area (no visible frame)
-        if (wParam && !IsWndMaximized()) return true;
-        break;
+    }
+    case WM_NCCALCSIZE: {
+        constexpr LRESULT kWholeWindowIsClientArea = 0;
+        if (!wParam || IsZoomed(_hwnd)) break;
+        *result = kWholeWindowIsClientArea;
+        return true;
+    }
     case WM_NCHITTEST: *result = HTCLIENT; return true;
     }
     return false;
@@ -555,10 +568,11 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
 
 LRESULT WINAPI Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    if (msg == WM_CREATE) {
+    // the first message with the create params; HandleWndProc needs _hwnd before CreateWindowExW returns
+    if (msg == WM_NCCREATE) {
         Window* self = (Window*)((const CREATESTRUCTW*)lParam)->lpCreateParams;
+        self->_hwnd = hwnd;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)self);
-        return 0;
     }
     Window* self = (Window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     LRESULT result;

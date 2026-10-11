@@ -10,10 +10,12 @@
 #include <fstream>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <span>
 #include <stop_token>
 #include <string>
@@ -30,6 +32,7 @@
 #include <dwmapi.h>
 #include <mmsystem.h>
 #include <shellapi.h>
+#include <shlobj_core.h>
 #include <winhttp.h>
 
 #include <boost/container/flat_set.hpp>

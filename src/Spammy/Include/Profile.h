@@ -3,32 +3,32 @@
 #include "Utils.h"
 #include "Win32/Keyboard.h"
 
-inline constexpr int kProfileSpeedMin = 10;
-inline constexpr int kProfileSpeedMax = 200;
+inline constexpr int kProfileIntervalMinMs = 10;
+inline constexpr int kProfileIntervalMaxMs = 200;
 inline constexpr size_t kProfileNameMax = 32;
 
-// the UI shows the autofire interval as presses per second: 200..10 ms = 5..100/s
-inline constexpr unsigned kProfileRateMin = 1000 / kProfileSpeedMax;
-inline constexpr unsigned kProfileRateMax = 1000 / kProfileSpeedMin;
-constexpr unsigned SpeedToRate(unsigned speedMs)
+inline constexpr unsigned kProfileRateMin = 1000 / kProfileIntervalMaxMs;
+inline constexpr unsigned kProfileRateMax = 1000 / kProfileIntervalMinMs;
+constexpr unsigned IntervalToRate(unsigned intervalMs)
 {
-    return (1000 + speedMs / 2) / speedMs;
+    return (1000 + intervalMs / 2) / intervalMs;
 }
-constexpr unsigned RateToSpeed(unsigned rate)
+constexpr unsigned RateToInterval(unsigned rate)
 {
-    return std::clamp((1000 + rate / 2) / rate, (unsigned)kProfileSpeedMin, (unsigned)kProfileSpeedMax);
+    return std::clamp((1000 + rate / 2) / rate, (unsigned)kProfileIntervalMinMs, (unsigned)kProfileIntervalMaxMs);
 }
 
-// a key bundle packs a VK code into the low word and the KeyMod flags required with it into the high word
-constexpr unsigned MakeKeyBundle(unsigned vkCode, unsigned mods)
+using KeyBundle_t = unsigned;
+
+constexpr KeyBundle_t MakeKeyBundle(unsigned vkCode, unsigned mods)
 {
     return vkCode | (mods << 16);
 }
-constexpr unsigned KeyBundleVk(unsigned bundle)
+constexpr unsigned KeyBundleVk(KeyBundle_t bundle)
 {
     return bundle & 0xFFFF;
 }
-constexpr unsigned KeyBundleMods(unsigned bundle)
+constexpr unsigned KeyBundleMods(KeyBundle_t bundle)
 {
     return (bundle >> 16) & 0xFFFF;
 }
@@ -46,21 +46,19 @@ struct KeyConfig {
 
 struct Profile {
     using KeyModList_t = std::array<KeyConfig, kKeyboardKeyModCount>;
-    // executable names, case-insensitive like the Windows file system, kept sorted for display
     using AppList_t = boost::container::flat_set<std::string, CaseInsensitiveLess>;
 
     std::string name;
     AppList_t apps;
     std::array<KeyModList_t, kKeyboardKeysCount> keys = {};
-    unsigned speed = 20;
-    unsigned vkPause = 0; // key bundle, 0 = unset
+    unsigned intervalMs = 20;
+    KeyBundle_t pauseKey = 0;
     bool disableAltF4 = false;
     bool disableWin = false;
 
-    // true if any mouse button is bound (or is the pause key) — decides whether the mouse hook is installed
     bool UsesMouse() const
     {
-        if (Keyboard::IsMouseButton(KeyBundleVk(vkPause))) return true;
+        if (Keyboard::IsMouseButton(KeyBundleVk(pauseKey))) return true;
         auto isBound = [](const KeyConfig& cfg) { return cfg.action != Action_None; };
         for (unsigned short vk = VK_LBUTTON; vk <= VK_XBUTTON2; vk++)
             if (Keyboard::IsMouseButton(vk) && std::ranges::any_of(keys[vk], isBound)) return true;
@@ -73,8 +71,8 @@ inline void to_json(nlohmann::json& json, const Profile& value)
     json = {
         {"name", value.name},
         {"apps", value.apps},
-        {"speed", value.speed},
-        {"vkPause", value.vkPause},
+        {"speed", value.intervalMs},
+        {"vkPause", value.pauseKey},
         {"disableAltF4", value.disableAltF4},
         {"disableWin", value.disableWin},
     };
@@ -93,8 +91,9 @@ inline void from_json(const nlohmann::json& json, Profile& value)
 {
     json.at("name").get_to(value.name);
     json.at("apps").get_to(value.apps);
-    value.speed = std::clamp(json.at("speed").get<unsigned>(), (unsigned)kProfileSpeedMin, (unsigned)kProfileSpeedMax);
-    json.at("vkPause").get_to(value.vkPause);
+    value.intervalMs =
+        std::clamp(json.at("speed").get<unsigned>(), (unsigned)kProfileIntervalMinMs, (unsigned)kProfileIntervalMaxMs);
+    json.at("vkPause").get_to(value.pauseKey);
     json.at("disableAltF4").get_to(value.disableAltF4);
     json.at("disableWin").get_to(value.disableWin);
 
@@ -104,7 +103,7 @@ inline void from_json(const nlohmann::json& json, Profile& value)
         const nlohmann::json& key = item.at("key");
         const nlohmann::json& action = item.at("action");
         if (!key.is_number_unsigned() || !action.is_number_unsigned()) continue;
-        const unsigned bundle = key.get<unsigned>();
+        const KeyBundle_t bundle = key.get<KeyBundle_t>();
         const unsigned vkCode = KeyBundleVk(bundle);
         const unsigned mods = KeyBundleMods(bundle);
         if (vkCode < kKeyboardKeysCount && mods < kKeyboardKeyModCount)

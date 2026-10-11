@@ -14,33 +14,32 @@ inline constexpr size_t kKeyboardKeyModCount = (KeyMod_Shift | KeyMod_Alt | KeyM
 
 class Keyboard {
 public:
-    // runs on the hook thread: must only decide whether to swallow the event and return immediately —
-    // any blocking here (locks, input injection, I/O) stalls global input and gets the hook silently dropped
+    // called on the hook thread: return at once, short uncontended locks at most — blocking there (SendInput, I/O)
+    // stalls global input
+    // and Windows silently drops the hook
     using Callback_t = std::function<bool(UINT vkCode, bool repeat)>;
 
 private:
+    static constexpr unsigned kLeftAltBit = 1u << 0;
+    static constexpr unsigned kRightAltBit = 1u << 1;
+
     HHOOK _keyboardHook = nullptr;
     HHOOK _mouseHook = nullptr;
     bool _withMouse = false;
     std::jthread _thread;
-    // written by the hook thread, read by the input worker and the UI
-    std::array<std::atomic<bool>, kKeyboardKeysCount> _pressed;
-    // hook thread only: true while the physical down of this key was swallowed by us, so win32k never saw it
-    std::array<bool, kKeyboardKeysCount> _swallowed = {};
-    // hook thread only: set by MaskAlt, cleared once the last Alt is physically let go; meanwhile the system
-    // believes Alt is up, so every physical Alt event is swallowed to keep it that way
-    bool _altMasked = false;
-    // Alts the system still saw down when MaskAlt hid them, for the input worker to lift; bit 0: LAlt, bit 1: RAlt
+    std::array<std::atomic<bool>, kKeyboardKeysCount> _pressed; // written by the hook thread
     std::atomic<unsigned> _altsToRelease = 0;
     Callback_t _onPress, _onRelease;
+    // hook thread only
+    std::array<bool, kKeyboardKeysCount> _swallowedDown = {};
+    bool _altMasked = false;
 
     Keyboard() = default;
 
 public:
     ~Keyboard();
     static Keyboard& Instance();
-    // withMouse: also install WH_MOUSE_LL — it sees every mouse move, so only ask for it when buttons matter.
-    // Re-attaches (and resyncs state) if already attached with a different mouse setting.
+    // the mouse hook sees every mouse move: only ask for it when buttons matter
     bool Attach(bool withMouse);
     void Detach();
 
@@ -49,9 +48,8 @@ public:
     static constexpr bool IsMouseButton(unsigned short vkCode) noexcept;
     bool IsPressed(unsigned short vkCode) const noexcept { return _pressed[vkCode]; }
     void Press(unsigned short vkCode);
-    // hook thread: hides Alt from the system until both Alts are physically up; KeyDownWithoutAlt lifts it
+    // hook thread: hides Alt from the system until both Alts are released; the next KeyDownWithoutAlt lifts it
     void MaskAlt();
-    // input worker: lifts the Alts MaskAlt hid, then sends this key's down, as one uninterruptible sequence
     void KeyDownWithoutAlt(unsigned short vkCode);
     void KeyUp(unsigned short vkCode);
     void OnPress(Callback_t&& func) { _onPress = std::move(func); }

@@ -1,6 +1,4 @@
 # Normalize text files (LF in repo), check out as CRLF (Windows-only project).
-# Files with NUL bytes (e.g. the UTF-16 generated font header) are auto-detected
-# as binary by text=auto and left untouched.
 * text=auto eol=crlf
 
 # explicit binaries

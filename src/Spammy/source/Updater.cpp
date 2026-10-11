@@ -4,8 +4,7 @@
 static constexpr const wchar_t* UPDATER_API_HOST = L"api.github.com";
 static constexpr const wchar_t* UPDATER_API_PATH = L"/repos/FrostAtom/spammy/releases/latest";
 static constexpr const wchar_t* UPDATER_FALLBACK_URL = L"https://github.com/FrostAtom/spammy/releases/latest";
-// a release is usually published a little after the binary is built; don't flag our own build as an update
-static constexpr std::chrono::days UPDATER_PUBLISH_SLACK{2};
+static constexpr std::chrono::days UPDATER_BUILD_TO_PUBLISH_LAG{2};
 
 static constexpr char s_months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 
@@ -73,8 +72,8 @@ static std::string HttpGet(const wchar_t* host, const wchar_t* path)
 
 void Updater::CheckAsync()
 {
-    if (_thread.joinable()) return;
-    _thread = std::jthread([this] {
+    if (std::exchange(_started, true)) return;
+    std::thread([result = _result] {
         auto build = ParseBuildDate();
         if (!build) return;
         std::string body = HttpGet(UPDATER_API_HOST, UPDATER_API_PATH);
@@ -87,24 +86,26 @@ void Updater::CheckAsync()
             if (sscanf_s(publishedAt->get_ref<const std::string&>().c_str(), "%d-%d-%d", &year, &month, &day) != 3)
                 return;
             auto release = MakeDate(year, month, day);
-            if (!release || *release - *build < UPDATER_PUBLISH_SLACK) return;
+            if (!release) return;
+            const bool releaseIsThisBuildOrOlder = *release - *build < UPDATER_BUILD_TO_PUBLISH_LAG;
+            if (releaseIsThisBuildOrOlder) return;
 
             char date[16];
             snprintf(date, sizeof(date), "%.3s %2d %d", s_months + (month - 1) * 3, day, year);
-            _latestDate = date;
+            result->latestDate = date;
             if (auto url = json.find("html_url"); url != json.end() && url->is_string()) {
                 const std::string& u = url->get_ref<const std::string&>();
-                _releaseUrl.assign(u.begin(), u.end());
+                result->releaseUrl.assign(u.begin(), u.end());
             } else {
-                _releaseUrl = UPDATER_FALLBACK_URL;
+                result->releaseUrl = UPDATER_FALLBACK_URL;
             }
-            _updateAvailable = true;
+            result->updateAvailable = true;
         } catch (nlohmann::json::exception&) {
         }
-    });
+    }).detach();
 }
 
 void Updater::OpenReleasePage()
 {
-    if (_updateAvailable) LaunchUrl(_releaseUrl.c_str());
+    if (_result->updateAvailable) LaunchUrl(_result->releaseUrl.c_str());
 }
