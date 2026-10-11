@@ -11,11 +11,9 @@ static void Tap(unsigned short vkCode)
 }
 
 static const KeyMode s_modes[] = {
-    {Action_Spammy, "SPAMMY", "autofire while held", ImGui::UiKeyStyle_Spam, ImGui::UiCol::Spam, &Tap, &Swallow, &Tap},
-    {Action_Speedy, "SPEEDY", "release instantly", ImGui::UiKeyStyle_Speedy, ImGui::UiCol::Speedy, &Tap, &Swallow,
-     nullptr},
-    {Action_Disabled, "NOTHING", "don't inherit global", ImGui::UiKeyStyle_Blocked, ImGui::UiCol::Danger, &Swallow,
-     &Swallow, nullptr},
+    {Action_Spammy, "Autofire", &Tap, &Swallow, &Tap},
+    {Action_Speedy, "One tap", &Tap, &Swallow, nullptr},
+    {Action_Disabled, "Block", &Swallow, &Swallow, nullptr},
 };
 
 std::span<const KeyMode> KeyModes()

@@ -19,11 +19,13 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #define NOMINMAX
 #include <Windows.h>
 #include <Windowsx.h>
+#include <commdlg.h>
 #include <d3d9.h>
 #include <dwmapi.h>
 #include <mmsystem.h>
@@ -41,7 +43,9 @@
 #include <imgui/imgui_impl_win32.h>
 #include <imgui/imgui_internal.h>
 
+#pragma comment(lib, "comdlg32")
 #pragma comment(lib, "d3d9")
 #pragma comment(lib, "dwmapi")
+#pragma comment(lib, "version")
 #pragma comment(lib, "winhttp")
 #pragma comment(lib, "winmm")

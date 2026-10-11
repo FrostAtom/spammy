@@ -8,77 +8,123 @@
 #include "Utils.h"
 
 using namespace ImGui;
+using namespace MainWindowUtil;
 
 namespace {
 constexpr UINT WM_USER_FOCUS = WM_APP + 0x20;
-constexpr ImVec2 kWindowSize(1280.f, 680.f);
-constexpr ImVec2 kPanelMin(20.f, 134.f);
-constexpr ImVec2 kPanelMax(1260.f, 660.f);
-constexpr float kKeyGap = 7.f;
 constexpr DWORD kRateWindowMs = 1000;
 
-// right side of the mouse body down to its tail, then back up the left side, as cubic bezier (c1, c2, end) triples
-constexpr ImVec2 kMouseOutline[][3] = {
-    {{151.f, 86.f}, {133.f, 119.f}, {133.f, 151.f}}, {{133.f, 178.f}, {151.f, 189.f}, {150.f, 224.f}},
-    {{149.f, 256.f}, {123.f, 270.f}, {75.f, 270.f}}, {{27.f, 270.f}, {1.f, 256.f}, {0.f, 224.f}},
-    {{-1.f, 189.f}, {17.f, 178.f}, {17.f, 151.f}},   {{17.f, 119.f}, {-1.f, 86.f}, {0.f, 26.f}},
-};
+// title bar
+constexpr float kTabsX = 168.f;
+constexpr float kTabsMaxX = 1000.f; // the BUILD silk starts past here
+constexpr float kTabY = 11.f;
+constexpr float kTabGap = 8.f;
+constexpr float kAddTabSize = 34.f;
+// a key face is one grid unit minus these; 4 of the vertical gap is the lip under the face
+constexpr ImVec2 kKeyGap(6.f, 10.f);
+constexpr float kKeyLip = 4.f;
 
-constexpr struct {
-    const char* name;
-    unsigned mod;
-} kModLayers[] = {{"SHIFT", KeyMod_Shift}, {"CTRL", KeyMod_Ctrl}, {"ALT", KeyMod_Alt}};
+constexpr const char* kEllipsis = "\xE2\x80\xA6";
 
-// laid out right to left; the last one (NOTHING) only exists on modifier layers
-constexpr Action kBrushes[] = {Action_Speedy, Action_Spammy, Action_Disabled};
+// the MODIFIERS switch, segment by segment
+constexpr const char* kLayerLabels[] = {"NoMod", "Shift", "Ctrl", "Alt"};
+constexpr unsigned kLayerMods[] = {KeyMod_None, KeyMod_Shift, KeyMod_Ctrl, KeyMod_Alt};
+
+constexpr float kMouseLeftRadii[4] = {28.f, 4.f, 4.f, 4.f};
+constexpr float kMouseRightRadii[4] = {4.f, 28.f, 4.f, 4.f};
+constexpr float kMouseBodyRadii[4] = {6.f, 6.f, 40.f, 40.f};
 
 struct PressBadge {
-    ImVec2 pos;
+    ImVec2 anchor;
     unsigned rate;
     DWORD age;
 };
 using PressBadges = boost::container::small_vector<PressBadge, 32>;
 
-// assigns a persisted setting, flagging the config for saving only on an actual change
-template <class T>
-bool SetSetting(T& field, std::type_identity_t<T> value)
+UiKeyKind KindOfAction(Action action)
 {
-    if (field == value) return false;
-    field = value;
-    sConfig.MarkDirty();
-    return true;
-}
-
-void ToggleSetting(auto& flag)
-{
-    flag = !flag;
-    sConfig.MarkDirty();
-}
-
-bool MatchesFilter(std::string_view name, std::string_view filter)
-{
-    auto equalNoCase = [](char a, char b) { return tolower((unsigned char)a) == tolower((unsigned char)b); };
-    return filter.empty() || !std::ranges::search(name, filter, equalNoCase).empty();
-}
-
-// comma-joined app names, cut short with "..." when wider than maxW
-std::string EllipsizedAppList(const Profile::AppList_t& apps, float maxW)
-{
-    std::string text;
-    for (const std::string& app : apps) {
-        if (!text.empty()) text += ", ";
-        text += app;
+    switch (action) {
+    case Action_Spammy: return UiKeyKind_Auto;
+    case Action_Speedy: return UiKeyKind_Tap;
+    case Action_Disabled: return UiKeyKind_Block;
+    default: return UiKeyKind_Normal;
     }
-    auto width = [&] { return UiFonts::Semi->CalcTextSizeA(18.f, FLT_MAX, 0.f, text.c_str()).x; };
-    if (width() <= maxW) return text;
-    text += "...";
-    while (text.size() > 3 && width() > maxW) {
-        size_t cut = text.size() - 4;
+}
+
+// how a key looks on a MODIFIERS layer: its own slot there, else a pale echo of what it does with no modifier
+UiKeyKind KeyKindOnLayer(const Profile& profile, unsigned vkCode, unsigned mods)
+{
+    if (vkCode == VK_LWIN || vkCode == VK_RWIN) return profile.disableWin ? UiKeyKind_Locked : UiKeyKind_Fixed;
+    if (Keyboard::IsModifier((unsigned short)vkCode)) return UiKeyKind_Fixed;
+    const Profile::KeyModList_t& slots = profile.keys[vkCode];
+    if (mods == KeyMod_None || slots[mods].action != Action_None) return KindOfAction(slots[mods].action);
+    switch (slots[KeyMod_None].action) {
+    case Action_Spammy: return UiKeyKind_SameAuto;
+    case Action_Speedy: return UiKeyKind_SameTap;
+    default: return UiKeyKind_Normal;
+    }
+}
+
+// NoMod toggles autofire; a modifier layer cycles through everything its slot can hold
+Action NextKeyAction(Action action, unsigned mods)
+{
+    if (mods == KeyMod_None) return action == Action_Spammy ? Action_None : Action_Spammy;
+    switch (action) {
+    case Action_None: return Action_Spammy;
+    case Action_Spammy: return Action_Speedy;
+    case Action_Speedy: return Action_Disabled;
+    default: return Action_None;
+    }
+}
+
+// layout names are stored in caps ("ESC", "PGUP"); the board prints them the way keycaps do ("Esc", "PgUp")
+const char* KeyCapLabel(const char* name, char* buf, size_t bufSize)
+{
+    if (!strcmp(name, "PGUP")) return "PgUp";
+    if (!strcmp(name, "PGDN")) return "PgDn";
+    size_t n = 0;
+    for (; name[n] && n + 1 < bufSize; n++) {
+        const bool afterLetter = n && isalpha((unsigned char)name[n - 1]);
+        buf[n] = afterLetter ? (char)tolower((unsigned char)name[n]) : name[n];
+    }
+    buf[n] = '\0';
+    return buf;
+}
+
+// longest start of label that fits a tab of maxW with an ellipsis after it
+std::string ElideTabLabel(std::string_view label, float maxW)
+{
+    std::string text(label);
+    while (!text.empty()) {
+        size_t cut = text.size() - 1;
         while (cut && ((unsigned char)text[cut] & 0xC0) == 0x80) // back to the lead byte of a multi-byte char
             cut--;
-        text.erase(cut, text.size() - 3 - cut);
+        text.erase(cut);
+        while (!text.empty() && text.back() == ' ')
+            text.pop_back();
+        if (TabWidth((text + kEllipsis).c_str()) <= maxW) break;
     }
-    return text;
+    return text + kEllipsis;
+}
+
+// widest a tab may get so that all of them, the gaps and the "+" tab end before kTabsMaxX; FLT_MAX when all fit
+float TabWidthCap(std::span<const float> widths)
+{
+    float avail = kTabsMaxX - kTabsX - kAddTabSize - kTabGap * (float)widths.size();
+    float total = 0.f;
+    for (const float w : widths)
+        total += w;
+    if (total <= avail) return FLT_MAX;
+
+    // the widest tabs give way first: fill from the narrowest until the even share of the rest is too small
+    boost::container::small_vector<float, 8> sorted(widths.begin(), widths.end());
+    std::sort(sorted.begin(), sorted.end());
+    for (size_t i = 0; i < sorted.size(); i++) {
+        const float share = avail / (float)(sorted.size() - i);
+        if (sorted[i] > share) return ImMax(share, 0.f);
+        avail -= sorted[i];
+    }
+    return FLT_MAX;
 }
 
 void DrawPressBadges(ImDrawList* dl, const PressBadges& badges)
@@ -87,44 +133,44 @@ void DrawPressBadges(ImDrawList* dl, const PressBadges& badges)
         char buf[16];
         snprintf(buf, sizeof(buf), "%u/s", badge.rate);
         const float pop = badge.age < 120 ? 1.3f - .3f * (badge.age / 120.f) : 1.f;
-        const float alpha = badge.age > 700 ? 1.f - (badge.age - 700) / 300.f : 1.f;
-        const ImVec2 ts = UiFonts::Bold->CalcTextSizeA(24.f * pop, FLT_MAX, 0.f, buf);
-        const ImVec2 bmin(badge.pos.x - ts.x * .5f - 10.f, badge.pos.y - ts.y - 16.f);
-        const ImVec2 bmax(badge.pos.x + ts.x * .5f + 10.f, badge.pos.y - 6.f);
-        dl->AddRectFilled(bmin, bmax, UiWithAlpha(UiCol::KeyCap, alpha), 8.f);
-        dl->AddRect(bmin, bmax, UiWithAlpha(UiCol::Spam, alpha), 8.f, 0, 2.f);
-        dl->AddText(UiFonts::Bold, 24.f * pop, ImVec2(badge.pos.x - ts.x * .5f, bmin.y + 5.f),
-                    UiWithAlpha(UiCol::SpamText, alpha), buf);
+        const float alpha = badge.age > 700 ? ImMax(0.f, 1.f - (badge.age - 700) / 300.f) : 1.f;
+        AddRateBadge(dl, badge.anchor, buf, alpha, pop);
     }
 }
 
-// "- [slider] +" row editing the autofire interval
-void DrawSpeedEditor(const ImVec2& pos, Profile& profile)
+// the mouse wheel while unbound: a dark rubber bar rather than a tiny white cap
+bool WheelBar(ImDrawList* dl, const char* id, const ImVec2& pos, const ImVec2& size, bool pressed)
 {
-    int speed = (int)profile.speed;
-    if (UiGhostButton("##ratedec", pos, 22.f, UiGlyph_Minus)) speed--;
-    PushFont(UiFonts::Mono, 12.f);
-    PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
-    SetCursorScreenPos(pos + ImVec2(26.f, 0.f));
-    SetNextItemWidth(88.f);
-    SliderInt("##rate", &speed, kProfileSpeedMin, kProfileSpeedMax, "%d ms");
-    PopStyleVar();
-    PopFont();
-    if (UiGhostButton("##rateinc", pos + ImVec2(118.f, 0.f), 22.f, UiGlyph_Plus)) speed++;
-    SetSetting(profile.speed, (unsigned)ImClamp(speed, kProfileSpeedMin, kProfileSpeedMax));
+    SetCursorScreenPos(pos);
+    const bool clicked = InvisibleButton(id, size);
+    const ImVec2 sink(0.f, pressed ? 3.f : 0.f);
+    if (IsItemHovered())
+        dl->AddRect(pos + sink - ImVec2(2.f, 2.f), pos + sink + size + ImVec2(2.f, 2.f), UiCol::Ink2, 6.f, 0, 1.5f);
+    dl->AddRectFilled(pos + sink, pos + sink + size, UiCol::Tap, 5.f);
+    return clicked;
+}
+
+// __DATE__ pads a one-digit day with a second space ("Oct  1 2026")
+void SqueezeSpaces(char* text)
+{
+    char* out = text;
+    for (const char* c = text; *c; c++) {
+        if (*c == ' ' && out > text && out[-1] == ' ') continue;
+        *out++ = *c;
+    }
+    *out = '\0';
 }
 } // namespace
 
-// everything a key needs while the keyboard panel is drawn, resolved once per frame
+// everything a key needs while the keyboard is drawn, resolved once per frame
 struct MainWindow::KeyFrame {
     Profile* profile;
-    unsigned mods;
-    UiKeyStyle brushPreview;
+    unsigned mods;     // the layer being edited
+    unsigned heldMods; // modifiers physically held: the live tester shows what the game would get
     DWORD nowTicks;
     bool wndFocused;
-    bool brushing;
-    bool releasedLeft;
-    bool erasing;
+    bool paused;
+    bool clickBlocked; // the left press went down while a popup was open: it only closes that popup
     PressBadges badges;
 };
 
@@ -201,8 +247,12 @@ bool MainWindow::HandleKeyRelease(unsigned short vkCode)
 void MainWindow::ApplyHookEvents()
 {
     _physicalPresses.Drain([this](const PhysicalPress& press) { LogKeyPress(press.vkCode, press.ticks); });
-    if (const unsigned pauseKey = _capturedPauseKey.exchange(0))
-        if (auto profile = sConfig.editingProfile) SetSetting(profile->vkPause, pauseKey);
+    if (const unsigned pauseKey = _capturedPauseKey.exchange(0)) {
+        if (auto profile = sConfig.editingProfile)
+            SetSetting(profile->vkPause, pauseKey);
+        else
+            _setupPauseKey = pauseKey;
+    }
 }
 
 void MainWindow::LogKeyPress(unsigned short vkCode, DWORD ticks)
@@ -233,6 +283,28 @@ void MainWindow::TickSimulatedPresses(unsigned short vkCode, DWORD nowTicks, uns
     }
 }
 
+void MainWindow::TogglePauseKeyCapture()
+{
+    // the old key stays until a new one is actually captured, so cancelling loses nothing
+    if (_capturingPauseKey) {
+        _capturingPauseKey = false;
+        return;
+    }
+    sKeyboard.Attach(true);
+    _capturingPauseKey = true;
+}
+
+void MainWindow::OpenAddGame()
+{
+    _screen = Screen_AddGame;
+    _addGame = {};
+}
+
+void MainWindow::CloseAddGame()
+{
+    _screen = Screen_Editor;
+}
+
 void MainWindow::OnTrayClick()
 {
     if (IsShown()) {
@@ -257,545 +329,473 @@ void MainWindow::OnTrayMenu(TrayIconMenu& menu)
 void MainWindow::Draw()
 {
     ApplyHookEvents();
-    auto profile = sConfig.editingProfile; // own a reference: the profiles popup can delete it mid-frame
+    const bool noGames = sConfig.profiles.empty();
+    if (!noGames && !sConfig.editingProfile) sConfig.SetEditingProfile(sConfig.profiles.front()->name.c_str());
+    auto profile = sConfig.editingProfile; // own a reference: popups can delete it mid-frame
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 o = GetWindowPos();
 
     DrawTitleBar(dl, o);
-    DrawHeader(dl, o, profile);
-    DrawKeyboard(dl, o, profile);
+    if (noGames || _screen == Screen_AddGame)
+        DrawAddGame(dl, o, noGames);
+    else
+        DrawEditor(dl, o, profile);
 
-    if (std::exchange(_askClose, false)) OpenPopup("##close");
+    // popups open and draw here, at the root of the id stack, whichever widget asked for them
+    if (std::exchange(_askClose, false)) RequestPopup(kPopupClose);
+    if (_pendingPopup) OpenPopup(std::exchange(_pendingPopup, nullptr));
+    if (profile) {
+        DrawKeyMenu(o, profile);
+        DrawAppsPopup(o, profile);
+    }
+    DrawSettingsPopup(o);
+    DrawTabMenu(o);
     DrawClosePopup(o);
 }
 
 void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
 {
-    AddAccentHairline(dl, o, kWindowSize.x, 2.f);
-    AddLogoMark(dl, o + ImVec2(28.f, 20.f), 22.f);
-    AddTrackedText(dl, UiFonts::Bold, 22.f, o + ImVec2(60.f, 22.f), UiCol::Text, "SPAMMY", 4.f);
-    dl->AddText(UiFonts::Mono, 12.f, o + ImVec2(180.f, 29.f), UiCol::Mute, __DATE__);
+    const bool enabled = sApp.IsEnabled();
+    const bool noGames = sConfig.profiles.empty();
+    const bool onEditor = !noGames && _screen == Screen_Editor;
 
+    dl->AddRectFilled(o + ImVec2(24.f, 21.f), o + ImVec2(38.f, 35.f), enabled ? UiCol::Signal : UiCol::Ink3, 3.f);
+    dl->AddText(UiFonts::Heavy, 20.f, o + ImVec2(46.f, 14.f), UiCol::Ink, "spammy");
+
+    // game tabs; when they would run into the build label the longest names get cut short
+    const auto lit = sApp.LastActiveProfile();
+    boost::container::small_vector<float, 8> widths;
+    for (const std::shared_ptr<Profile>& item : sConfig.profiles)
+        widths.push_back(TabWidth(item->name.c_str()));
+    const float widthCap = TabWidthCap(std::span<const float>(widths.data(), widths.size()));
+
+    float x = kTabsX;
+    for (size_t i = 0; i < sConfig.profiles.size(); i++) {
+        const std::shared_ptr<Profile>& item = sConfig.profiles[i];
+        const bool elided = widths[i] > widthCap;
+        const std::string label = elided ? ElideTabLabel(item->name, widthCap) : std::string();
+        const char* shown = elided ? label.c_str() : item->name.c_str();
+
+        PushID(item.get());
+        const bool selected = onEditor && item == sConfig.editingProfile;
+        if (UiTab("##tab", o + ImVec2(x, kTabY), shown, selected, item == lit, !enabled)) {
+            sConfig.SetEditingProfile(item->name.c_str());
+            CloseAddGame();
+        }
+        // on release like ImGui's own context menus, so a right click on another tab moves an open menu there
+        if (IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) && IsMouseReleased(ImGuiMouseButton_Right)) {
+            _tabMenuProfile = item;
+            _tabMenuPos = ImVec2(GetItemRectMin().x, GetItemRectMax().y + 6.f);
+            RequestPopup(kPopupTabMenu);
+        }
+        if (elided) Tip("%s", item->name.c_str());
+        PopID();
+        x += (elided ? TabWidth(shown) : widths[i]) + kTabGap;
+    }
+
+    // the "+" tab stands raised while the add screen it opens is up (not in first run, where there is no other)
+    const ImVec2 addPos = o + ImVec2(x, kTabY);
+    const ImVec2 addSize(kAddTabSize, kAddTabSize);
+    bool addClicked;
+    if (!noGames && _screen == Screen_AddGame) {
+        const UiCapHit hit = UiCapFrame("##addgame", addPos, addSize, UiCapKind_Plain, 8.f);
+        AddGlyph(dl, hit.face + addSize * .5f, 14.f, UiGlyph_Plus, UiCol::Ink2);
+        addClicked = false;
+    } else {
+        AddRecess(dl, addPos, addPos + addSize, 8.f);
+        SetCursorScreenPos(addPos);
+        addClicked = InvisibleButton("##addgame", addSize);
+        AddGlyph(dl, addPos + addSize * .5f, 14.f, UiGlyph_Plus, IsItemHovered() ? UiCol::Ink : UiCol::Ink2);
+    }
+    Tip("Add a game");
+    if (addClicked && !noGames) OpenAddGame();
+
+    // build date, or the newer build waiting on GitHub
+    const float buildRight = 1148.f;
     if (sUpdater.IsUpdateAvailable()) {
         char update[48];
-        snprintf(update, sizeof(update), "NEW BUILD AVAIL %s", sUpdater.LatestDate());
-        if (UiBadge("##update", o + ImVec2(272.f, 19.f), update, UiCol::Ok)) sUpdater.OpenReleasePage();
+        snprintf(update, sizeof(update), "new build %s", sUpdater.LatestDate());
+        SqueezeSpaces(update);
+        const float textW = SilkWidth(update);
+        const float glyphSize = 9.f;
+        const float totalW = textW + 4.f + glyphSize;
+        const ImVec2 pos = o + ImVec2(buildRight - totalW, 24.f);
+        SetCursorScreenPos(pos - ImVec2(4.f, 6.f));
+        if (InvisibleButton("##update", ImVec2(totalW + 8.f, 22.f))) sUpdater.OpenReleasePage();
         Tip("Open latest release on GitHub");
+        AddSilk(dl, pos, update, UiCol::Signal);
+        AddGlyph(dl, pos + ImVec2(textW + 4.f + glyphSize * .5f, 5.f), glyphSize, UiGlyph_Arrow, UiCol::Signal);
+    } else {
+        char build[32];
+        snprintf(build, sizeof(build), "build %s", __DATE__);
+        SqueezeSpaces(build);
+        AddSilk(dl, o + ImVec2(buildRight - SilkWidth(build), 24.f), build);
     }
 
-    if (UiGhostButton("##gear", o + ImVec2(1152.f, 17.f), 30.f, UiGlyph_Gear)) OpenPopup("##settings");
-    if (UiGhostButton("##min", o + ImVec2(1188.f, 17.f), 30.f, UiGlyph_Minimize)) ShowWindow(Native(), SW_MINIMIZE);
-    if (UiGhostButton("##close", o + ImVec2(1224.f, 17.f), 30.f, UiGlyph_Close)) RequestClose();
+    if (UiIconButton("##gear", o + ImVec2(1171.f, 13.f), 30.f, UiGlyph_Gear)) RequestPopup(kPopupSettings);
+    if (UiIconButton("##min", o + ImVec2(1201.f, 13.f), 30.f, UiGlyph_Minimize)) ShowWindow(Native(), SW_MINIMIZE);
+    if (UiIconButton("##close", o + ImVec2(1231.f, 13.f), 30.f, UiGlyph_Close)) RequestClose();
 
-    DrawSettingsPopup(o);
+    dl->AddRectFilled(o + ImVec2(0.f, 56.f), o + ImVec2(kWindowSize.x, 57.f), UiCol::Line);
 }
 
-void MainWindow::DrawHeader(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile)
+void MainWindow::DrawEditor(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile)
 {
-    const ImVec2 chipSize(216.f, 46.f);
-    if (UiChipFrame("##profile", o + ImVec2(28.f, 66.f), chipSize)) OpenPopup("##profiles");
-    UiChipLabel(o + ImVec2(44.f, 73.f), "PROFILE");
-    if (profile)
-        dl->AddText(UiFonts::Semi, 20.f, o + ImVec2(44.f, 85.f), UiCol::Text, profile->name.c_str());
-    else
-        dl->AddText(UiFonts::Semi, 20.f, o + ImVec2(44.f, 85.f), UiFlashDanger(), "NOT SET");
-    const float chevT = UiAnim(GetID("##profiles.chev"), IsPopupOpen("##profiles") ? 1.f : 0.f, 16.f);
-    AddChevronDown(dl, o + ImVec2(222.f, 89.f), UiMixColor(UiCol::Sub, UiCol::Text, chevT), chevT);
-    DrawProfilesPopup(o);
-
-    if (profile) {
-        if (UiChipFrame("##apps", o + ImVec2(260.f, 66.f), chipSize)) OpenPopup("##appsmenu");
-        UiChipLabel(o + ImVec2(276.f, 73.f), "ENABLE ONLY IN APPS");
-        if (profile->apps.empty())
-            dl->AddText(UiFonts::Semi, 18.f, o + ImVec2(276.f, 86.f), UiFlashWarn(), "ALL APPS");
-        else
-            dl->AddText(UiFonts::Semi, 18.f, o + ImVec2(276.f, 86.f), UiCol::Text,
-                        EllipsizedAppList(profile->apps, 184.f).c_str());
-        DrawAppsPopup(o, profile);
-
-        if (UiLockChip("##winkey", o + ImVec2(700.f, 66.f), ImVec2(110.f, 46.f), "WIN KEY", profile->disableWin))
-            ToggleSetting(profile->disableWin);
-        if (UiLockChip("##altf4", o + ImVec2(824.f, 66.f), ImVec2(120.f, 46.f), "ALT + F4", profile->disableAltF4))
-            ToggleSetting(profile->disableAltF4);
-        DrawPauseKeyChip(dl, o + ImVec2(958.f, 66.f), *profile);
-    }
-
-    if (UiEnablePill("##enable", o + ImVec2(1122.f, 66.f), ImVec2(132.f, 46.f), sApp.IsEnabled()))
-        sApp.Enable(!sApp.IsEnabled());
+    if (!profile) return;
+    DrawStrip(dl, o, *profile);
+    DrawKeyboard(dl, o, *profile);
+    DrawRail(dl, o, *profile);
 }
 
-void MainWindow::DrawPauseKeyChip(ImDrawList* dl, const ImVec2& pos, Profile& profile)
+void MainWindow::DrawStrip(ImDrawList* dl, const ImVec2& o, Profile& profile)
 {
-    const ImVec2 size(150.f, 46.f);
-    if (UiChipFrame("##pause", pos, size)) {
-        if (_capturingPauseKey) {
-            _capturingPauseKey = false;
-        } else {
-            profile.vkPause = 0;
-            sConfig.MarkDirty();
-            sKeyboard.Attach(true);
-            _capturingPauseKey = true;
+    AddSilk(dl, o + ImVec2(24.f, 81.f), "runs in");
+
+    // app tapes up to x=560; whatever doesn't fit collapses into a "+N" tape
+    const float tapesX = 82.f, tapesMaxX = 560.f, tapeGap = 6.f, tapeY = 74.f;
+    const size_t appCount = profile.apps.size();
+    auto tapesEnd = [&](size_t count) {
+        float end = tapesX;
+        for (size_t i = 0; i < count; i++)
+            end += TapeWidth(profile.apps.nth(i)->c_str()) + tapeGap;
+        return end;
+    };
+    size_t shown = 0;
+    while (shown < appCount && tapesEnd(shown) + TapeWidth(profile.apps.nth(shown)->c_str()) <= tapesMaxX)
+        shown++;
+    char more[16] = "";
+    if (shown < appCount) {
+        // the "+N" tape needs room too
+        for (;;) {
+            snprintf(more, sizeof(more), "+%d", (int)(appCount - shown));
+            if (!shown || tapesEnd(shown) + TapeWidth(more) <= tapesMaxX) break;
+            shown--;
         }
     }
-    UiChipLabel(pos + ImVec2(16.f, 7.f), "PAUSE KEY");
 
-    const bool capturing = _capturingPauseKey;
-    char keyName[32];
-    const char* keycap = "NOT SET";
-    ImU32 keycapCol = UiFlashDanger();
-    if (capturing) {
-        keycap = "PRESS KEY";
-        keycapCol = UiFlash(IM_COL32(0xFF, 0x8C, 0x47, 0xFF), 1.5f, .4f);
-    } else if (profile.vkPause) {
-        const char* name = Keyboard::GetKeyName(KeyBundleVk(profile.vkPause));
-        ImStrncpy(keyName, name[0] ? name : "UNKNOWN", sizeof(keyName));
-        for (char* c = keyName; *c; c++)
-            *c = (char)toupper((unsigned char)*c);
-        keycap = keyName;
-        keycapCol = UiCol::Sub;
+    float x = tapesX;
+    for (size_t i = 0; i < shown; i++) {
+        const char* app = profile.apps.nth(i)->c_str();
+        AddTape(dl, o + ImVec2(x, tapeY), app);
+        x += TapeWidth(app) + tapeGap;
     }
-    AddKeycap(dl, pos + ImVec2(16.f, 19.f), pos + ImVec2(94.f, 37.f), keycap, keycapCol);
-    if (capturing) {
-        const float p = 0.5f + 0.5f * sinf((float)GetTime() * 4.f);
-        AddGlow(dl, pos, pos + size, UiCol::Spam, 10.f, 6, 0.08f + 0.14f * p);
+    bool openApps = false;
+    if (more[0]) {
+        const ImVec2 pos = o + ImVec2(x, tapeY);
+        const float w = TapeWidth(more);
+        AddTape(dl, pos, more);
+        SetCursorScreenPos(pos);
+        openApps |= InvisibleButton("##moreapps", ImVec2(w, 24.f));
+        std::string hidden;
+        for (size_t i = shown; i < appCount; i++) {
+            if (!hidden.empty()) hidden += '\n';
+            hidden += *profile.apps.nth(i);
+        }
+        Tip("%s", hidden.c_str());
+        x += w + tapeGap;
     }
+    openApps |= UiOutlineButton("##addapp", o + ImVec2(x, tapeY), "+ App");
+    if (openApps) {
+        _appsPopupPos = ImVec2(GetItemRectMin().x, GetItemRectMax().y + 6.f);
+        RequestPopup(kPopupApps);
+    }
+
+    // what the board shows right now, or why it isn't doing anything
+    char note[128] = "";
+    ImU32 noteCol = UiCol::Ink2;
+    if (profile.apps.empty()) {
+        ImStrncpy(note, "Not tied to a game yet \xE2\x80\x93 add its .exe", sizeof(note));
+        noteCol = UiCol::Signal;
+    } else if (!sApp.IsEnabled()) {
+        const char* locks = profile.disableWin && profile.disableAltF4 ? " Win key and Alt+F4 stay blocked."
+                            : profile.disableWin                      ? " Win key stays blocked."
+                            : profile.disableAltF4                    ? " Alt+F4 stays blocked."
+                                                                      : "";
+        snprintf(note, sizeof(note), "Paused: every key acts normally.%s", locks);
+    } else if (_editMods != KeyMod_None) {
+        snprintf(note, sizeof(note), "What keys do while %s is held", ModsName(_editMods));
+    }
+    if (note[0]) {
+        const float w = UiTextWidth(UiFonts::SemiBold, 11.f, note);
+        dl->AddText(UiFonts::SemiBold, 11.f, o + ImVec2(906.f - w, 80.f), noteCol, note);
+    }
+
+    AddSilk(dl, o + ImVec2(918.f, 81.f), "modifiers");
+    int layer = (int)(std::ranges::find(kLayerMods, _editMods) - std::begin(kLayerMods));
+    if (layer >= (int)std::size(kLayerMods)) layer = 0;
+    if (UiSegmented("##layer", o + ImVec2(996.f, 70.f), ImVec2(260.f, 32.f), kLayerLabels, layer, true))
+        _editMods = kLayerMods[layer];
 }
 
-void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, const std::shared_ptr<Profile>& profile)
+void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, Profile& profile)
 {
-    const ImVec2 panelMin = o + kPanelMin;
-    const ImVec2 panelMax = o + kPanelMax;
-    AddPanel(dl, panelMin, panelMax, 16.f);
+    const ImVec2 wellMin = o + ImVec2(24.f, 116.f);
+    const ImVec2 wellMax = o + ImVec2(1256.f, 532.f);
+    dl->AddRectFilled(wellMin, wellMax, UiCol::Well, 16.f);
+    dl->AddLine(o + ImVec2(40.f, 117.f), o + ImVec2(1240.f, 117.f), UiCol::WellEdge, 2.f);
 
     const MouseForm mouseForm = sConfig.mouse;
-    const float mouseW = 190.f;
-    const float mouseLeft = panelMax.x - 16.f - mouseW;
-    const ImVec2 start = panelMin + ImVec2(16.f, 104.f);
-    const ImVec2 avail((mouseForm != MouseForm_Off ? mouseLeft - 24.f : panelMax.x - 16.f) - start.x,
-                       panelMax.y - panelMin.y - 120.f);
+    const ImVec2 mouseOrigin = o + ImVec2(1072.f, 214.f);
+    const ImVec2 areaMin = o + ImVec2(48.f, 140.f);
+    const ImVec2 areaMax(mouseForm != MouseForm_Off ? mouseOrigin.x - 70.f : wellMax.x - 24.f, o.y + 504.f);
+    const ImVec2 area = areaMax - areaMin;
 
     const std::span<const KeyboardKey> layout = GetKeyboardLayout(sConfig.form, sConfig.variant);
-    ImVec2 grid(0.f, 0.f);
+    ImVec2 grid(1.f, 1.f);
     for (const KeyboardKey& key : layout)
         grid = ImMax(grid, ImVec2(key.x + key.w, key.y + key.h));
 
-    const float keySize = ImFloor(ImMin((avail.x + kKeyGap) / grid.x, (avail.y + kKeyGap) / grid.y));
-    const ImVec2 origin = start + (avail - (grid * keySize - ImVec2(kKeyGap, kKeyGap))) * .5f;
+    // the last column's face ends a gap short of the grid, the last row's lip a gap minus the lip short of it;
+    // that trailing gap may hang past the area
+    const ImVec2 trailing(kKeyGap.x, kKeyGap.y - kKeyLip);
+    const float unit = ImFloor(ImMin((area.x + trailing.x) / grid.x, (area.y + trailing.y) / grid.y));
+    const ImVec2 board = grid * unit - trailing;
+    const ImVec2 origin = ImFloor(areaMin + ImMax(area - board, ImVec2(0.f, 0.f)) * .5f);
 
-    const KeyMode* brushMode = FindKeyMode(_brushAction);
+    // the click that closes a popup must not also edit the key under it
+    static bool s_pressClosedPopup = false;
+    if (IsMouseClicked(ImGuiMouseButton_Left))
+        s_pressClosedPopup = IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+
     KeyFrame frame = {
-        .profile = profile.get(),
+        .profile = &profile,
         .mods = _editMods,
-        .brushPreview = brushMode ? brushMode->keyStyle : UiKeyStyle_None,
+        .heldMods = sKeyboard.TestModifiers() & (unsigned)(kKeyboardKeyModCount - 1),
         .nowTicks = GetTickCount(),
         .wndFocused = GetForegroundWindow() == Native(),
+        .paused = !sApp.IsEnabled(),
+        .clickBlocked = s_pressClosedPopup,
     };
-    UpdateBrushGesture(frame, panelMin, panelMax);
 
     for (size_t i = 0; i < layout.size(); i++) {
         const KeyboardKey& key = layout[i];
+        const ImVec2 min = ImFloor(origin + ImVec2(key.x, key.y) * unit);
+        const ImVec2 max = ImFloor(origin + ImVec2(key.x + key.w, key.y + key.h) * unit);
+        char label[16];
         PushID((int)i);
-        DrawKey(frame, "##key", key.name, key.vkCode, origin + ImVec2(key.x, key.y) * keySize,
-                ImVec2(key.w, key.h) * keySize - ImVec2(kKeyGap, kKeyGap));
+        DrawKey(frame, "##key", KeyCapLabel(key.name, label, sizeof(label)), key.vkCode, min, max - min - kKeyGap);
         PopID();
     }
 
-    if (mouseForm != MouseForm_Off) {
-        const ImVec2 bodySize(150.f, 270.f);
-        const ImVec2 body(mouseLeft + (mouseW - bodySize.x) * .5f + 8.f,
-                          panelMin.y + (panelMax.y - panelMin.y - bodySize.y) * .5f);
-        DrawMouse(dl, frame, body, mouseForm == MouseForm_5);
-    }
-
+    if (mouseForm != MouseForm_Off) DrawMouse(dl, frame, mouseOrigin, mouseForm == MouseForm_5);
     DrawPressBadges(dl, frame.badges);
-    DrawBrushBar(dl, panelMin, panelMax, brushMode ? brushMode->menuColor : UiCol::Spam, profile.get());
-}
 
-void MainWindow::UpdateBrushGesture(KeyFrame& frame, const ImVec2& panelMin, const ImVec2& panelMax)
-{
-    const bool anyPopup = IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    const ImGuiWindow* hoveredWnd = GImGui->HoveredWindow;
-    const bool overPopup = anyPopup && hoveredWnd && (hoveredWnd->Flags & ImGuiWindowFlags_Popup);
-    const bool inPanel = !overPopup && IsMouseHoveringRect(panelMin, panelMax);
-    if (IsMouseClicked(ImGuiMouseButton_Left)) {
-        _gesture.leftDismiss = anyPopup;
-        _gesture.pressInPanel = inPanel;
-        _gesture.pressVk = 0;
-        _gesture.moved = false;
+    char hint[160];
+    if (frame.paused) {
+        char keyName[48];
+        if (const char* key = PauseKeyName(profile.vkPause, keyName, sizeof(keyName)))
+            snprintf(hint, sizeof(hint),
+                     "Changes still save while paused.  Press %s or the power button to resume.", key);
+        else
+            ImStrncpy(hint, "Changes still save while paused.  Press the power button to resume.", sizeof(hint));
+    } else if (_editMods != KeyMod_None) {
+        snprintf(hint, sizeof(hint),
+                 "Pale keys act as with no modifier.  Click one to give it its own %s setting.", ModsName(_editMods));
+    } else {
+        ImStrncpy(hint,
+                  "Click a key to toggle autofire.  Right-click for one tap, block and modifier combos.  "
+                  "Hold a key to test it.",
+                  sizeof(hint));
     }
-    if (IsMouseClicked(ImGuiMouseButton_Right)) _gesture.rightInPanel = inPanel;
-
-    frame.brushing = _gesture.pressInPanel && !_gesture.leftDismiss && IsMouseDragging(ImGuiMouseButton_Left, 4.f);
-    if (frame.brushing) _gesture.moved = true;
-    frame.releasedLeft = IsMouseReleased(ImGuiMouseButton_Left);
-    frame.erasing = _gesture.rightInPanel && IsMouseDown(ImGuiMouseButton_Right);
+    dl->AddText(UiFonts::Medium, 11.f, o + ImVec2(48.f, 508.f), UiCol::Ink3, hint);
 }
 
 void MainWindow::DrawKey(KeyFrame& frame, const char* id, const char* label, UINT vkCode, const ImVec2& pos,
-                         const ImVec2& size)
+                         const ImVec2& size, const float* radii)
 {
     IM_ASSERT(vkCode < kKeyboardKeysCount);
-    Profile* profile = frame.profile;
+    Profile& profile = *frame.profile;
+    const unsigned short vk = (unsigned short)vkCode;
+    const Profile::KeyModList_t& slots = profile.keys[vk];
+
     UiKeyDesc desc = {};
     desc.label = label;
-    desc.locked = sKeyboard.IsModifier(vkCode) || vkCode == VK_LWIN || vkCode == VK_RWIN;
-    desc.pressed = sKeyboard.IsPressed(vkCode);
-    if (profile) {
-        desc.preview = frame.brushPreview;
-        const KeyMode* mode = FindKeyMode(ResolveKeyAction(*profile, vkCode, frame.mods, &desc.inherited));
-        if (mode) desc.style = mode->keyStyle;
+    desc.kind = KeyKindOnLayer(profile, vk, frame.mods);
+    desc.pressed = sKeyboard.IsPressed(vk);
+    desc.paused = frame.paused;
+    desc.centered = Keyboard::IsMouseButton(vk);
+    if (radii) std::copy_n(radii, 4, desc.radii);
+    const bool editable = desc.kind != UiKeyKind_Fixed && desc.kind != UiKeyKind_Locked;
 
-        if (frame.mods == KeyMod_None) {
-            const auto modLayers = profile->keys[vkCode] | std::views::drop(1);
-            for (const KeyMode& layerMode : KeyModes()) {
-                if (std::ranges::contains(modLayers, layerMode.action, &KeyConfig::action))
-                    desc.dots.push_back(layerMode.menuColor);
-            }
-        }
-        TickSimulatedPresses(vkCode, frame.nowTicks, profile->speed,
-                             frame.wndFocused && desc.pressed && mode && mode->onTick);
+    // on NoMod a key tells which modifiers have their own binding for it
+    if (frame.mods == KeyMod_None && editable) {
+        auto boundWith = [&](unsigned mod) {
+            for (unsigned m = 1; m < kKeyboardKeyModCount; m++)
+                if ((m & mod) && slots[m].action != Action_None) return true;
+            return false;
+        };
+        if (boundWith(KeyMod_Shift)) desc.marks.push_back('S');
+        if (boundWith(KeyMod_Ctrl)) desc.marks.push_back('C');
+        if (boundWith(KeyMod_Alt)) desc.marks.push_back('A');
     }
 
-    UiKey(id, pos, size, desc);
+    const bool firing = frame.wndFocused && desc.pressed && !frame.paused &&
+                        ResolveKeyAction(profile, vk, frame.heldMods) == Action_Spammy;
+    TickSimulatedPresses(vk, frame.nowTicks, profile.speed, firing);
+
+    const bool clicked = vk == VK_MBUTTON && desc.kind == UiKeyKind_Normal
+                             ? WheelBar(GetWindowDrawList(), id, pos, size, desc.pressed)
+                             : UiKey(id, pos, size, desc);
     const ImVec2 keyMin = GetItemRectMin();
     const ImVec2 keyMax = GetItemRectMax();
 
-    if (const unsigned rate = PressRate(vkCode, frame.nowTicks); rate > 2)
-        frame.badges.push_back(
-            {ImVec2((keyMin.x + keyMax.x) * .5f, keyMin.y), rate, frame.nowTicks - _lastPressTick[vkCode]});
-
-    const bool hovered = IsMouseHoveringRect(keyMin, keyMax);
-    if (_gesture.pressInPanel && hovered && IsMouseClicked(ImGuiMouseButton_Left)) _gesture.pressVk = vkCode;
-    if (!profile || desc.locked || !hovered) return;
-
-    Action& action = profile->keys[vkCode][frame.mods].action;
-    const bool clickedHere =
-        frame.releasedLeft && !_gesture.leftDismiss && !_gesture.moved && _gesture.pressVk == vkCode;
-    if (frame.brushing || clickedHere) SetSetting(action, _brushAction);
-    if (frame.erasing) SetSetting(action, Action_None);
-}
-
-void MainWindow::DrawMouse(ImDrawList* dl, KeyFrame& frame, const ImVec2& body, bool sideButtons)
-{
-    auto outlinePath = [&] {
-        dl->PathArcTo(body + ImVec2(26.f, 26.f), 26.f, IM_PI, IM_PI * 1.5f);
-        dl->PathArcTo(body + ImVec2(124.f, 26.f), 26.f, IM_PI * 1.5f, IM_PI * 2.f);
-        for (const auto& [c1, c2, end] : kMouseOutline)
-            dl->PathBezierCubicCurveTo(body + c1, body + c2, body + end);
-    };
-    outlinePath();
-    dl->PathFillConcave(UiCol::PanelTop);
-    outlinePath();
-    dl->PathStroke(UiCol::Stroke, ImDrawFlags_Closed, 1.5f);
-
-    // RGB led strip along the lower body, drawn as a wide dim line under a thin bright one
-    const float now = (float)GetTime();
-    const int stripSegs = 28;
-    ImVec2 stripPrev;
-    for (int i = 0; i <= stripSegs; i++) {
-        const float a = IM_PI * (.15f + .7f * (float)i / stripSegs);
-        const ImVec2 pt = body + ImVec2(75.f + cosf(a) * 77.f, 200.f + sinf(a) * 62.f);
-        if (i) {
-            const ImU32 led = UiHsvColor((float)i / stripSegs * .6f - now * .1f, .9f, 1.f) & ~IM_COL32_A_MASK;
-            dl->AddLine(stripPrev, pt, led | IM_COL32(0, 0, 0, 70), 8.f);
-            dl->AddLine(stripPrev, pt, led | IM_COL32(0, 0, 0, 230), 3.f);
-        }
-        stripPrev = pt;
+    if (const unsigned rate = PressRate(vk, frame.nowTicks); rate > 2) {
+        const ImVec2 anchor((keyMin.x + keyMax.x) * .5f, keyMin.y);
+        frame.badges.push_back({anchor, rate, frame.nowTicks - _lastPressTick[vk]});
     }
 
-    dl->AddBezierQuadratic(body + ImVec2(10.f, 104.f), body + ImVec2(75.f, 113.f), body + ImVec2(140.f, 104.f),
-                           UiCol::StrokeSoft, 1.5f);
+    if (!editable) return;
+    if (clicked && !frame.clickBlocked) {
+        Action& action = profile.keys[vk][frame.mods].action;
+        SetSetting(action, NextKeyAction(action, frame.mods));
+    }
+    // on release like ImGui's own context menus, so a right click on another key moves an open menu there
+    if (IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) && IsMouseReleased(ImGuiMouseButton_Right)) {
+        _menuVk = vk;
+        _menuKeyMin = keyMin;
+        _menuKeyMax = keyMax;
+        _menuShowCombos = false;
+        RequestPopup(kPopupKeyMenu);
+    }
+}
 
-    DrawKey(frame, "##mbL", "LMB", VK_LBUTTON, body + ImVec2(8.f, 8.f), ImVec2(53.f, 92.f));
-    DrawKey(frame, "##mbM", "M3", VK_MBUTTON, body + ImVec2(63.f, 22.f), ImVec2(24.f, 64.f));
-    DrawKey(frame, "##mbR", "RMB", VK_RBUTTON, body + ImVec2(89.f, 8.f), ImVec2(53.f, 92.f));
+void MainWindow::DrawMouse(ImDrawList* dl, KeyFrame& frame, const ImVec2& origin, bool sideButtons)
+{
+    AddCap(dl, origin + ImVec2(0.f, 100.f), ImVec2(136.f, 118.f), UiCapKind_Plain, kMouseBodyRadii);
+
+    DrawKey(frame, "##mbL", "LMB", VK_LBUTTON, origin, ImVec2(62.f, 96.f), kMouseLeftRadii);
+    DrawKey(frame, "##mbR", "RMB", VK_RBUTTON, origin + ImVec2(74.f, 0.f), ImVec2(62.f, 96.f), kMouseRightRadii);
+    DrawKey(frame, "##mbM", "", VK_MBUTTON, origin + ImVec2(63.f, 26.f), ImVec2(10.f, 30.f));
+    const float wheelLabelW = UiTextWidth(UiFonts::Medium, 9.f, "M3");
+    dl->AddText(UiFonts::Medium, 9.f, origin + ImVec2(68.f - wheelLabelW * .5f, 62.f), UiCol::Ink3, "M3");
+
     if (sideButtons) {
-        DrawKey(frame, "##mb5", "M5", VK_XBUTTON2, body + ImVec2(6.f, 122.f), ImVec2(24.f, 38.f));
-        DrawKey(frame, "##mb4", "M4", VK_XBUTTON1, body + ImVec2(6.f, 164.f), ImVec2(24.f, 38.f));
+        DrawKey(frame, "##mb5", "M5", VK_XBUTTON2, origin + ImVec2(10.f, 116.f), ImVec2(26.f, 30.f));
+        DrawKey(frame, "##mb4", "M4", VK_XBUTTON1, origin + ImVec2(10.f, 154.f), ImVec2(26.f, 30.f));
     }
 }
 
-void MainWindow::DrawBrushBar(ImDrawList* dl, const ImVec2& panelMin, const ImVec2& panelMax, ImU32 brushColor,
-                              Profile* profile)
+void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& o, Profile& profile)
 {
-    const float titleY = panelMin.y + 10.f;
-    const float descY = panelMin.y + 26.f;
-    const float barY = panelMin.y + 42.f;
+    const bool enabled = sApp.IsEnabled();
+    for (const float x : {264.f, 776.f, 1024.f})
+        dl->AddRectFilled(o + ImVec2(x, 554.f), o + ImVec2(x + 1.f, 664.f), UiCol::Line);
 
-    // accent fade behind a control group, topped by its centered title
-    auto groupHeader = [&](float x, float w, ImU32 accent, const char* title) {
-        const ImU32 fadeTop = UiWithAlpha(accent, 0.2f);
-        const ImU32 fadeClear = UiWithAlpha(accent, 0.f);
-        dl->AddRectFilledMultiColor(ImVec2(x - 3.f, panelMin.y), ImVec2(x + w + 3.f, panelMin.y + 96.f), fadeTop,
-                                    fadeTop, fadeClear, fadeClear);
-        const ImVec2 size = CalcTrackedTextSize(UiFonts::Semi, 12.f, title, 1.5f);
-        AddTrackedText(dl, UiFonts::Semi, 12.f, ImVec2(x + (w - size.x) * .5f, titleY), UiCol::Text, title, 1.5f);
-    };
-    auto blockDesc = [&](float x, float w, const char* desc) {
-        const float descW = UiFonts::Mono->CalcTextSizeA(13.f, FLT_MAX, 0.f, desc).x;
-        dl->AddText(UiFonts::Mono, 13.f, ImVec2(x + (w - descW) * .5f, descY), UiCol::Mute, desc);
-    };
+    // power and the pause key
+    AddSilk(dl, o + ImVec2(24.f, 552.f), "power");
+    if (UiPowerButton("##power", o + ImVec2(66.f, 614.f), enabled)) sApp.Enable(!enabled);
+    dl->AddText(UiFonts::Heavy, 30.f, o + ImVec2(118.f, 584.f), enabled ? UiCol::Ink : UiCol::Ink2,
+                enabled ? "ON" : "PAUSED");
 
-    const float allX = panelMin.x + 16.f;
-    const float modsX = allX + 176.f;
-    groupHeader(allX, 362.f, UiCol::Spam, "GLOBAL / OVERRIDE LAYERS");
-    blockDesc(allX, 170.f, "paint the base layer");
-    if (UiBrushChip("##layerall", ImVec2(allX, barY), ImVec2(170.f, 22.f), "GLOBAL", UiCol::Spam, _editMods == 0))
-        _editMods = 0;
-
-    blockDesc(modsX, 186.f, "only when modifier held");
-    float layerX = modsX;
-    for (const auto& layer : kModLayers) {
-        PushID((int)layer.mod);
-        if (UiBrushChip("##layer", ImVec2(layerX, barY), ImVec2(58.f, 22.f), layer.name, UiCol::Spam,
-                        _editMods & layer.mod))
-            _editMods ^= layer.mod;
-        PopID();
-        layerX += 64.f;
-    }
-    if (_editMods == 0 && _brushAction == Action_Disabled) _brushAction = Action_Spammy;
-
-    const char* hint = "LMB paint / RMB erase";
-    const float hintW = UiFonts::Mono->CalcTextSizeA(12.f, FLT_MAX, 0.f, hint).x;
-    dl->AddText(UiFonts::Mono, 12.f, ImVec2((panelMin.x + panelMax.x - hintW) * .5f, titleY), UiCol::Text, hint);
-
-    const float colW = 170.f;
-    const float chipW = 140.f;
-    const int brushCount = _editMods ? 3 : 2;
-    const float brushesW = brushCount * colW + (brushCount - 1) * 6.f;
-    groupHeader(panelMax.x - 16.f - brushesW, brushesW, brushColor, "BRUSH");
-
-    float colX = panelMax.x - 16.f;
-    float spammyChipX = 0.f;
-    for (const Action action : kBrushes | std::views::take(brushCount)) {
-        const KeyMode* mode = FindKeyMode(action);
-        colX -= colW;
-        const float chipX = colX + (colW - chipW) * .5f;
-        PushID((int)action);
-        if (UiBrushChip("##brush", ImVec2(chipX, barY), ImVec2(chipW, 22.f), mode->name, mode->menuColor,
-                        _brushAction == action))
-            _brushAction = action;
-        PopID();
-        blockDesc(colX, colW, mode->desc);
-        colX -= 6.f;
-        if (action == Action_Spammy) spammyChipX = chipX;
-    }
-
-    if (profile) DrawSpeedEditor(ImVec2(spammyChipX, barY + 26.f), *profile);
-}
-
-void MainWindow::DrawProfilesPopup(const ImVec2& o)
-{
-    SetNextWindowPos(o + ImVec2(28.f, 116.f));
-    SetNextWindowSizeConstraints(ImVec2(260.f, 0.f), ImVec2(260.f, 544.f));
-    SetNextWindowSize(ImVec2(260.f, 0.f));
-    if (!UiBeginPopup("##profiles")) return;
-
-    static char s_newName[64] = {0};
-    static bool s_creating = false;
-    static bool s_focusName = false;
-    static std::string s_armedDelete;
-    if (IsWindowAppearing()) {
-        s_newName[0] = '\0';
-        s_creating = false;
-        s_armedDelete.clear();
-    }
-
-    ImDrawList* dl = GetWindowDrawList();
-    const auto editing = sConfig.editingProfile;
-    const char* pendingDelete = nullptr;
-    for (const std::shared_ptr<Profile>& item : sConfig.profiles) {
-        PushID(item.get());
-        const ImVec2 p = GetCursorScreenPos();
-        const bool selected = item == editing;
-        if (Selectable("##prow", selected, 0, ImVec2(200.f, 24.f))) sConfig.SetEditingProfile(item->name.c_str());
-        dl->AddText(UiFonts::Semi, 18.f, p + ImVec2(8.f, 4.f), selected ? UiCol::SpamText : UiCol::Text,
-                    item->name.c_str());
-        char count[16];
-        snprintf(count, sizeof(count), "%d", (int)item->apps.size());
-        const ImVec2 countSize = UiFonts::Mono->CalcTextSizeA(13.f, FLT_MAX, 0.f, count);
-        dl->AddText(UiFonts::Mono, 13.f, ImVec2(p.x + 200.f - countSize.x - 8.f, p.y + 6.f), UiCol::Mute, count);
-
-        // delete needs a second click while the button flashes
-        const bool armed = s_armedDelete == item->name;
-        if (UiGhostButton("##del", p + ImVec2(208.f, 0.f), 24.f, UiGlyph_Close)) {
-            if (armed)
-                pendingDelete = item->name.c_str();
-            else
-                s_armedDelete = item->name;
-        }
-        if (armed)
-            dl->AddRect(p + ImVec2(208.f, 0.f), p + ImVec2(232.f, 24.f), UiFlash(UiCol::Danger, 1.5f, .5f), 6.f);
-        PopID();
-    }
-    if (!sConfig.profiles.empty()) Separator();
-
-    if (!s_creating) {
-        if (UiMenuRow("+  NEW PROFILE", 0, false, true)) {
-            s_creating = true;
-            s_focusName = true;
-        }
+    char keyName[48], pauseLine[64];
+    const char* pauseText = pauseLine;
+    ImU32 pauseCol = UiCol::Ink2;
+    if (IsCapturingPauseKey()) {
+        pauseText = "Press a key...";
+        pauseCol = UiFlash(UiCol::Signal, 1.2f, .35f);
+    } else if (const char* key = PauseKeyName(profile.vkPause, keyName, sizeof(keyName))) {
+        snprintf(pauseLine, sizeof(pauseLine), "%s %s", key, enabled ? "pauses" : "resumes");
     } else {
-        SetNextItemWidth(-52.f);
-        if (std::exchange(s_focusName, false)) SetKeyboardFocusHere();
-        const bool enter = InputTextWithHint("##newname", "profile name", s_newName, sizeof(s_newName),
-                                             ImGuiInputTextFlags_EnterReturnsTrue);
-        const bool valid = strlen(s_newName) >= 3 && !sConfig.IsProfileExists(s_newName);
-        SameLine(0.f, 6.f);
-        BeginDisabled(!valid);
-        const bool ok = Button("OK", ImVec2(-FLT_MIN, 0.f));
-        EndDisabled();
-        if ((enter || ok) && valid) {
-            sConfig.CreateProfile(s_newName);
-            CloseCurrentPopup();
+        pauseText = "Set a pause key";
+        pauseCol = UiCol::Signal;
+    }
+    const ImVec2 pausePos = o + ImVec2(118.f, 624.f);
+    const float pauseW = UiTextWidth(UiFonts::Medium, 12.f, pauseText);
+    SetCursorScreenPos(pausePos - ImVec2(3.f, 3.f));
+    if (InvisibleButton("##pausekey", ImVec2(pauseW + 6.f, 20.f))) TogglePauseKeyCapture();
+    if (IsItemHovered() && IsMouseClicked(ImGuiMouseButton_Right)) {
+        _capturingPauseKey = false;
+        SetSetting(profile.vkPause, 0u);
+    }
+    if (IsItemHovered()) dl->AddLine(pausePos + ImVec2(0.f, 15.f), pausePos + ImVec2(pauseW, 15.f), pauseCol);
+    Tip("Click, then press the key that pauses and resumes Spammy. Right-click to clear it.");
+    dl->AddText(UiFonts::Medium, 12.f, pausePos, pauseCol, pauseText);
+
+    // autofire rate
+    char silk[96];
+    snprintf(silk, sizeof(silk), "autofire rate \xC2\xB7 %s", profile.name.c_str());
+    AddSilk(dl, o + ImVec2(288.f, 552.f), silk);
+
+    const unsigned rate = SpeedToRate(profile.speed);
+    // rates are whole numbers, so a slow drag would round back to where it started every frame; while the knob is
+    // held it keeps its own exact angle
+    static float s_knobT = 0.f;
+    static bool s_knobHeld = false;
+    float knobT = s_knobHeld ? s_knobT
+                             : (float)(rate - kProfileRateMin) / (float)(kProfileRateMax - kProfileRateMin);
+    if (UiKnob("##rate", o + ImVec2(344.f, 614.f), knobT, "5", "100", !enabled)) {
+        const float picked = (float)kProfileRateMin + ImSaturate(knobT) * (float)(kProfileRateMax - kProfileRateMin);
+        SetSetting(profile.speed, RateToSpeed((unsigned)lroundf(picked)));
+    }
+    s_knobHeld = IsItemActive();
+    s_knobT = knobT;
+
+    char number[8];
+    snprintf(number, sizeof(number), "%u", SpeedToRate(profile.speed));
+    const ImVec2 numberPos = o + ImVec2(420.f, 566.f);
+    dl->AddText(UiFonts::Light, 72.f, numberPos, enabled ? UiCol::Ink : UiCol::Ink3, number);
+    const float slashX = numberPos.x + UiTextWidth(UiFonts::Light, 72.f, number) + 5.f;
+    dl->AddText(UiFonts::Medium, 22.f, ImVec2(slashX, o.y + 612.f), UiCol::Ink2, "/s");
+
+    char caption[48];
+    snprintf(caption, sizeof(caption), "one press every %u ms", profile.speed);
+    // a three-digit rate pushes the caption right; it sits below the -/+ caps, so it may run under them
+    const float captionX = ImMax(o.x + 548.f, slashX + UiTextWidth(UiFonts::Medium, 22.f, "/s") + 14.f);
+    dl->AddText(UiFonts::Medium, 12.f, ImVec2(captionX, o.y + 618.f), UiCol::Ink3, caption);
+
+    // step until the shown number changes: neighbouring intervals often round to the same rate
+    auto stepRate = [&](int faster) {
+        const unsigned current = SpeedToRate(profile.speed);
+        for (int speed = (int)profile.speed - faster; speed >= kProfileSpeedMin && speed <= kProfileSpeedMax;
+             speed -= faster) {
+            if (SpeedToRate((unsigned)speed) != current) {
+                SetSetting(profile.speed, (unsigned)speed);
+                break;
+            }
         }
-    }
-
-    if (pendingDelete) sApp.DeleteProfile(pendingDelete);
-    UiEndPopup();
-}
-
-void MainWindow::DrawAppsPopup(const ImVec2& o, const std::shared_ptr<Profile>& profile)
-{
-    SetNextWindowPos(o + ImVec2(260.f, 116.f));
-    SetNextWindowSize(ImVec2(280.f, 0.f));
-    if (!UiBeginPopup("##appsmenu")) return;
-
-    static char s_search[64] = {0};
-    static boost::container::flat_set<std::string, CaseInsensitiveLess> s_runningApps;
-    if (IsWindowAppearing()) {
-        s_search[0] = '\0';
-        s_runningApps.clear();
-        EnumWindows([](HWND hwnd) -> BOOL {
-            const std::filesystem::path path = GetProcessPath(hwnd);
-            if (path.has_filename() && path != GetModulePath()) s_runningApps.emplace(Utf8FileName(path));
-            return TRUE;
-        });
-        SetKeyboardFocusHere();
-    }
-    SetNextItemWidth(-FLT_MIN);
-    InputTextWithHint("##appsearch", "search", s_search, sizeof(s_search));
-
-    SetNextWindowSizeConstraints(ImVec2(0.f, 0.f), ImVec2(FLT_MAX, 490.f));
-    BeginChild("##applist", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeY);
-
-    PushFont(UiFonts::Semi, 14.f);
-    if (!profile->apps.empty()) {
-        TextDisabled("BOUND");
-        const char* unbindApp = nullptr;
-        for (const std::string& app : profile->apps) {
-            if (!MatchesFilter(app, s_search)) continue;
-            PushID(app.c_str());
-            const ImVec2 p = GetCursorScreenPos();
-            const float w = GetContentRegionAvail().x;
-            UiMenuRow(app.c_str(), UiCol::Spam, false, true, true);
-            if (UiGhostButton("##unbind", ImVec2(p.x + w - 24.f, p.y), 24.f, UiGlyph_Close)) unbindApp = app.c_str();
-            PopID();
-        }
-        if (unbindApp) sConfig.UnbindProfile(profile->name.c_str(), unbindApp);
-        Separator();
-    }
-
-    TextDisabled("RUNNING");
-    bool anyShown = false;
-    for (const std::string& app : s_runningApps) {
-        if (!MatchesFilter(app, s_search) || profile->apps.contains(app)) continue;
-        const auto appProfile = sConfig.FindProfileByApp(app.c_str());
-        const bool boundElsewhere = appProfile && appProfile != profile;
-        PushID(app.c_str());
-        if (UiMenuRow(app.c_str(), 0, boundElsewhere, true)) sConfig.BindProfile(profile->name.c_str(), app.c_str());
-        PopID();
-        anyShown = true;
-    }
-    if (!anyShown) TextDisabled(s_search[0] ? "no matches" : "nothing running");
-    PopFont();
-    EndChild();
-
-    UiEndPopup();
-}
-
-void MainWindow::DrawSettingsPopup(const ImVec2& o)
-{
-    SetNextWindowPos(o + ImVec2(1252.f, 52.f), ImGuiCond_Always, ImVec2(1.f, 0.f));
-    SetNextWindowSize(ImVec2(230.f, 0.f));
-    if (!UiBeginPopup("##settings")) return;
-
-    static bool s_autoStart = false;
-    static int s_uiSize = 0;
-    if (IsWindowAppearing()) {
-        s_autoStart = sApp.IsAutoStartEnabled();
-        s_uiSize = (int)sConfig.uiSize;
-    }
-
-    auto stepEnum = [](const char* id, const char* label, auto name, int count, auto& value) {
-        int index = (int)value;
-        if (UiStepperRow(id, label, name(value), count, index))
-            SetSetting(value, (std::remove_reference_t<decltype(value)>)index);
     };
+    if (UiCapIconButton("##slower", o + ImVec2(688.f, 580.f), 30.f, UiGlyph_Minus)) stepRate(-1);
+    if (UiCapIconButton("##faster", o + ImVec2(726.f, 580.f), 30.f, UiGlyph_Plus)) stepRate(1);
 
-    if (UiToggleRow("##autostart", "AUTO START", s_autoStart) && sApp.EnableAutoStart(!s_autoStart))
-        s_autoStart = !s_autoStart;
-    if (UiToggleRow("##sounds", "ENABLE SOUNDS", sConfig.soundsEnabled)) ToggleSetting(sConfig.soundsEnabled);
-    stepEnum("##close", "ON CLOSE", CloseActionName, CloseAction_Count, sConfig.closeAction);
+    // locks
+    snprintf(silk, sizeof(silk), "locks \xC2\xB7 %s", profile.name.c_str());
+    AddSilk(dl, o + ImVec2(800.f, 552.f), silk);
+    auto lockRow = [&](const char* id, float y, bool& flag, const char* label, const char* onNote,
+                       const char* offNote) {
+        if (UiToggle(id, o + ImVec2(800.f, y), flag)) SetSetting(flag, !flag);
+        dl->AddText(UiFonts::SemiBold, 13.f, o + ImVec2(860.f, y + 1.f), flag ? UiCol::Ink : UiCol::Ink2, label);
+        const char* note = !flag ? offNote : enabled ? onNote : "still blocked while paused";
+        dl->AddText(UiFonts::Medium, 10.f, o + ImVec2(860.f, y + 17.f), UiCol::Ink3, note);
+    };
+    lockRow("##lockwin", 578.f, profile.disableWin, "Block Win key", "Start menu stays shut",
+            "when on, Start menu stays shut");
+    lockRow("##lockaltf4", 624.f, profile.disableAltF4, "Block Alt+F4", "sent as plain F4 instead",
+            "when on, sent as plain F4");
 
-    Separator();
-
-    stepEnum("##form", "LAYOUT", KeyboardFormName, KeyboardForm_Count, sConfig.form);
-    stepEnum("##variant", "VARIANT", KeyboardVariantName, KeyboardVariant_Count, sConfig.variant);
-    stepEnum("##mouse", "MOUSE", MouseFormName, MouseForm_Count, sConfig.mouse);
-    // rescaling the window mid-drag would fight the stepper, so apply on release
-    bool released = false;
-    UiStepperRow("##uisize", "UI SIZE", UiSizeName((UiSize)s_uiSize), UiSize_Count, s_uiSize, &released);
-    if (released && SetSetting(sConfig.uiSize, (UiSize)s_uiSize)) SetScaleFactor(UiSizeFactor(sConfig.uiSize));
-
-    Separator();
-    if (UiMenuRow("GITHUB")) LaunchUrl(L"https://github.com/FrostAtom/spammy");
-
-    UiEndPopup();
-}
-
-void MainWindow::DrawClosePopup(const ImVec2& o)
-{
-    const float contentW = 300.f;
-    SetNextWindowPos(o + kWindowSize * .5f, ImGuiCond_Always, ImVec2(.5f, .5f));
-    SetNextWindowSize(ImVec2(contentW + 20.f, 0.f));
-    if (!UiBeginModal("##close")) return;
-
-    static bool s_remember = false;
-    if (IsWindowAppearing()) s_remember = false;
-
-    ImDrawList* dl = GetWindowDrawList();
-    const ImVec2 p = GetCursorScreenPos();
-    AddTrackedText(dl, UiFonts::Semi, 12.f, p + ImVec2(8.f, 4.f), UiCol::Sub, "CLOSE WINDOW", 1.5f);
-    dl->AddText(UiFonts::Semi, 20.f, p + ImVec2(8.f, 20.f), UiCol::Text, "Hide to tray or exit?");
-    dl->AddText(UiFonts::Mono, 13.f, p + ImVec2(8.f, 46.f), UiCol::Mute, "hidden, spammy keeps running");
-
-    const ImVec2 btnSize((contentW - 12.f) * .5f, 36.f);
-    CloseAction chosen = CloseAction_Ask;
-    if (UiDialogButton("##hide", p + ImVec2(0.f, 74.f), btnSize, "HIDE TO TRAY", UiCol::Spam))
-        chosen = CloseAction_Hide;
-    if (UiDialogButton("##exit", p + ImVec2(btnSize.x + 12.f, 74.f), btnSize, "EXIT", UiCol::Danger))
-        chosen = CloseAction_Exit;
-
-    SetCursorScreenPos(p + ImVec2(0.f, 122.f));
-    Separator();
-    if (UiToggleRow("##remember", "REMEMBER CHOICE", s_remember, contentW)) s_remember = !s_remember;
-
-    // a modal ignores clicks outside and Escape by itself, so dismiss it the same way the other popups go away;
-    // AllowWhenBlockedByActiveItem, or pressing any control inside would count as "outside" on the press frame
-    const bool clickedOutside = IsMouseClicked(ImGuiMouseButton_Left) && !IsWindowAppearing() &&
-                                !IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    if (clickedOutside || IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
-
-    if (chosen != CloseAction_Ask) {
-        if (s_remember) SetSetting(sConfig.closeAction, chosen);
-        CloseCurrentPopup();
-        if (chosen == CloseAction_Hide)
-            Hide();
-        else
-            Close();
+    // legend for the layer on the board
+    AddSilk(dl, o + ImVec2(1048.f, 552.f), "keys");
+    struct LegendRow {
+        UiKeyKind kind;
+        const char* text;
+    };
+    char ownText[48], blockedText[48];
+    LegendRow rows[3] = {
+        {UiKeyKind_Auto, "Autofire while held"},
+        {UiKeyKind_Tap, "One tap, release ignored"},
+        {UiKeyKind_Block, "Blocked (combo layers)"},
+    };
+    if (_editMods != KeyMod_None) {
+        snprintf(ownText, sizeof(ownText), "Own setting for %s", ModsName(_editMods));
+        snprintf(blockedText, sizeof(blockedText), "Blocked with %s", ModsName(_editMods));
+        rows[0] = {UiKeyKind_SameAuto, "Same as NoMod"};
+        rows[1] = {UiKeyKind_Auto, ownText};
+        rows[2] = {UiKeyKind_Block, blockedText};
     }
-    UiEndPopup();
+    for (int i = 0; i < 3; i++) {
+        const float y = 574.f + 28.f * i;
+        AddKeySwatch(dl, o + ImVec2(1048.f, y), rows[i].kind);
+        dl->AddText(UiFonts::Medium, 12.f, o + ImVec2(1084.f, y + 4.f), UiCol::Ink2, rows[i].text);
+    }
 }
 
 bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
@@ -807,8 +807,42 @@ bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* 
         Focus();
         return true;
     case WM_SHOWWINDOW:
-        if (wParam) _editMods = 0;
+        if (wParam) _editMods = KeyMod_None;
         break;
     }
     return false;
+}
+
+const char* MainWindowUtil::PauseKeyName(unsigned keyBundle, char* buf, size_t bufSize)
+{
+    if (!keyBundle || !bufSize) return nullptr;
+    const unsigned mods = KeyBundleMods(keyBundle);
+    const char* name = Keyboard::GetKeyName((unsigned short)KeyBundleVk(keyBundle));
+    if (!name || !name[0]) name = "Unknown";
+
+    const int prefix = snprintf(buf, bufSize, "%s%s%s", (mods & KeyMod_Ctrl) ? "Ctrl+" : "",
+                                (mods & KeyMod_Alt) ? "Alt+" : "", (mods & KeyMod_Shift) ? "Shift+" : "");
+    size_t n = (size_t)ImClamp(prefix, 0, (int)bufSize - 1);
+    // "Num Del" reads as one key as "NumDel"; "Mouse 4" keeps its space before the number
+    for (const char* c = name; *c && n + 1 < bufSize; c++) {
+        if (*c == ' ' && !isdigit((unsigned char)c[1])) continue;
+        buf[n++] = *c;
+    }
+    buf[n] = '\0';
+    return buf;
+}
+
+const char* MainWindowUtil::ModsName(unsigned mods)
+{
+    // indexed by the KeyMod bits: Shift 1, Alt 2, Ctrl 4
+    static constexpr const char* kNames[] = {
+        "no modifier", "Shift", "Alt", "Shift+Alt", "Ctrl", "Shift+Ctrl", "Ctrl+Alt", "Shift+Ctrl+Alt",
+    };
+    return kNames[mods & 7];
+}
+
+bool MainWindowUtil::MatchesFilter(std::string_view name, std::string_view filter)
+{
+    auto equalNoCase = [](char a, char b) { return tolower((unsigned char)a) == tolower((unsigned char)b); };
+    return filter.empty() || !std::ranges::search(name, filter, equalNoCase).empty();
 }

@@ -39,7 +39,7 @@ The self-contained binary lands in `build/Release/Spammy.exe`.
 
 - [nlohmann/json](https://github.com/nlohmann/json) ([MIT](https://github.com/nlohmann/json/blob/develop/LICENSE.MIT))
 - [Dear ImGui](https://github.com/ocornut/imgui) ([MIT](https://github.com/ocornut/imgui/blob/master/LICENSE.txt))
-- [Rajdhani](https://fonts.google.com/specimen/Rajdhani) & [JetBrains Mono](https://www.jetbrains.com/lp/mono/) fonts ([OFL](https://openfontlicense.org))
+- [Archivo](https://github.com/Omnibus-Type/Archivo) font ([OFL](https://openfontlicense.org))
 
 ## License
 

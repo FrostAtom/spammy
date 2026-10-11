@@ -45,7 +45,8 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX23_STANDARD_COMPILE_OPTION "-std:c++latest")
 set(CMAKE_CXX23_EXTENSION_COMPILE_OPTION "-std:c++latest")
-set(COMMON_COMPILE_FLAGS "/W3 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS")
+# /utf-8: UI strings carry typographic characters (– … ‹ › ↗ ·) straight in the source
+set(COMMON_COMPILE_FLAGS "/W3 /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS")
 # /Gy + /Gw: split functions/data into COMDATs so the linker can strip and fold them
 # /GL + /LTCG: whole-program optimization; /OPT:REF drops unused code, /OPT:ICF folds identical COMDATs
 # clang: -flto=thin emits LLVM bitcode objects, so linking needs lld-link and archiving needs llvm-lib (see the clang presets)

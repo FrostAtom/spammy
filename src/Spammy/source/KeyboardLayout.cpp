@@ -281,7 +281,7 @@ std::span<const KeyboardKey> GetKeyboardLayout(KeyboardForm form, KeyboardVarian
 
 const char* KeyboardFormName(KeyboardForm form)
 {
-    static constexpr const char* kNames[KeyboardForm_Count] = {"60%", "65%", "75%", "TKL 80%", "FULL 100%", "EXTRA"};
+    static constexpr const char* kNames[KeyboardForm_Count] = {"60%", "65%", "75%", "TKL 80%", "Full 100%", "Extra"};
     return NameOf(form, kNames);
 }
 
@@ -293,6 +293,6 @@ const char* KeyboardVariantName(KeyboardVariant variant)
 
 const char* MouseFormName(MouseForm form)
 {
-    static constexpr const char* kNames[MouseForm_Count] = {"HIDDEN", "3 BUTTONS", "5 BUTTONS"};
+    static constexpr const char* kNames[MouseForm_Count] = {"Hidden", "3 buttons", "5 buttons"};
     return NameOf(form, kNames);
 }

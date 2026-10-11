@@ -5,6 +5,19 @@
 
 inline constexpr int kProfileSpeedMin = 10;
 inline constexpr int kProfileSpeedMax = 200;
+inline constexpr size_t kProfileNameMax = 32;
+
+// the UI shows the autofire interval as presses per second: 200..10 ms = 5..100/s
+inline constexpr unsigned kProfileRateMin = 1000 / kProfileSpeedMax;
+inline constexpr unsigned kProfileRateMax = 1000 / kProfileSpeedMin;
+constexpr unsigned SpeedToRate(unsigned speedMs)
+{
+    return (1000 + speedMs / 2) / speedMs;
+}
+constexpr unsigned RateToSpeed(unsigned rate)
+{
+    return std::clamp((1000 + rate / 2) / rate, (unsigned)kProfileSpeedMin, (unsigned)kProfileSpeedMax);
+}
 
 // a key bundle packs a VK code into the low word and the KeyMod flags required with it into the high word
 constexpr unsigned MakeKeyBundle(unsigned vkCode, unsigned mods)
@@ -43,8 +56,6 @@ struct Profile {
     unsigned vkPause = 0; // key bundle, 0 = unset
     bool disableAltF4 = false;
     bool disableWin = false;
-
-    bool IsGlobal() const { return apps.empty(); }
 
     // true if any mouse button is bound (or is the pause key) — decides whether the mouse hook is installed
     bool UsesMouse() const

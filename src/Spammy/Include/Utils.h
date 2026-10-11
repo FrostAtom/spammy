@@ -48,3 +48,18 @@ std::string Utf8FileName(const std::filesystem::path& path);
 
 using EnumWindowsProc_t = std::function<BOOL(HWND)>;
 BOOL EnumWindows(EnumWindowsProc_t&& func);
+
+// what a person would call the program: the version resource's FileDescription, else its ProductName, else the
+// file name without ".exe"; UTF-8
+std::string AppFriendlyName(const std::filesystem::path& exePath);
+
+struct RunningApp {
+    std::string exe;  // file name as Utf8FileName gives it, e.g. "Wow.exe"
+    std::string name; // AppFriendlyName
+};
+// one entry per executable that owns a visible, unowned, titled top-level window, Spammy itself left out;
+// sorted by name, case-insensitively
+std::vector<RunningApp> ListRunningApps();
+
+// "Open" dialog filtered to *.exe; false when cancelled
+bool BrowseForExe(HWND owner, std::filesystem::path& out);

@@ -16,19 +16,12 @@ bool App::Init(int argc, char** argv)
 {
     SetCurrentDirectoryW(GetModulePath().parent_path().c_str());
 
-    const bool firstRun = !std::filesystem::is_regular_file(CONFIG_FILE);
     if (!sConfig.Load()) {
         const int action =
             MessageBoxW(nullptr, L"Can't load config, reset to defaults?", L"" APP_NAME, MB_ICONQUESTION | MB_OKCANCEL);
         if (action != IDOK) return false;
     }
-    if (firstRun) EnableAutoStart(true);
-
-    if (sConfig.profiles.empty()) {
-        sConfig.CreateProfile("UNNAMED");
-        for (unsigned short vk = '1'; vk <= '5'; vk++)
-            sConfig.editingProfile->keys[vk][KeyMod_None].action = Action_Spammy;
-    }
+    // no games at all is the UI's first-run screen, which also asks about autostart
 
     _mainWindow = std::make_unique<MainWindow>(L"" APP_NAME);
     if (!_mainWindow->Initialize()) {
@@ -380,17 +373,24 @@ void App::DeleteProfile(const char* name)
     sConfig.DeleteProfile(name);
 }
 
+std::shared_ptr<Profile> App::LastActiveProfile()
+{
+    // the input worker or the UI can keep a deleted profile alive for a while, so the weak_ptr alone can't tell
+    std::shared_ptr<Profile> profile = _lastActiveProfile.lock();
+    if (profile && std::ranges::find(sConfig.profiles, profile) == sConfig.profiles.end()) return nullptr;
+    return profile;
+}
+
 void App::UpdateActiveTarget()
 {
     HWND hwnd = GetForegroundWindow();
     if (hwnd == _activeHwnd) return; // only the main thread writes _activeHwnd, so this read needs no lock
 
+    // a game applies only while one of its own apps is in the foreground, nothing applies anywhere else
     std::shared_ptr<Profile> profile;
-    if (const std::filesystem::path path = hwnd ? GetProcessPath(hwnd) : std::filesystem::path(); path.has_filename()) {
+    if (const std::filesystem::path path = hwnd ? GetProcessPath(hwnd) : std::filesystem::path(); path.has_filename())
         profile = sConfig.FindProfileByApp(Utf8FileName(path).c_str());
-        // the global (unbound) profile applies to everything but ourselves
-        if (!profile && path != GetModulePath()) profile = sConfig.FindGlobalProfile();
-    }
+    if (profile) _lastActiveProfile = profile;
 
     {
         std::scoped_lock lock(_targetMutex);

@@ -45,12 +45,19 @@ struct Config {
     void MarkDirty();
     void SaveIfDirty();
 
+    // a profile is a game: it only ever applies while one of its apps is in the foreground
     std::shared_ptr<Profile> FindProfile(const char* name) const;
     std::shared_ptr<Profile> FindProfileByApp(const char* app) const;
-    std::shared_ptr<Profile> FindGlobalProfile() const;
     bool IsProfileExists(const char* name) const;
-    void CreateProfile(const char* name);
+    // base, or "base 2", "base 3"... whichever is free (except may keep its own name); cut to kProfileNameMax
+    std::string UniqueProfileName(std::string_view base, const Profile* except = nullptr) const;
+    // appends a new game bound to app (empty app: no apps yet), named UniqueProfileName(name); copyFrom, when given,
+    // donates its keys, speed, pause key and locks. Becomes the editing profile
+    std::shared_ptr<Profile> CreateGame(std::string_view name, std::string_view app, const Profile* copyFrom);
+    // false (nothing changed) when the trimmed name is empty, too long or taken by another profile
+    bool RenameProfile(const std::shared_ptr<Profile>& profile, std::string_view name);
     void SetEditingProfile(const char* name);
+    // the editing profile moves to its neighbour (the next one, else the previous one, else none)
     void DeleteProfile(const char* name);
     void BindProfile(const char* name, const char* app);
     void UnbindProfile(const char* name, const char* app);

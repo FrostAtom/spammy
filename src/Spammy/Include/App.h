@@ -21,6 +21,8 @@ public:
     bool EnableAutoStart(bool state);
 
     void DeleteProfile(const char* name);
+    // the game whose app was in the foreground most recently (its tab dot is lit); NULL until one ever was
+    std::shared_ptr<Profile> LastActiveProfile();
 
 private:
     // a physical key event the hook decided to swallow, handed off to the input worker; the handler is resolved at
@@ -53,6 +55,7 @@ private:
     HWND _activeHwnd = nullptr;
 
     std::shared_ptr<Profile> _activeProfile;
+    std::weak_ptr<Profile> _lastActiveProfile; // main thread only
     // guards _activeProfile/_activeHwnd across the hook thread, the input worker and the main thread
     std::mutex _targetMutex;
     // pause key whose down toggled and whose up/repeats are still to be swallowed; hook thread only
