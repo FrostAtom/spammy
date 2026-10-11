@@ -23,7 +23,7 @@ if(NOT DEFINED VCPKG_TARGET_TRIPLET)
 	set(VCPKG_TARGET_TRIPLET "x86-windows-static" CACHE STRING "")
 endif()
 
-project(Spammy LANGUAGES CXX)
+project(Spammy VERSION 3.0.0 LANGUAGES CXX)
 
 # output dirs; clang builds get their own so they don't overwrite the MSVC binaries
 set(OUTPUT_DIR ${CMAKE_SOURCE_DIR}/build/${CMAKE_BUILD_TYPE})
