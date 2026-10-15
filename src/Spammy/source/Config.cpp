@@ -15,6 +15,12 @@ float UiSizeFactor(UiSize size)
     return s_factors[size];
 }
 
+const char* UiThemeName(UiTheme theme)
+{
+    static constexpr const char* s_names[UiTheme_Count] = {"System", "Light", "Dark"};
+    return s_names[theme];
+}
+
 const char* CloseActionName(CloseAction action)
 {
     static constexpr const char* s_names[CloseAction_Count] = {"Ask", "Hide", "Exit"};
@@ -63,6 +69,7 @@ bool Config::Load()
         TryReadEnum(json, "variant", variant, KeyboardVariant_Count);
         TryReadEnum(json, "mouse", mouse, MouseForm_Count);
         TryReadEnum(json, "uiSize", uiSize, UiSize_Count);
+        TryReadEnum(json, "theme", theme, UiTheme_Count);
         profiles = std::move(loaded);
         if (auto it = json.find("editingProfile"); it != json.end() && it->is_string())
             editingProfile = FindProfile(it->get_ref<const std::string&>().c_str());
@@ -100,6 +107,7 @@ void Config::Save()
     if (variant != KeyboardVariant_Ansi) json["variant"] = (int)variant;
     if (mouse != MouseForm_5) json["mouse"] = (int)mouse;
     if (uiSize != UiSize_Medium) json["uiSize"] = (int)uiSize;
+    if (theme != UiTheme_System) json["theme"] = (int)theme;
     if (editingProfile) json["editingProfile"] = editingProfile->name;
     if (!profiles.empty()) json["profiles"] = profiles;
 

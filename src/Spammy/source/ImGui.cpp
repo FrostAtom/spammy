@@ -176,25 +176,25 @@ struct CapColors {
 CapColors CapPalette(UiCapKind kind)
 {
     switch (kind) {
-    case UiCapKind_Signal: return {UiCol::Signal, UiCol::SignalLip, 0};
-    case UiCapKind_Tap: return {UiCol::Tap, UiCol::TapLip, 0};
-    case UiCapKind_Same: return {UiCol::Same, UiCol::SameLip, 0};
-    case UiCapKind_Locked: return {UiCol::CapLocked, UiCol::CapLip, 0};
-    case UiCapKind_PausedAuto: return {UiCol::PausedAuto, UiCol::PausedAutoLip, 0};
-    case UiCapKind_PausedTap: return {UiCol::PausedTap, UiCol::PausedTapLip, 0};
-    default: return {UiCol::Cap, UiCol::CapLip, UiCol::CapStroke};
+    case UiCapKind_Signal: return {UiCol.Signal, UiCol.SignalLip, 0};
+    case UiCapKind_Tap: return {UiCol.Tap, UiCol.TapLip, 0};
+    case UiCapKind_Same: return {UiCol.Same, UiCol.SameLip, 0};
+    case UiCapKind_Locked: return {UiCol.CapLocked, UiCol.CapLip, 0};
+    case UiCapKind_PausedAuto: return {UiCol.PausedAuto, UiCol.PausedAutoLip, 0};
+    case UiCapKind_PausedTap: return {UiCol.PausedTap, UiCol.PausedTapLip, 0};
+    default: return {UiCol.Cap, UiCol.CapLip, UiCol.CapStroke};
     }
 }
 
 ImU32 CapInk(UiCapKind kind)
 {
     switch (kind) {
-    case UiCapKind_Signal:
-    case UiCapKind_Tap: return UiCol::White;
-    case UiCapKind_Same: return UiCol::SameInk;
-    case UiCapKind_PausedAuto: return UiCol::PausedAutoInk;
-    case UiCapKind_PausedTap: return UiCol::TapeInk;
-    default: return UiCol::Ink;
+    case UiCapKind_Signal: return UiCol.White;
+    case UiCapKind_Tap: return UiCol.InkInverse;
+    case UiCapKind_Same: return UiCol.SameInk;
+    case UiCapKind_PausedAuto: return UiCol.PausedAutoInk;
+    case UiCapKind_PausedTap: return UiCol.TapeInk;
+    default: return UiCol.Ink;
     }
 }
 
@@ -273,26 +273,27 @@ struct KeyLook {
 
 KeyLook GetKeyLook(UiKeyKind kind, bool paused)
 {
-    constexpr ImU32 pausedAutoDot = UiWithAlpha(UiCol::PausedAutoInk, 0.9f);
-    constexpr ImU32 pausedTapDot = UiWithAlpha(UiCol::TapeInk, 0.9f);
-    constexpr ImU32 whiteDot = UiWithAlpha(UiCol::White, 0.9f);
-    constexpr ImU32 sameDot = UiWithAlpha(UiCol::SameInk, 0.7f);
+    const ImU32 pausedAutoDot = UiWithAlpha(UiCol.PausedAutoInk, 0.9f);
+    const ImU32 pausedTapDot = UiWithAlpha(UiCol.TapeInk, 0.9f);
+    const ImU32 whiteDot = UiWithAlpha(UiCol.White, 0.9f);
+    const ImU32 tapDot = UiWithAlpha(UiCol.InkInverse, 0.9f);
+    const ImU32 sameDot = UiWithAlpha(UiCol.SameInk, 0.7f);
     switch (kind) {
     case UiKeyKind_Auto:
-        if (paused) return {UiCapKind_PausedAuto, UiFonts::Bold, UiCol::PausedAutoInk, pausedAutoDot, 3};
-        return {UiCapKind_Signal, UiFonts::Bold, UiCol::White, whiteDot, 3};
+        if (paused) return {UiCapKind_PausedAuto, UiFonts::Bold, UiCol.PausedAutoInk, pausedAutoDot, 3};
+        return {UiCapKind_Signal, UiFonts::Bold, UiCol.White, whiteDot, 3};
     case UiKeyKind_Tap:
-        if (paused) return {UiCapKind_PausedTap, UiFonts::Bold, UiCol::TapeInk, pausedTapDot, 1};
-        return {UiCapKind_Tap, UiFonts::Bold, UiCol::White, whiteDot, 1};
+        if (paused) return {UiCapKind_PausedTap, UiFonts::Bold, UiCol.TapeInk, pausedTapDot, 1};
+        return {UiCapKind_Tap, UiFonts::Bold, UiCol.InkInverse, tapDot, 1};
     case UiKeyKind_SameAuto:
-        if (paused) return {UiCapKind_PausedAuto, UiFonts::SemiBold, UiCol::PausedAutoInk, pausedAutoDot, 3};
-        return {UiCapKind_Same, UiFonts::SemiBold, UiCol::SameInk, sameDot, 3};
+        if (paused) return {UiCapKind_PausedAuto, UiFonts::SemiBold, UiCol.PausedAutoInk, pausedAutoDot, 3};
+        return {UiCapKind_Same, UiFonts::SemiBold, UiCol.SameInk, sameDot, 3};
     case UiKeyKind_SameTap:
-        if (paused) return {UiCapKind_PausedTap, UiFonts::SemiBold, UiCol::TapeInk, pausedTapDot, 1};
-        return {UiCapKind_Same, UiFonts::SemiBold, UiCol::SameInk, sameDot, 1};
-    case UiKeyKind_Block: return {UiCapKind_Plain, UiFonts::Bold, UiCol::Block, 0, 0};
-    case UiKeyKind_Locked: return {UiCapKind_Locked, UiFonts::Medium, UiCol::Ink3, 0, 0};
-    default: return {UiCapKind_Plain, UiFonts::Medium, UiCol::Ink2, 0, 0};
+        if (paused) return {UiCapKind_PausedTap, UiFonts::SemiBold, UiCol.TapeInk, pausedTapDot, 1};
+        return {UiCapKind_Same, UiFonts::SemiBold, UiCol.SameInk, sameDot, 1};
+    case UiKeyKind_Block: return {UiCapKind_Plain, UiFonts::Bold, UiCol.Block, 0, 0};
+    case UiKeyKind_Locked: return {UiCapKind_Locked, UiFonts::Medium, UiCol.Ink3, 0, 0};
+    default: return {UiCapKind_Plain, UiFonts::Medium, UiCol.Ink2, 0, 0};
     }
 }
 
@@ -369,7 +370,7 @@ bool BeginPopupAnimated(const char* str_id, bool modal)
     // modals take the window rounding and border, popups the popup ones
     PushStyleVar(ImGuiStyleVar_WindowRounding, 14.f);
     PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
-    PushStyleColor(ImGuiCol_WindowBg, UiCol::Panel);
+    PushStyleColor(ImGuiCol_WindowBg, UiCol.Panel);
     const bool open =
         modal ? BeginPopupModal(str_id, nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -382,7 +383,7 @@ bool BeginPopupAnimated(const char* str_id, bool modal)
     }
     const ImGuiWindow* window = GetCurrentWindow();
     AddOuterBoxShadow(window->DrawList, window->Pos, window->Pos + window->Size, window->WindowRounding,
-                      ImVec2(0.f, 14.f), 36.f, UiWithAlpha(UiCol::Shadow, 0.22f * GetStyle().Alpha));
+                      ImVec2(0.f, 14.f), 36.f, UiWithAlpha(UiCol.Shadow, GetStyle().Alpha));
     s_popupContentVtxStart.push_back(window->DrawList->VtxBuffer.Size);
     return true;
 }
@@ -436,10 +437,14 @@ void ImGui::LoadUiFonts()
     io.FontDefault = UiFonts::Medium;
 }
 
-void ImGui::LoadUiStyle()
+void ImGui::LoadUiStyle(bool dark)
 {
+    UiCol = dark ? kUiDarkPalette : kUiLightPalette;
     ImGuiStyle& style = GetStyle();
-    StyleColorsLight(&style);
+    if (dark)
+        StyleColorsDark(&style);
+    else
+        StyleColorsLight(&style);
     style.WindowPadding = ImVec2(0.f, 0.f);
     style.FramePadding = ImVec2(10.f, 6.f);
     style.ItemSpacing = ImVec2(8.f, 0.f);
@@ -455,39 +460,39 @@ void ImGui::LoadUiStyle()
     style.PopupRounding = 14.f;
     style.ScrollbarRounding = 9.f;
 
-    static constexpr struct {
+    const struct {
         ImGuiCol idx;
         ImU32 col;
-    } s_colors[] = {
-        {ImGuiCol_Text, UiCol::Ink},
-        {ImGuiCol_TextDisabled, UiCol::Ink3},
-        {ImGuiCol_WindowBg, UiCol::Chassis},
+    } colors[] = {
+        {ImGuiCol_Text, UiCol.Ink},
+        {ImGuiCol_TextDisabled, UiCol.Ink3},
+        {ImGuiCol_WindowBg, UiCol.Chassis},
         {ImGuiCol_ChildBg, 0},
-        {ImGuiCol_PopupBg, UiCol::Panel},
-        {ImGuiCol_Border, UiCol::PanelStroke},
+        {ImGuiCol_PopupBg, UiCol.Panel},
+        {ImGuiCol_Border, UiCol.PanelStroke},
         {ImGuiCol_BorderShadow, 0},
-        {ImGuiCol_FrameBg, UiCol::Recess},
-        {ImGuiCol_FrameBgHovered, IM_COL32(0xCF, 0xC9, 0xBF, 0xFF)},
-        {ImGuiCol_FrameBgActive, UiCol::RecessStroke},
+        {ImGuiCol_FrameBg, UiCol.Recess},
+        {ImGuiCol_FrameBgHovered, UiCol.RecessHover},
+        {ImGuiCol_FrameBgActive, UiCol.RecessStroke},
         {ImGuiCol_ScrollbarBg, 0},
-        {ImGuiCol_ScrollbarGrab, UiCol::CapLip},
-        {ImGuiCol_ScrollbarGrabHovered, UiCol::Ink3},
-        {ImGuiCol_ScrollbarGrabActive, UiCol::Ink2},
-        {ImGuiCol_Button, UiCol::Cap},
-        {ImGuiCol_ButtonHovered, UiCol::RowHover},
-        {ImGuiCol_ButtonActive, UiCol::Recess},
-        {ImGuiCol_Header, UiCol::RowHover},
-        {ImGuiCol_HeaderHovered, UiCol::RowHover},
-        {ImGuiCol_HeaderActive, UiCol::Recess},
-        {ImGuiCol_Separator, UiCol::Divider},
-        {ImGuiCol_SeparatorHovered, UiCol::Line},
-        {ImGuiCol_SeparatorActive, UiCol::Ink3},
-        {ImGuiCol_InputTextCursor, UiCol::Ink},
-        {ImGuiCol_TextSelectedBg, UiWithAlpha(UiCol::Signal, 0.3f)},
-        {ImGuiCol_NavCursor, UiWithAlpha(UiCol::Signal, 0.6f)},
-        {ImGuiCol_ModalWindowDimBg, UiWithAlpha(UiCol::Chassis, 0.6f)},
+        {ImGuiCol_ScrollbarGrab, UiCol.CapLip},
+        {ImGuiCol_ScrollbarGrabHovered, UiCol.Ink3},
+        {ImGuiCol_ScrollbarGrabActive, UiCol.Ink2},
+        {ImGuiCol_Button, UiCol.Cap},
+        {ImGuiCol_ButtonHovered, UiCol.RowHover},
+        {ImGuiCol_ButtonActive, UiCol.Recess},
+        {ImGuiCol_Header, UiCol.RowHover},
+        {ImGuiCol_HeaderHovered, UiCol.RowHover},
+        {ImGuiCol_HeaderActive, UiCol.Recess},
+        {ImGuiCol_Separator, UiCol.Divider},
+        {ImGuiCol_SeparatorHovered, UiCol.Line},
+        {ImGuiCol_SeparatorActive, UiCol.Ink3},
+        {ImGuiCol_InputTextCursor, UiCol.Ink},
+        {ImGuiCol_TextSelectedBg, UiWithAlpha(UiCol.Signal, 0.3f)},
+        {ImGuiCol_NavCursor, UiWithAlpha(UiCol.Signal, 0.6f)},
+        {ImGuiCol_ModalWindowDimBg, UiWithAlpha(UiCol.Chassis, 0.6f)},
     };
-    for (const auto& [idx, col] : s_colors)
+    for (const auto& [idx, col] : colors)
         style.Colors[idx] = ColorConvertU32ToFloat4(col);
 }
 
@@ -571,10 +576,10 @@ ImVec2 ImGui::AddCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, UiCa
 {
     CapColors colors = CapPalette(kind);
     const bool outlineHover = kind == UiCapKind_Plain;
-    if (!outlineHover && kind != UiCapKind_Locked) colors.face = UiMixColor(colors.face, UiCol::White, 0.1f * hoverT);
+    if (!outlineHover && kind != UiCapKind_Locked) colors.face = UiMixColor(colors.face, UiCol.White, 0.1f * hoverT);
     const ImVec2 face = DrawCap(dl, min, size, radii, colors, pressT);
     if (outlineHover && hoverT > 0.01f)
-        AddRoundRect(dl, face, face + size, UiWithAlpha(UiCol::Ink2, hoverT), radii, 1.5f);
+        AddRoundRect(dl, face, face + size, UiWithAlpha(UiCol.Ink2, hoverT), radii, 1.5f);
     return face;
 }
 
@@ -649,8 +654,8 @@ void ImGui::AddGlyph(ImDrawList* dl, const ImVec2& c, float size, UiGlyph glyph,
 
 void ImGui::AddRecess(ImDrawList* dl, const ImVec2& min, const ImVec2& max, float rounding)
 {
-    dl->AddRectFilled(min, max, UiCol::Recess, rounding);
-    dl->AddRect(min, max, UiCol::RecessStroke, rounding);
+    dl->AddRectFilled(min, max, UiCol.Recess, rounding);
+    dl->AddRect(min, max, UiCol.RecessStroke, rounding);
 }
 
 void ImGui::AddRateBadge(ImDrawList* dl, const ImVec2& pointerTip, const char* text, float alpha, float textScale)
@@ -660,13 +665,13 @@ void ImGui::AddRateBadge(ImDrawList* dl, const ImVec2& pointerTip, const char* t
     const float width = ImMax(60.f, UiTextWidth(UiFonts::Bold, 11.f, text) + 20.f);
     const ImVec2 max(pointerTip.x + width * 0.5f, pointerTip.y - kPointerH);
     const ImVec2 min(pointerTip.x - width * 0.5f, max.y - 22.f);
-    const ImU32 fill = UiWithAlpha(UiCol::Ink, alpha);
+    const ImU32 fill = UiWithAlpha(UiCol.Ink, alpha);
     dl->AddRectFilled(min, max, fill, 5.f);
     const float pointerBaseY = max.y - kSeamOverlap;
     // clockwise, or ImGui's anti-aliasing fringe goes inward
     dl->AddTriangleFilled(ImVec2(pointerTip.x - kPointerHalfW, pointerBaseY),
                           ImVec2(pointerTip.x + kPointerHalfW, pointerBaseY), pointerTip, fill);
-    AddTextCentered(dl, UiFonts::Bold, 11.f * textScale, (min + max) * 0.5f, UiWithAlpha(UiCol::White, alpha), text);
+    AddTextCentered(dl, UiFonts::Bold, 11.f * textScale, (min + max) * 0.5f, UiWithAlpha(UiCol.InkInverse, alpha), text);
 }
 
 float ImGui::TapeWidth(const char* text)
@@ -676,8 +681,8 @@ float ImGui::TapeWidth(const char* text)
 
 void ImGui::AddTape(ImDrawList* dl, const ImVec2& pos, const char* text)
 {
-    dl->AddRectFilled(pos, pos + ImVec2(TapeWidth(text), kTapeHeight), UiCol::Tape, 2.f);
-    AddTapeText(dl, pos, UiCol::TapeInk, text);
+    dl->AddRectFilled(pos, pos + ImVec2(TapeWidth(text), kTapeHeight), UiCol.Tape, 2.f);
+    AddTapeText(dl, pos, UiCol.TapeInk, text);
 }
 
 UiCapHit ImGui::UiCapFrame(const char* id, const ImVec2& pos, const ImVec2& size, UiCapKind kind, float rounding)
@@ -695,9 +700,9 @@ bool ImGui::UiButton(const char* id, const ImVec2& pos, const ImVec2& size, cons
 {
     const UiCapHit hit =
         UiCapFrame(id, pos, size, kind == UiButtonKind_Primary ? UiCapKind_Signal : UiCapKind_Plain, 8.f);
-    const ImU32 col = kind == UiButtonKind_Primary  ? UiCol::White
-                      : kind == UiButtonKind_Danger ? UiCol::Block
-                                                    : UiCol::Ink;
+    const ImU32 col = kind == UiButtonKind_Primary  ? UiCol.White
+                      : kind == UiButtonKind_Danger ? UiCol.Block
+                                                    : UiCol.Ink;
     AddTextCentered(GetWindowDrawList(), UiFonts::Bold, 13.f, hit.face + size * 0.5f, col, label);
     return hit.clicked;
 }
@@ -706,7 +711,7 @@ bool ImGui::UiCapIconButton(const char* id, const ImVec2& pos, float size, UiGly
 {
     const UiCapHit hit = UiCapFrame(id, pos, ImVec2(size, size), UiCapKind_Plain, 6.f);
     AddGlyph(GetWindowDrawList(), hit.face + ImVec2(size, size) * 0.5f, GlyphSize(glyph) * size / 30.f, glyph,
-             UiMixColor(UiCol::Ink2, UiCol::Ink, hit.hoverT));
+             UiMixColor(UiCol.Ink2, UiCol.Ink, hit.hoverT));
     return hit.clicked;
 }
 
@@ -719,9 +724,9 @@ bool ImGui::UiIconButton(const char* id, const ImVec2& pos, float size, UiGlyph 
 
     ImDrawList* dl = GetWindowDrawList();
     if (hoverT > 0.01f)
-        dl->AddRectFilled(pos, pos + box, UiWithAlpha(UiMixColor(UiCol::Recess, UiCol::RecessStroke, pressT), hoverT),
+        dl->AddRectFilled(pos, pos + box, UiWithAlpha(UiMixColor(UiCol.Recess, UiCol.RecessStroke, pressT), hoverT),
                           8.f);
-    const ImU32 col = UiMixColor(UiCol::Ink2, glyph == UiGlyph_Close ? UiCol::Block : UiCol::Ink, hoverT);
+    const ImU32 col = UiMixColor(UiCol.Ink2, glyph == UiGlyph_Close ? UiCol.Block : UiCol.Ink, hoverT);
     AddGlyph(dl, pos + box * 0.5f, GlyphSize(glyph) * size / 30.f * (1.f - 0.1f * pressT), glyph, col);
     return hit.clicked;
 }
@@ -736,9 +741,9 @@ bool ImGui::UiOutlineButton(const char* id, const ImVec2& pos, const char* label
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 max = pos + size;
     if (hoverT > 0.01f)
-        dl->AddRectFilled(pos, max, UiWithAlpha(UiMixColor(UiCol::Recess, UiCol::RecessStroke, pressT), hoverT), 2.f);
-    dl->AddRect(pos, max, UiCol::Ink3, 2.f);
-    AddTapeText(dl, pos, UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), label);
+        dl->AddRectFilled(pos, max, UiWithAlpha(UiMixColor(UiCol.Recess, UiCol.RecessStroke, pressT), hoverT), 2.f);
+    dl->AddRect(pos, max, UiCol.Ink3, 2.f);
+    AddTapeText(dl, pos, UiMixColor(UiCol.Ink2, UiCol.Ink, hoverT), label);
     return hit.clicked;
 }
 
@@ -750,12 +755,12 @@ bool ImGui::UiBrowseButton(const char* id, const ImVec2& pos, const ImVec2& size
     ImDrawList* dl = GetWindowDrawList();
     const float centerY = hit.face.y + size.y * 0.5f;
     AddGlyph(dl, ImVec2(hit.face.x + kPadX + kGlyphSize * 0.5f, centerY), kGlyphSize, UiGlyph_Folder,
-             UiMixColor(UiCol::Ink2, UiCol::Signal, hit.hoverT));
+             UiMixColor(UiCol.Ink2, UiCol.Signal, hit.hoverT));
     auto topForCenteredY = [centerY](ImFont* font, float fontSize, const char* text) {
         return ImFloor(centerY - font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, text).y * 0.5f);
     };
     const float labelX = hit.face.x + kPadX + kGlyphSize + kGlyphGap;
-    dl->AddText(UiFonts::Bold, 13.f, ImVec2(labelX, topForCenteredY(UiFonts::Bold, 13.f, label)), UiCol::Ink, label);
+    dl->AddText(UiFonts::Bold, 13.f, ImVec2(labelX, topForCenteredY(UiFonts::Bold, 13.f, label)), UiCol.Ink, label);
     if (hint && *hint) {
         const float hintX = hit.face.x + size.x - kPadX - UiTextWidth(UiFonts::Medium, 12.f, hint);
         dl->AddText(UiFonts::Medium, 12.f, ImVec2(hintX, topForCenteredY(UiFonts::Medium, 12.f, hint)), hintCol, hint);
@@ -774,17 +779,17 @@ bool ImGui::UiToggle(const char* id, const ImVec2& pos, bool on)
 
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 max = pos + kUiToggleSize;
-    dl->AddRectFilled(pos, max, UiCol::Recess, kTrackR);
+    dl->AddRectFilled(pos, max, UiCol.Recess, kTrackR);
     if (offT > 0.f)
-        dl->AddRect(pos, max, UiWithAlpha(UiMixColor(UiCol::RecessStroke, UiCol::Ink3, 0.6f * hoverT), offT), kTrackR);
+        dl->AddRect(pos, max, UiWithAlpha(UiMixColor(UiCol.RecessStroke, UiCol.Ink3, 0.6f * hoverT), offT), kTrackR);
     if (eased > 0.f)
-        dl->AddRectFilled(pos, max, UiWithAlpha(UiMixColor(UiCol::Signal, UiCol::White, 0.08f * hoverT), eased),
+        dl->AddRectFilled(pos, max, UiWithAlpha(UiMixColor(UiCol.Signal, UiCol.White, 0.08f * hoverT), eased),
                           kTrackR);
 
     const ImVec2 knob(pos.x + kTrackR + kKnobTravel * eased, pos.y + kTrackR);
-    if (offT > 0.f) dl->AddCircleFilled(knob + ImVec2(0.f, kKnobLipDepth), kKnobR, UiWithAlpha(UiCol::CapLip, offT));
-    dl->AddCircleFilled(knob, kKnobR, UiMixColor(UiCol::Cap, UiCol::White, eased));
-    if (offT > 0.f) dl->AddCircle(knob, kKnobR - 0.5f, UiWithAlpha(UiCol::CapStroke, offT));
+    if (offT > 0.f) dl->AddCircleFilled(knob + ImVec2(0.f, kKnobLipDepth), kKnobR, UiWithAlpha(UiCol.CapLip, offT));
+    dl->AddCircleFilled(knob, kKnobR, UiMixColor(UiCol.Cap, UiCol.White, eased));
+    if (offT > 0.f) dl->AddCircle(knob, kKnobR - 0.5f, UiWithAlpha(UiCol.CapStroke, offT));
     return hit.clicked;
 }
 
@@ -805,14 +810,14 @@ bool ImGui::UiTab(const char* id, const ImVec2& pos, const char* label, bool sel
     if (selected) {
         face = AddCap(dl, pos, size, UiCapKind_Plain, 8.f, pressT);
     } else {
-        dl->AddRectFilled(pos, pos + size, UiMixColor(UiCol::Recess, UiCol::RecessStroke, 0.3f * hoverT), 8.f);
-        dl->AddRect(pos, pos + size, UiCol::RecessStroke, 8.f);
+        dl->AddRectFilled(pos, pos + size, UiMixColor(UiCol.Recess, UiCol.RecessStroke, 0.3f * hoverT), 8.f);
+        dl->AddRect(pos, pos + size, UiCol.RecessStroke, 8.f);
     }
 
-    const ImU32 dot = !lit ? UiCol::DotOff : dim ? UiCol::Ink3 : UiCol::Signal;
+    const ImU32 dot = !lit ? UiCol.DotOff : dim ? UiCol.Ink3 : UiCol.Signal;
     dl->AddCircleFilled(face + ImVec2(16.f, 17.f), 3.f, dot);
     dl->AddText(selected ? UiFonts::Bold : UiFonts::SemiBold, 13.f, face + ImVec2(kTabTextX, 9.f),
-                selected ? UiCol::Ink : UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), label);
+                selected ? UiCol.Ink : UiMixColor(UiCol.Ink2, UiCol.Ink, hoverT), label);
     return hit.clicked;
 }
 
@@ -849,7 +854,7 @@ bool ImGui::UiSegmented(const char* id, const ImVec2& pos, const ImVec2& size, s
         const char* text = uppercase ? (const char*)upper : labels[i];
         const float hoverT = UiAnim(AnimId(hit.id, AnimSlot_Hover, i), hovered == i ? 1.f : 0.f, 18.f);
         const float capUnderText = ImSaturate(1.f - fabsf(slide - (float)i));
-        const ImU32 col = UiMixColor(UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), CapInk(kind), capUnderText);
+        const ImU32 col = UiMixColor(UiMixColor(UiCol.Ink2, UiCol.Ink, hoverT), CapInk(kind), capUnderText);
         const bool isChosen = i == chosen;
         AddTextCentered(dl, isChosen ? UiFonts::Bold : UiFonts::SemiBold, textSize,
                         ImVec2(pos.x + segW * ((float)i + 0.5f), centerY + (isChosen ? 3.f * pressT : 0.f)), col, text,
@@ -891,7 +896,7 @@ bool ImGui::UiSegmentedFlags(const char* id, const ImVec2& pos, const ImVec2& si
 
         const AsciiUpper upper(segment.label);
         const char* text = uppercase ? (const char*)upper : segment.label;
-        const ImU32 col = UiMixColor(UiMixColor(UiCol::Ink2, UiCol::Ink, hoverT), CapInk(UiCapKind_Plain), litT);
+        const ImU32 col = UiMixColor(UiMixColor(UiCol.Ink2, UiCol.Ink, hoverT), CapInk(UiCapKind_Plain), litT);
         AddTextCentered(dl, lit ? UiFonts::Bold : UiFonts::SemiBold, textSize,
                         ImVec2(segX + segW * 0.5f, centerY + (lit ? 3.f * pressT : 0.f)), col, text, tracking);
     }
@@ -917,11 +922,11 @@ bool ImGui::UiStepper(const char* id, const ImVec2& pos, const ImVec2& size, con
     ImDrawList* dl = GetWindowDrawList();
     AddRecess(dl, pos, pos + size, 7.f);
     const float cy = pos.y + size.y * 0.5f;
-    const ImU32 leftCol = index > 0 ? UiMixColor(UiCol::Ink3, UiCol::Ink, leftT) : UiCol::DotOff;
-    const ImU32 rightCol = index < last ? UiMixColor(UiCol::Ink3, UiCol::Ink, rightT) : UiCol::DotOff;
+    const ImU32 leftCol = index > 0 ? UiMixColor(UiCol.Ink3, UiCol.Ink, leftT) : UiCol.DotOff;
+    const ImU32 rightCol = index < last ? UiMixColor(UiCol.Ink3, UiCol.Ink, rightT) : UiCol.DotOff;
     AddTextCentered(dl, UiFonts::SemiBold, 15.f, ImVec2(pos.x + 12.f, cy), leftCol, "\xE2\x80\xB9");
     AddTextCentered(dl, UiFonts::SemiBold, 15.f, ImVec2(pos.x + size.x - 12.f, cy), rightCol, "\xE2\x80\xBA");
-    AddTextCentered(dl, UiFonts::Bold, 12.f, ImVec2(midX, cy), UiCol::Ink, value);
+    AddTextCentered(dl, UiFonts::Bold, 12.f, ImVec2(midX, cy), UiCol.Ink, value);
     return changed;
 }
 
@@ -935,14 +940,14 @@ bool ImGui::UiPowerButton(const char* id, const ImVec2& center, bool on)
     const float t = hit.Anim(AnimSlot_State, on, 12.f);
 
     const CapColors colors = {
-        UiMixColor(UiMixColor(UiCol::Cap, UiCol::Signal, t), UiCol::White, 0.1f * hoverT),
-        UiMixColor(UiCol::CapLip, UiCol::SignalLip, t),
-        UiWithAlpha(UiCol::CapStroke, 1.f - t),
+        UiMixColor(UiMixColor(UiCol.Cap, UiCol.Signal, t), UiCol.White, 0.1f * hoverT),
+        UiMixColor(UiCol.CapLip, UiCol.SignalLip, t),
+        UiWithAlpha(UiCol.CapStroke, 1.f - t),
     };
     const float radii[UiCorner_COUNT] = {r, r, r, r};
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 face = DrawCap(dl, min, size, radii, colors, pressT);
-    AddGlyph(dl, face + ImVec2(r, r), 28.f, UiGlyph_Power, UiMixColor(UiCol::Ink3, UiCol::White, t));
+    AddGlyph(dl, face + ImVec2(r, r), 28.f, UiGlyph_Power, UiMixColor(UiCol.Ink3, UiCol.White, t));
     return hit.clicked;
 }
 
@@ -976,16 +981,16 @@ bool ImGui::UiKnob(const char* id, const ImVec2& center, float& t, const char* m
         const bool major = i % 5 == 0;
         const ImVec2 d = dirAt(f);
         dl->AddLine(center + d * (major ? 44.f : 48.f), center + d * 52.f,
-                    f <= shown + 0.001f ? UiCol::Ink2 : UiCol::Ink3, major ? 1.6f : 1.1f);
+                    f <= shown + 0.001f ? UiCol.Ink2 : UiCol.Ink3, major ? 1.6f : 1.1f);
     }
-    AddTextCentered(dl, UiFonts::SemiBold, 9.f, ImVec2(center.x - 44.f, center.y + 44.5f), UiCol::Ink3, minLabel);
-    AddTextCentered(dl, UiFonts::SemiBold, 9.f, ImVec2(center.x + 44.f, center.y + 44.5f), UiCol::Ink3, maxLabel);
+    AddTextCentered(dl, UiFonts::SemiBold, 9.f, ImVec2(center.x - 44.f, center.y + 44.5f), UiCol.Ink3, minLabel);
+    AddTextCentered(dl, UiFonts::SemiBold, 9.f, ImVec2(center.x + 44.f, center.y + 44.5f), UiCol.Ink3, maxLabel);
 
     AddCap(dl, min, ImVec2(r * 2.f, r * 2.f), UiCapKind_Plain, r, 0.f, 0.5f * hoverT);
-    dl->AddCircle(center, 26.f, UiCol::KnobRing, 0, 1.5f);
+    dl->AddCircle(center, 26.f, UiCol.KnobRing, 0, 1.5f);
     const ImVec2 d = dirAt(shown);
     const ImVec2 a = center + d * 30.f, b = center + d * 10.f;
-    const ImU32 pointer = dim ? UiCol::Ink3 : UiCol::Signal;
+    const ImU32 pointer = dim ? UiCol.Ink3 : UiCol.Signal;
     dl->AddLine(a, b, pointer, 4.f);
     dl->AddCircleFilled(a, 2.f, pointer);
     dl->AddCircleFilled(b, 2.f, pointer);
@@ -1009,8 +1014,8 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 face = AddCap(dl, pos, size, look.cap, radii, pressT, block ? 0.f : hoverT);
     if (block) {
-        AddHatchRounded(dl, face, face + size, UiCol::Block, 7.f, 1.2f, radii);
-        if (hoverT > 0.01f) AddRoundRect(dl, face, face + size, UiWithAlpha(UiCol::Ink2, hoverT), radii, 1.5f);
+        AddHatchRounded(dl, face, face + size, UiCol.Block, 7.f, 1.2f, radii);
+        if (hoverT > 0.01f) AddRoundRect(dl, face, face + size, UiWithAlpha(UiCol.Ink2, hoverT), radii, 1.5f);
     }
 
     const char* label = desc.label ? desc.label : "";
@@ -1027,20 +1032,20 @@ bool ImGui::UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const U
         const ImVec2 at = face + ImVec2(9.f, 8.f);
         const float labelW = UiTextWidth(look.font, 12.f, label);
         if (block)
-            dl->AddRectFilled(face + ImVec2(5.f, 5.f), face + ImVec2(5.f + ImMax(16.f, labelW + 8.f), 23.f), UiCol::Cap,
+            dl->AddRectFilled(face + ImVec2(5.f, 5.f), face + ImVec2(5.f + ImMax(16.f, labelW + 8.f), 23.f), UiCol.Cap,
                               3.f);
         dl->AddText(look.font, 12.f, at, look.ink, label);
         if (desc.kind == UiKeyKind_Locked)
-            AddGlyph(dl, ImVec2(at.x + labelW + (*label ? 9.f : 4.f), at.y + 4.5f), 12.f, UiGlyph_Padlock, UiCol::Ink3);
+            AddGlyph(dl, ImVec2(at.x + labelW + (*label ? 9.f : 4.f), at.y + 4.5f), 12.f, UiGlyph_Padlock, UiCol.Ink3);
         for (int i = 0; i < look.dots; i++)
             dl->AddCircleFilled(face + ImVec2(12.f + 7.f * (float)i, size.y - 12.f), 2.f, look.dot);
     }
 
     for (int i = 0; i < (int)desc.marks.size(); i++) {
         const ImVec2 c = face + ImVec2(size.x - 12.5f - 17.f * (float)i, 13.5f);
-        dl->AddCircleFilled(c, 7.5f, desc.paused ? UiCol::Ink3 : UiCol::Ink);
+        dl->AddCircleFilled(c, 7.5f, desc.paused ? UiCol.Ink3 : UiCol.Ink);
         const char letter[2] = {desc.marks[i], 0};
-        AddTextCentered(dl, UiFonts::Bold, 9.f, c, UiCol::White, letter);
+        AddTextCentered(dl, UiFonts::Bold, 9.f, c, UiCol.InkInverse, letter);
     }
     return hit.clicked && interactive;
 }
@@ -1051,7 +1056,7 @@ void ImGui::AddKeySwatch(ImDrawList* dl, const ImVec2& pos, UiKeyKind kind)
     const float radii[UiCorner_COUNT] = {5.f, 5.f, 5.f, 5.f};
     const KeyLook look = GetKeyLook(kind, false);
     AddCap(dl, pos, size, look.cap, radii);
-    if (kind == UiKeyKind_Block) AddHatchRounded(dl, pos, pos + size, UiCol::Block, 6.f, 1.2f, radii);
+    if (kind == UiKeyKind_Block) AddHatchRounded(dl, pos, pos + size, UiCol.Block, 6.f, 1.2f, radii);
     for (int i = 0; i < look.dots; i++)
         dl->AddCircleFilled(pos + ImVec2(6.5f + 5.f * (float)i, 14.5f), 1.5f, look.dot);
 }
@@ -1059,7 +1064,7 @@ void ImGui::AddKeySwatch(ImDrawList* dl, const ImVec2& pos, UiKeyKind kind)
 bool ImGui::UiToggleRow(const char* id, const char* label, bool on, float width)
 {
     const ImVec2 pos = GetCursorScreenPos();
-    GetWindowDrawList()->AddText(UiFonts::SemiBold, 13.f, pos + ImVec2(0.f, 5.f), UiCol::Ink, label);
+    GetWindowDrawList()->AddText(UiFonts::SemiBold, 13.f, pos + ImVec2(0.f, 5.f), UiCol.Ink, label);
     const bool clicked = UiToggle(id, ImVec2(pos.x + width - kUiToggleSize.x, pos.y), on);
     EndPanelRow(pos, width);
     return clicked;
@@ -1068,7 +1073,7 @@ bool ImGui::UiToggleRow(const char* id, const char* label, bool on, float width)
 bool ImGui::UiStepperRow(const char* id, const char* label, const char* value, int& index, int count, float width)
 {
     const ImVec2 pos = GetCursorScreenPos();
-    GetWindowDrawList()->AddText(UiFonts::SemiBold, 13.f, pos + ImVec2(0.f, 6.f), UiCol::Ink, label);
+    GetWindowDrawList()->AddText(UiFonts::SemiBold, 13.f, pos + ImVec2(0.f, 6.f), UiCol.Ink, label);
     const bool changed = UiStepper(id, ImVec2(pos.x + width - 112.f, pos.y), ImVec2(112.f, 28.f), value, index, count);
     EndPanelRow(pos, width);
     return changed;
@@ -1103,14 +1108,14 @@ bool ImGui::UiListRow(const char* id, const char* label, const char* hint, UiLis
     ImDrawList* dl = GetWindowDrawList();
     if (hoverT > 0.01f)
         dl->AddRectFilled(ImVec2(pos.x - 10.f, pos.y), ImVec2(pos.x + width + 10.f, pos.y + 30.f),
-                          UiWithAlpha(UiMixColor(UiCol::RowHover, UiCol::Recess, 0.5f * pressT), hoverT), 6.f);
+                          UiWithAlpha(UiMixColor(UiCol.RowHover, UiCol.Recess, 0.5f * pressT), hoverT), 6.f);
     if (dotCol) dl->AddCircleFilled(pos + ImVec2(6.f, 15.f), 3.f, disabled ? UiWithAlpha(dotCol, 0.4f) : dotCol);
-    dl->AddText(font, 13.f, ImVec2(pos.x + labelX, pos.y + 8.f), disabled ? UiCol::Ink3 : UiCol::Ink, label);
+    dl->AddText(font, 13.f, ImVec2(pos.x + labelX, pos.y + 8.f), disabled ? UiCol.Ink3 : UiCol.Ink, label);
     if (hasHint) {
         const float alpha = hintAlways ? 1.f : hoverT;
         if (alpha > 0.01f)
             dl->AddText(UiFonts::Medium, 10.5f, ImVec2(pos.x + width - hintW, pos.y + 10.f),
-                        UiWithAlpha(UiCol::Ink3, alpha), hint);
+                        UiWithAlpha(UiCol.Ink3, alpha), hint);
     }
     return hit.clicked && !disabled;
 }
@@ -1128,7 +1133,7 @@ void ImGui::UiDivider(float width)
     constexpr float kMargin = 8.f, kThickness = 1.f;
     const ImVec2 pos = GetCursorScreenPos();
     GetWindowDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + kMargin),
-                                       ImVec2(pos.x + width, pos.y + (kMargin + kThickness)), UiCol::Divider);
+                                       ImVec2(pos.x + width, pos.y + (kMargin + kThickness)), UiCol.Divider);
     Dummy(ImVec2(width, kMargin + kThickness + kMargin));
 }
 
@@ -1138,7 +1143,7 @@ bool ImGui::UiSearchField(const char* id, char* buf, size_t bufSize, float width
     const ImVec2 pos = GetCursorScreenPos();
     ImDrawList* dl = GetWindowDrawList();
     AddRecess(dl, pos, pos + ImVec2(width, kHeight), 8.f);
-    AddGlyph(dl, pos + ImVec2(19.5f, 17.5f), 13.f, UiGlyph_Search, UiCol::Ink3);
+    AddGlyph(dl, pos + ImVec2(19.5f, 17.5f), 13.f, UiGlyph_Search, UiCol.Ink3);
 
     SetCursorScreenPos(ImVec2(pos.x + kTextX, pos.y));
     PushFont(UiFonts::Medium, kFontSize);

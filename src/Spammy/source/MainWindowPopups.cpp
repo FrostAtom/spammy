@@ -64,7 +64,7 @@ float KeyMenuContentHeight(size_t rows)
 
 void AddDivider(ImDrawList* dl, const ImVec2& pos, float width)
 {
-    dl->AddLine(pos + ImVec2(0.f, .5f), pos + ImVec2(width, .5f), UiCol::Divider);
+    dl->AddLine(pos + ImVec2(0.f, .5f), pos + ImVec2(width, .5f), UiCol.Divider);
 }
 
 bool MenuRow(const char* id, const char* label, ImU32 labelCol, float width)
@@ -73,7 +73,7 @@ bool MenuRow(const char* id, const char* label, ImU32 labelCol, float width)
     const bool clicked = InvisibleButton(id, ImVec2(width, 30.f));
     ImDrawList* dl = GetWindowDrawList();
     if (IsItemHovered())
-        dl->AddRectFilled(GetItemRectMin() - ImVec2(10.f, 0.f), GetItemRectMax() + ImVec2(10.f, 0.f), UiCol::RowHover,
+        dl->AddRectFilled(GetItemRectMin() - ImVec2(10.f, 0.f), GetItemRectMax() + ImVec2(10.f, 0.f), UiCol.RowHover,
                           6.f);
     dl->AddText(UiFonts::Medium, 13.f, pos + ImVec2(0.f, 7.f), labelCol, label);
     return clicked;
@@ -112,7 +112,7 @@ void MainWindow::DrawKeyMenu(const ImVec2& o, Profile& profile)
 
     char text[128];
     snprintf(text, sizeof(text), "Key %s", keyLabel);
-    dl->AddText(UiFonts::Heavy, 18.f, p + ImVec2(52.f, 0.f), UiCol::Ink, text);
+    dl->AddText(UiFonts::Heavy, 18.f, p + ImVec2(52.f, 0.f), UiCol.Ink, text);
     snprintf(text, sizeof(text), "%s \xC2\xB7 %s", profile.name.c_str(), ModsName(KeyMod_None));
     AddSilk(dl, p + ImVec2(52.f, 26.f), text);
     AddDivider(dl, p + ImVec2(0.f, 58.f), w);
@@ -132,7 +132,7 @@ void MainWindow::DrawKeyMenu(const ImVec2& o, Profile& profile)
     for (size_t i = 0; i < rows; i++) {
         const unsigned mods = kMenuMods[i];
         const float y = kKeyMenuRowsY + (float)i * kKeyMenuRowStep;
-        dl->AddText(UiFonts::Bold, 13.f, p + ImVec2(0.f, y + 8.f), UiCol::Ink, ModsName(mods));
+        dl->AddText(UiFonts::Bold, 13.f, p + ImVec2(0.f, y + 8.f), UiCol.Ink, ModsName(mods));
         PushID((int)mods);
         int index = ActionIndex(kModActions, slots[mods].action);
         if (UiSegmented("##mods", p + ImVec2(segmentsX, y), segmentSize, kModLabels, index, UiLabelCase_AsIs,
@@ -149,11 +149,11 @@ void MainWindow::DrawKeyMenu(const ImVec2& o, Profile& profile)
         _keyMenuShowsCombos = !_keyMenuShowsCombos;
     const bool linkHovered = IsItemHovered();
     if (linkHovered) SetMouseCursor(ImGuiMouseCursor_Hand);
-    dl->AddText(UiFonts::SemiBold, 12.f, p + ImVec2(0.f, linkY), linkHovered ? UiCol::Ink : UiCol::Ink2, link);
+    dl->AddText(UiFonts::SemiBold, 12.f, p + ImVec2(0.f, linkY), linkHovered ? UiCol.Ink : UiCol.Ink2, link);
 
     AddDivider(dl, p + ImVec2(0.f, linkY + 28.f), w);
     snprintf(text, sizeof(text), "Combos match exactly: Shift+Ctrl+%s skips the Shift row.", keyLabel);
-    dl->AddText(UiFonts::Medium, 10.5f, p + ImVec2(0.f, linkY + 42.f), UiCol::Ink3, text);
+    dl->AddText(UiFonts::Medium, 10.5f, p + ImVec2(0.f, linkY + 42.f), UiCol.Ink3, text);
 
     SetCursorScreenPos(p);
     Dummy(ImVec2(w, KeyMenuContentHeight(rows)));
@@ -192,7 +192,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, Profile& profile)
             if (!MatchesFilter(app, s_search)) continue;
             PushID(app.c_str());
             SetNextItemAllowOverlap();
-            UiListRow("##row", app.c_str(), nullptr, UiListRowFlags_Bold, UiCol::Signal);
+            UiListRow("##row", app.c_str(), nullptr, UiListRowFlags_Bold, UiCol.Signal);
             const ImVec2 rowMin = GetItemRectMin();
             const ImVec2 rowMax = GetItemRectMax();
             const ImVec2 cursor = GetCursorScreenPos();
@@ -224,7 +224,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, Profile& profile)
     }
     if (!anyShown) {
         const ImVec2 pos = GetCursorScreenPos();
-        GetWindowDrawList()->AddText(UiFonts::Medium, 13.f, pos + ImVec2(0.f, 7.f), UiCol::Ink3,
+        GetWindowDrawList()->AddText(UiFonts::Medium, 13.f, pos + ImVec2(0.f, 7.f), UiCol.Ink3,
                                      s_search[0] ? "no matches" : "nothing running");
         Dummy(ImVec2(1.f, 30.f));
     }
@@ -235,7 +235,7 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, Profile& profile)
         UiBrowseButton("##browse", GetCursorScreenPos(), ImVec2(w, 36.f), "Browse for an .exe file");
     if (const char* rejection = _appsBrowseRejection.Visible(GetTickCount())) {
         const ImVec2 pos = GetCursorScreenPos() + ImVec2(0.f, 6.f);
-        GetWindowDrawList()->AddText(UiFonts::Medium, 11.f, pos, UiCol::Block, rejection, nullptr, w);
+        GetWindowDrawList()->AddText(UiFonts::Medium, 11.f, pos, UiCol.Block, rejection, nullptr, w);
         Dummy(ImVec2(w, UiFonts::Medium->CalcTextSizeA(11.f, FLT_MAX, w, rejection).y + 6.f));
     }
 
@@ -279,6 +279,7 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     stepEnum("##mouse", "Mouse", MouseFormName, MouseForm_Count, sConfig.mouse);
     if (stepEnum("##uisize", "Window size", UiSizeName, UiSize_Count, sConfig.uiSize))
         SetScaleFactor(UiSizeFactor(sConfig.uiSize));
+    if (stepEnum("##theme", "Theme", UiThemeName, UiTheme_Count, sConfig.theme)) _themeStale = true;
     UiDivider(w);
 
     ImDrawList* dl = GetWindowDrawList();
@@ -287,9 +288,9 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     if (InvisibleButton("##github", ImVec2(githubW + 22.f, 20.f))) LaunchUrl(L"https://github.com/FrostAtom/spammy");
     const bool githubHovered = IsItemHovered();
     if (githubHovered) SetMouseCursor(ImGuiMouseCursor_Hand);
-    dl->AddText(UiFonts::SemiBold, 13.f, p + ImVec2(0.f, 2.f), UiCol::Ink, "GitHub");
+    dl->AddText(UiFonts::SemiBold, 13.f, p + ImVec2(0.f, 2.f), UiCol.Ink, "GitHub");
     AddGlyph(dl, p + ImVec2(githubW + 12.f, 10.f), 10.f, UiGlyph_ExternalLink,
-             githubHovered ? UiCol::Ink : UiCol::Ink2);
+             githubHovered ? UiCol.Ink : UiCol.Ink2);
     AddSilk(dl, ImVec2(p.x + w - SilkWidth(BuildLabel()), p.y + 5.f), BuildLabel());
 
     if (IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
@@ -351,10 +352,10 @@ void MainWindow::DrawTabMenu(const ImVec2& o)
         }
         if (s_renaming && s_renameFailed) {
             const ImVec2 pos = GetCursorScreenPos();
-            GetWindowDrawList()->AddText(UiFonts::Medium, 10.5f, pos, UiCol::Block, "name taken or empty");
+            GetWindowDrawList()->AddText(UiFonts::Medium, 10.5f, pos, UiCol.Block, "name taken or empty");
             Dummy(ImVec2(w, 16.f));
         }
-    } else if (MenuRow("##rename", "Rename", UiCol::Ink, w)) {
+    } else if (MenuRow("##rename", "Rename", UiCol.Ink, w)) {
         ImStrncpy(s_name, _tabMenuProfile->name.c_str(), sizeof(s_name));
         s_renameTarget = _tabMenuProfile;
         s_renaming = true;
@@ -362,7 +363,7 @@ void MainWindow::DrawTabMenu(const ImVec2& o)
         s_renameFailed = false;
     }
 
-    if (MenuRow("##addapp", "Add an app\xE2\x80\xA6", UiCol::Ink, w)) {
+    if (MenuRow("##addapp", "Add an app\xE2\x80\xA6", UiCol.Ink, w)) {
         if (_screen != Screen_Editor) CloseAddGame();
         sConfig.SetEditingProfile(_tabMenuProfile);
         _appsPopupPos = _tabMenuPos;
@@ -372,7 +373,7 @@ void MainWindow::DrawTabMenu(const ImVec2& o)
 
     UiDivider(w);
     const char* removeLabel = s_armedRemove ? "Click again to remove" : "Remove game";
-    const ImU32 removeCol = s_armedRemove ? UiFlash(UiCol::Block, 1.f, .4f) : UiCol::Block;
+    const ImU32 removeCol = s_armedRemove ? UiFlash(UiCol.Block, 1.f, .4f) : UiCol.Block;
     if (MenuRow("##remove", removeLabel, removeCol, w)) {
         if (s_armedRemove) {
             const std::shared_ptr<Profile> profile = std::move(_tabMenuProfile);
@@ -406,8 +407,8 @@ void MainWindow::DrawClosePopup(const ImVec2& o)
     const ImVec2 p = GetCursorScreenPos();
     const float w = GetContentRegionAvail().x;
     AddSilk(dl, p, "close window");
-    dl->AddText(UiFonts::Heavy, 22.f, p + ImVec2(0.f, 18.f), UiCol::Ink, "Hide to tray or exit?");
-    dl->AddText(UiFonts::Medium, 13.f, p + ImVec2(0.f, 52.f), UiCol::Ink2,
+    dl->AddText(UiFonts::Heavy, 22.f, p + ImVec2(0.f, 18.f), UiCol.Ink, "Hide to tray or exit?");
+    dl->AddText(UiFonts::Medium, 13.f, p + ImVec2(0.f, 52.f), UiCol.Ink2,
                 "Hidden, Spammy keeps working in the background.");
 
     const ImVec2 btnSize((w - 12.f) * .5f, 42.f);
@@ -418,7 +419,7 @@ void MainWindow::DrawClosePopup(const ImVec2& o)
         chosen = CloseAction_Exit;
 
     AddDivider(dl, p + ImVec2(0.f, 148.f), w);
-    dl->AddText(UiFonts::SemiBold, 13.f, p + ImVec2(0.f, 164.f), UiCol::Ink2, "Remember my choice");
+    dl->AddText(UiFonts::SemiBold, 13.f, p + ImVec2(0.f, 164.f), UiCol.Ink2, "Remember my choice");
     if (UiToggle("##remember", p + ImVec2(w - kUiToggleSize.x, 160.f), s_remember)) s_remember = !s_remember;
     SetCursorScreenPos(p);
     Dummy(ImVec2(w, 186.f));

@@ -13,6 +13,14 @@ using namespace MainWindowUtil;
 namespace {
 constexpr UINT WM_USER_FOCUS = WM_APP + 0x20;
 
+bool SystemAppsUseDarkTheme()
+{
+    DWORD appsUseLightTheme = 1, size = sizeof(appsUseLightTheme);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &appsUseLightTheme, &size);
+    return appsUseLightTheme == 0;
+}
+
 constexpr float kTabsX = 168.f;
 constexpr float kTabsMaxX = 1000.f;
 constexpr float kTabY = 11.f;
@@ -158,8 +166,8 @@ bool WheelBar(ImDrawList* dl, const char* id, const ImVec2& pos, const ImVec2& s
     const bool clicked = InvisibleButton(id, size);
     const ImVec2 sink(0.f, pressed ? 3.f : 0.f);
     if (IsItemHovered())
-        dl->AddRect(pos + sink - ImVec2(2.f, 2.f), pos + sink + size + ImVec2(2.f, 2.f), UiCol::Ink2, 6.f, 0, 1.5f);
-    dl->AddRectFilled(pos + sink, pos + sink + size, UiCol::Tap, 5.f);
+        dl->AddRect(pos + sink - ImVec2(2.f, 2.f), pos + sink + size + ImVec2(2.f, 2.f), UiCol.Ink2, 6.f, 0, 1.5f);
+    dl->AddRectFilled(pos + sink, pos + sink + size, UiCol.Tap, 5.f);
     return clicked;
 }
 
@@ -225,8 +233,14 @@ bool MainWindow::Initialize()
     trayIcon->SetMenu(std::bind_front(&MainWindow::OnTrayMenu, this));
     SetTrayIcon(std::move(trayIcon));
 
-    LoadUiStyle();
+    ApplyTheme();
     return true;
+}
+
+void MainWindow::ApplyTheme()
+{
+    _themeStale = false;
+    LoadUiStyle(sConfig.theme == UiTheme_Dark || (sConfig.theme == UiTheme_System && SystemAppsUseDarkTheme()));
 }
 
 void MainWindow::SyncTrayIcon()
@@ -381,6 +395,8 @@ void MainWindow::FitWindowToKeyboard()
 
 void MainWindow::Draw()
 {
+    // a palette swapped inside a popup would be undone by its PopStyleColor
+    if (_themeStale) ApplyTheme();
     ApplyHookEvents();
     FitWindowToKeyboard();
     const bool noGames = sConfig.profiles.empty();
@@ -412,8 +428,8 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     const bool noGames = sConfig.profiles.empty();
     const bool onEditor = !noGames && _screen == Screen_Editor;
 
-    dl->AddRectFilled(o + ImVec2(24.f, 21.f), o + ImVec2(38.f, 35.f), enabled ? UiCol::Signal : UiCol::Ink3, 3.f);
-    dl->AddText(UiFonts::Heavy, 20.f, o + ImVec2(46.f, 14.f), UiCol::Ink, "spammy");
+    dl->AddRectFilled(o + ImVec2(24.f, 21.f), o + ImVec2(38.f, 35.f), enabled ? UiCol.Signal : UiCol.Ink3, 3.f);
+    dl->AddText(UiFonts::Heavy, 20.f, o + ImVec2(46.f, 14.f), UiCol.Ink, "spammy");
 
     const auto lit = sApp.LastActiveProfile();
     boost::container::small_vector<float, 8> widths;
@@ -451,13 +467,13 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     bool addClicked;
     if (addTabSelected) {
         const UiCapHit hit = UiCapFrame("##addgame", addPos, addSize, UiCapKind_Plain, 8.f);
-        AddGlyph(dl, hit.face + addSize * .5f, 14.f, UiGlyph_Plus, UiCol::Ink2);
+        AddGlyph(dl, hit.face + addSize * .5f, 14.f, UiGlyph_Plus, UiCol.Ink2);
         addClicked = false;
     } else {
         AddRecess(dl, addPos, addPos + addSize, 8.f);
         SetCursorScreenPos(addPos);
         addClicked = InvisibleButton("##addgame", addSize);
-        AddGlyph(dl, addPos + addSize * .5f, 14.f, UiGlyph_Plus, IsItemHovered() ? UiCol::Ink : UiCol::Ink2);
+        AddGlyph(dl, addPos + addSize * .5f, 14.f, UiGlyph_Plus, IsItemHovered() ? UiCol.Ink : UiCol.Ink2);
     }
     Tip("Add a game");
     if (addClicked && !noGames) OpenAddGame();
@@ -473,8 +489,8 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
         SetCursorScreenPos(pos - ImVec2(4.f, 6.f));
         if (InvisibleButton("##update", ImVec2(totalW + 8.f, 22.f))) sUpdater.OpenReleasePage();
         Tip("Open latest release on GitHub");
-        AddSilk(dl, pos, update, UiCol::Signal);
-        AddGlyph(dl, pos + ImVec2(textW + 4.f + glyphSize * .5f, 5.f), glyphSize, UiGlyph_ExternalLink, UiCol::Signal);
+        AddSilk(dl, pos, update, UiCol.Signal);
+        AddGlyph(dl, pos + ImVec2(textW + 4.f + glyphSize * .5f, 5.f), glyphSize, UiGlyph_ExternalLink, UiCol.Signal);
     } else {
         AddSilk(dl, o + ImVec2(kBuildLabelRightX + growX - SilkWidth(BuildLabel()), 24.f), BuildLabel());
     }
@@ -484,7 +500,7 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     if (UiIconButton("##min", right + ImVec2(1201.f, 13.f), 30.f, UiGlyph_Minimize)) ShowWindow(Native(), SW_MINIMIZE);
     if (UiIconButton("##close", right + ImVec2(1231.f, 13.f), 30.f, UiGlyph_Close)) RequestClose();
 
-    dl->AddRectFilled(o + ImVec2(0.f, 56.f), o + ImVec2(WindowSize().x, 57.f), UiCol::Line);
+    dl->AddRectFilled(o + ImVec2(0.f, 56.f), o + ImVec2(WindowSize().x, 57.f), UiCol.Line);
 }
 
 void MainWindow::DrawEditor(ImDrawList* dl, const ImVec2& o, Profile& profile)
@@ -543,10 +559,10 @@ void MainWindow::DrawStrip(ImDrawList* dl, const ImVec2& o, Profile& profile)
     }
 
     char statusNote[128] = "";
-    ImU32 statusCol = UiCol::Ink2;
+    ImU32 statusCol = UiCol.Ink2;
     if (profile.apps.empty()) {
         ImStrncpy(statusNote, "Not tied to a game yet \xE2\x80\x93 add its .exe", sizeof(statusNote));
-        statusCol = UiCol::Signal;
+        statusCol = UiCol.Signal;
     } else if (!sApp.IsEnabled()) {
         const char* locks = profile.disableWin && profile.disableAltF4 ? " Win key and Alt+F4 stay blocked."
                             : profile.disableWin                       ? " Win key stays blocked."
@@ -570,9 +586,9 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, Profile& profile)
 {
     const MouseForm mouseForm = sConfig.mouse;
     const KeyboardBox box = KeyboardBoxAt(o, _keyboardGrowth, mouseForm != MouseForm_Off);
-    dl->AddRectFilled(box.wellMin, box.wellMax, UiCol::Well, 16.f);
+    dl->AddRectFilled(box.wellMin, box.wellMax, UiCol.Well, 16.f);
     dl->AddLine(ImVec2(box.wellMin.x + 16.f, box.wellMin.y + 1.f), ImVec2(box.wellMax.x - 16.f, box.wellMin.y + 1.f),
-                UiCol::WellEdge, 2.f);
+                UiCol.WellEdge, 2.f);
 
     const ImVec2 area = box.areaMax - box.areaMin;
     const std::span<const KeyboardKey> layout = GetKeyboardLayout(sConfig.form, sConfig.variant);
@@ -626,7 +642,7 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, Profile& profile)
                   "Hold a key to test it.",
                   sizeof(hint));
     }
-    dl->AddText(UiFonts::Medium, 11.f, ImVec2(box.areaMin.x, box.areaMax.y + 4.f), UiCol::Ink3, hint);
+    dl->AddText(UiFonts::Medium, 11.f, ImVec2(box.areaMin.x, box.areaMax.y + 4.f), UiCol.Ink3, hint);
 }
 
 void MainWindow::DrawKey(KeyFrame& frame, const char* id, const char* label, UINT vkCode, const ImVec2& pos,
@@ -696,7 +712,7 @@ void MainWindow::DrawMouse(ImDrawList* dl, KeyFrame& frame, const ImVec2& origin
     DrawKey(frame, "##mbM", "", VK_MBUTTON, origin + ImVec2(63.f, 26.f), ImVec2(10.f, 30.f));
     const char* labelUnderWheel = MouseButtonLabel(VK_MBUTTON);
     const float labelW = UiTextWidth(UiFonts::Medium, 9.f, labelUnderWheel);
-    dl->AddText(UiFonts::Medium, 9.f, origin + ImVec2(68.f - labelW * .5f, 62.f), UiCol::Ink3, labelUnderWheel);
+    dl->AddText(UiFonts::Medium, 9.f, origin + ImVec2(68.f - labelW * .5f, 62.f), UiCol.Ink3, labelUnderWheel);
 
     if (sideButtons) {
         DrawKey(frame, "##mb5", MouseButtonLabel(VK_XBUTTON2), VK_XBUTTON2, origin + ImVec2(10.f, 116.f),
@@ -714,24 +730,24 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
     const bool enabled = sApp.IsEnabled();
     for (const ImVec2& separator :
          {o + ImVec2(264.f, 554.f), locksO + ImVec2(776.f, 554.f), legendO + ImVec2(1024.f, 554.f)})
-        dl->AddRectFilled(separator, separator + ImVec2(1.f, 110.f), UiCol::Line);
+        dl->AddRectFilled(separator, separator + ImVec2(1.f, 110.f), UiCol.Line);
 
     AddSilk(dl, o + ImVec2(24.f, 552.f), "power");
     if (UiPowerButton("##power", o + ImVec2(66.f, 614.f), enabled)) sApp.Enable(!enabled);
-    dl->AddText(UiFonts::Heavy, 30.f, o + ImVec2(118.f, 584.f), enabled ? UiCol::Ink : UiCol::Ink2,
+    dl->AddText(UiFonts::Heavy, 30.f, o + ImVec2(118.f, 584.f), enabled ? UiCol.Ink : UiCol.Ink2,
                 enabled ? "ON" : "PAUSED");
 
     char keyName[48], pauseLine[64];
     const char* pauseText = pauseLine;
-    ImU32 pauseCol = UiCol::Ink2;
+    ImU32 pauseCol = UiCol.Ink2;
     if (IsCapturingPauseKey()) {
         pauseText = "Press a key...";
-        pauseCol = UiFlash(UiCol::Signal, 1.2f, .35f);
+        pauseCol = UiFlash(UiCol.Signal, 1.2f, .35f);
     } else if (const char* key = PauseKeyName(profile.pauseKey, keyName, sizeof(keyName))) {
         snprintf(pauseLine, sizeof(pauseLine), "%s %s", key, enabled ? "pauses" : "resumes");
     } else {
         pauseText = "Set a pause key";
-        pauseCol = UiCol::Signal;
+        pauseCol = UiCol.Signal;
     }
     const ImVec2 pausePos = o + ImVec2(118.f, 624.f);
     const float pauseW = UiTextWidth(UiFonts::Medium, 12.f, pauseText);
@@ -764,16 +780,16 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
     char number[8];
     snprintf(number, sizeof(number), "%u", IntervalToRate(profile.intervalMs));
     const ImVec2 numberPos = o + ImVec2(420.f, 566.f);
-    dl->AddText(UiFonts::Light, 72.f, numberPos, enabled ? UiCol::Ink : UiCol::Ink3, number);
+    dl->AddText(UiFonts::Light, 72.f, numberPos, enabled ? UiCol.Ink : UiCol.Ink3, number);
     const float slashX = numberPos.x + UiTextWidth(UiFonts::Light, 72.f, number) + 5.f;
-    dl->AddText(UiFonts::Medium, 22.f, ImVec2(slashX, o.y + 612.f), UiCol::Ink2, "/s");
+    dl->AddText(UiFonts::Medium, 22.f, ImVec2(slashX, o.y + 612.f), UiCol.Ink2, "/s");
 
     char caption[48];
     snprintf(caption, sizeof(caption), "one press every %u ms", profile.intervalMs);
     const float captionDefaultX = o.x + 548.f;
     const float afterRateUnitX = slashX + UiTextWidth(UiFonts::Medium, 22.f, "/s") + 14.f;
     const float captionX = ImMax(captionDefaultX, afterRateUnitX);
-    dl->AddText(UiFonts::Medium, 12.f, ImVec2(captionX, o.y + 618.f), UiCol::Ink3, caption);
+    dl->AddText(UiFonts::Medium, 12.f, ImVec2(captionX, o.y + 618.f), UiCol.Ink3, caption);
 
     auto stepToNextShownRate = [&](int faster) {
         const unsigned shownRate = IntervalToRate(profile.intervalMs);
@@ -793,9 +809,9 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
     auto lockRow = [&](const char* id, float y, bool& flag, const char* label, const char* onNote,
                        const char* offNote) {
         if (UiToggle(id, locksO + ImVec2(800.f, y), flag)) SetSetting(flag, !flag);
-        dl->AddText(UiFonts::SemiBold, 13.f, locksO + ImVec2(860.f, y + 1.f), flag ? UiCol::Ink : UiCol::Ink2, label);
+        dl->AddText(UiFonts::SemiBold, 13.f, locksO + ImVec2(860.f, y + 1.f), flag ? UiCol.Ink : UiCol.Ink2, label);
         const char* note = !flag ? offNote : enabled ? onNote : "still blocked while paused";
-        dl->AddText(UiFonts::Medium, 10.f, locksO + ImVec2(860.f, y + 17.f), UiCol::Ink3, note);
+        dl->AddText(UiFonts::Medium, 10.f, locksO + ImVec2(860.f, y + 17.f), UiCol.Ink3, note);
     };
     lockRow("##lockwin", 578.f, profile.disableWin, "Block Win key", "Start menu stays shut",
             "when on, Start menu stays shut");
@@ -823,7 +839,7 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
     for (int i = 0; i < 3; i++) {
         const float y = 574.f + 28.f * i;
         AddKeySwatch(dl, legendO + ImVec2(1048.f, y), rows[i].kind);
-        dl->AddText(UiFonts::Medium, 12.f, legendO + ImVec2(1084.f, y + 4.f), UiCol::Ink2, rows[i].text);
+        dl->AddText(UiFonts::Medium, 12.f, legendO + ImVec2(1084.f, y + 4.f), UiCol.Ink2, rows[i].text);
     }
 }
 
@@ -837,6 +853,10 @@ bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* 
         return true;
     case WM_SHOWWINDOW:
         if (wParam) _editMods = KeyMod_None;
+        break;
+    case WM_SETTINGCHANGE:
+        // Windows announces a light/dark switch under this name
+        if (lParam && wcscmp((const wchar_t*)lParam, L"ImmersiveColorSet") == 0) _themeStale = true;
         break;
     }
     return false;

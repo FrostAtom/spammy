@@ -13,6 +13,13 @@ enum UiSize {
     UiSize_Count,
 };
 
+enum UiTheme {
+    UiTheme_System,
+    UiTheme_Light,
+    UiTheme_Dark,
+    UiTheme_Count,
+};
+
 enum CloseAction {
     CloseAction_Ask,
     CloseAction_Hide,
@@ -22,6 +29,7 @@ enum CloseAction {
 
 const char* UiSizeName(UiSize size);
 float UiSizeFactor(UiSize size);
+const char* UiThemeName(UiTheme theme);
 const char* CloseActionName(CloseAction action);
 
 struct Config {
@@ -34,6 +42,7 @@ struct Config {
     KeyboardVariant variant = KeyboardVariant_Ansi;
     MouseForm mouse = MouseForm_5;
     UiSize uiSize = UiSize_Medium;
+    UiTheme theme = UiTheme_System;
     ProfileList_t profiles;
     std::shared_ptr<Profile> editingProfile;
 

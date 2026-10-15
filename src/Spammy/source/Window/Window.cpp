@@ -10,8 +10,6 @@ static constexpr float kSwipeInSec = 0.22f;
 static constexpr float kSwipeOutSec = 0.16f;
 static constexpr float kMaxSwipeStepSec = 1.f / 30.f;
 
-static constexpr D3DCOLOR kBackgroundColor = D3DCOLOR_RGBA(0xE2, 0xDE, 0xD6, 255);
-
 static float EaseOutCubic(float t)
 {
     const float left = 1.f - t;
@@ -472,7 +470,9 @@ bool Window::ResetDevice()
 void Window::Render()
 {
     if (_needsReset && !ResetDevice()) return;
-    _d3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET, kBackgroundColor, 1.0f, 0);
+    const ImVec4& background = _imCtx->Style.Colors[ImGuiCol_WindowBg];
+    _d3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_COLORVALUE(background.x, background.y, background.z, 1.f),
+                      1.0f, 0);
     if (_d3dDevice->BeginScene() >= 0) {
         ImGui::Render();
         ImDrawData* drawData = ImGui::GetDrawData();

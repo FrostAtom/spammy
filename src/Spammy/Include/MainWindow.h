@@ -70,6 +70,7 @@ class MainWindow : public Window {
     KeyBundle_t _firstGamePauseKey = 0;
     unsigned _editMods = KeyMod_None;
     const char* _pendingPopup = nullptr;
+    bool _themeStale = false;
     unsigned short _keyMenuVk = 0;
     ImVec2 _keyMenuKeyMin, _keyMenuKeyMax;
     bool _keyMenuShowsCombos = false;
@@ -104,6 +105,7 @@ protected:
 private:
     ImVec2 WindowSize() const { return kBaseWindowSize + _keyboardGrowth; }
     void FitWindowToKeyboard();
+    void ApplyTheme();
     void ApplyHookEvents();
     void LogKeyPress(unsigned short vkCode, DWORD ticks);
     unsigned PressRate(unsigned short vkCode, DWORD nowTicks) const;
