@@ -2,7 +2,7 @@
 #include "Config.h"
 #include "KeyboardLayout.h"
 #include "MainWindow.h"
-#include "Utils.h"
+#include <ranges>
 
 using namespace ImGui;
 using namespace MainWindowUtil;
@@ -18,12 +18,21 @@ constexpr float kKeyMenuRowStep = kKeyMenuSegmentH + kKeyMenuRowGap;
 constexpr float kKeyMenuLinkGap = 16.f;
 constexpr float kKeyMenuFooterH = 56.f;
 
-constexpr const char* kAloneLabels[] = {"Normal", "Autofire", "One tap"};
+constexpr UiSegment kAloneSegments[] = {
+    {"Normal", UiCapKind_Plain},
+    {"Autofire", UiCapKind_Signal},
+    {"One tap", UiCapKind_Tap},
+};
 constexpr Action kAloneActions[] = {Action_None, Action_Spammy, Action_Speedy};
-constexpr UiCapKind kAloneKinds[] = {UiCapKind_Plain, UiCapKind_Signal, UiCapKind_Tap};
-constexpr const char* kModLabels[] = {"Same", "Auto", "Tap", "Block"};
+static_assert(std::size(kAloneActions) == std::size(kAloneSegments));
+constexpr UiSegment kModSegments[] = {
+    {"Same", UiCapKind_Plain},
+    {"Auto", UiCapKind_Signal},
+    {"Tap", UiCapKind_Tap},
+    {"Block", UiCapKind_Plain},
+};
 constexpr Action kModActions[] = {Action_None, Action_Spammy, Action_Speedy, Action_Disabled};
-constexpr UiCapKind kModKinds[] = {UiCapKind_Plain, UiCapKind_Signal, UiCapKind_Tap, UiCapKind_Plain};
+static_assert(std::size(kModActions) == std::size(kModSegments));
 
 constexpr unsigned kMenuMods[] = {
     KeyMod_Shift,
@@ -38,17 +47,16 @@ constexpr size_t kSingleModCount = 3;
 constexpr auto kComboMods = std::span(kMenuMods).subspan<kSingleModCount>();
 static_assert(kComboMods.size() == 4, "the fold link reads \"+ 4 more combos\"");
 
-// old configs can hold Disabled for a key pressed alone, which has no segment
 int ActionIndex(std::span<const Action> actions, Action action)
 {
-    const auto it = std::ranges::find(actions, action);
-    return it != actions.end() ? (int)(it - actions.begin()) : 0;
+    const auto found = std::ranges::find(actions, action);
+    IM_ASSERT(found != actions.end());
+    return (int)(found - actions.begin());
 }
 
 bool MatchesFilter(std::string_view name, std::string_view filter)
 {
-    auto equalNoCase = [](char a, char b) { return tolower((unsigned char)a) == tolower((unsigned char)b); };
-    return filter.empty() || !std::ranges::search(name, filter, equalNoCase).empty();
+    return filter.empty() || una::caseless::find_utf8(name, filter);
 }
 
 float KeyMenuLinkY(size_t rows)
@@ -60,23 +68,6 @@ float KeyMenuLinkY(size_t rows)
 float KeyMenuContentHeight(size_t rows)
 {
     return KeyMenuLinkY(rows) + kKeyMenuFooterH;
-}
-
-void AddDivider(ImDrawList* dl, const ImVec2& pos, float width)
-{
-    dl->AddLine(pos + ImVec2(0.f, .5f), pos + ImVec2(width, .5f), UiCol.Divider);
-}
-
-bool MenuRow(const char* id, const char* label, ImU32 labelCol, float width)
-{
-    const ImVec2 pos = GetCursorScreenPos();
-    const bool clicked = InvisibleButton(id, ImVec2(width, 30.f));
-    ImDrawList* dl = GetWindowDrawList();
-    if (IsItemHovered())
-        dl->AddRectFilled(GetItemRectMin() - ImVec2(10.f, 0.f), GetItemRectMax() + ImVec2(10.f, 0.f), UiCol.RowHover,
-                          6.f);
-    dl->AddText(UiFonts::Medium, 13.f, pos + ImVec2(0.f, 7.f), labelCol, label);
-    return clicked;
 }
 } // namespace
 
@@ -101,26 +92,25 @@ void MainWindow::DrawKeyMenu(const ImVec2& o, Profile& profile)
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 p = GetCursorScreenPos();
     const float w = GetContentRegionAvail().x;
-    char keyBuf[16];
-    const char* keyLabel = KeyLabel(_keyMenuVk, keyBuf, sizeof(keyBuf));
+    Keyboard::KeyNameBuf keyBuf;
+    const char* keyLabel = KeyLabel(_keyMenuVk, keyBuf);
 
     UiKeyDesc swatch = {};
     swatch.label = keyLabel;
     swatch.kind = KeyKindOf(slots[KeyMod_None].action);
     swatch.paused = !sApp.IsEnabled();
+    std::ranges::copy(kUiKeyRadii, swatch.radii);
     UiKey("##swatch", p, ImVec2(38.f, 36.f), swatch);
 
     char text[128];
-    snprintf(text, sizeof(text), "Key %s", keyLabel);
-    dl->AddText(UiFonts::Heavy, 18.f, p + ImVec2(52.f, 0.f), UiCol.Ink, text);
-    snprintf(text, sizeof(text), "%s \xC2\xB7 %s", profile.name.c_str(), ModsName(KeyMod_None));
-    AddSilk(dl, p + ImVec2(52.f, 26.f), text);
+    dl->AddText(UiFonts::Heavy, 18.f, p + ImVec2(52.f, 0.f), UiCol.Ink, FormatInto(text, "Key {}", keyLabel));
+    AddSilk(dl, p + ImVec2(52.f, 26.f),
+            FormatInto(text, "{} \xC2\xB7 {}", profile.name.c_str(), ModsName(KeyMod_None)));
     AddDivider(dl, p + ImVec2(0.f, 58.f), w);
 
     AddSilk(dl, p + ImVec2(0.f, 72.f), "pressed alone");
     int alone = ActionIndex(kAloneActions, slots[KeyMod_None].action);
-    if (UiSegmented("##alone", p + ImVec2(0.f, 90.f), ImVec2(w, kKeyMenuSegmentH), kAloneLabels, alone,
-                    UiLabelCase_AsIs, kAloneKinds))
+    if (UiSegmented("##alone", p + ImVec2(0.f, 90.f), ImVec2(w, kKeyMenuSegmentH), kAloneSegments, alone))
         SetSetting(slots[KeyMod_None].action, kAloneActions[alone]);
 
     AddSilk(dl, p + ImVec2(0.f, 142.f), "with a modifier held");
@@ -135,8 +125,7 @@ void MainWindow::DrawKeyMenu(const ImVec2& o, Profile& profile)
         dl->AddText(UiFonts::Bold, 13.f, p + ImVec2(0.f, y + 8.f), UiCol.Ink, ModsName(mods));
         PushID((int)mods);
         int index = ActionIndex(kModActions, slots[mods].action);
-        if (UiSegmented("##mods", p + ImVec2(segmentsX, y), segmentSize, kModLabels, index, UiLabelCase_AsIs,
-                        kModKinds))
+        if (UiSegmented("##mods", p + ImVec2(segmentsX, y), segmentSize, kModSegments, index))
             SetSetting(slots[mods].action, kModActions[index]);
         PopID();
     }
@@ -152,8 +141,8 @@ void MainWindow::DrawKeyMenu(const ImVec2& o, Profile& profile)
     dl->AddText(UiFonts::SemiBold, 12.f, p + ImVec2(0.f, linkY), linkHovered ? UiCol.Ink : UiCol.Ink2, link);
 
     AddDivider(dl, p + ImVec2(0.f, linkY + 28.f), w);
-    snprintf(text, sizeof(text), "Combos match exactly: Shift+Ctrl+%s skips the Shift row.", keyLabel);
-    dl->AddText(UiFonts::Medium, 10.5f, p + ImVec2(0.f, linkY + 42.f), UiCol.Ink3, text);
+    dl->AddText(UiFonts::Medium, 10.5f, p + ImVec2(0.f, linkY + 42.f), UiCol.Ink3,
+                FormatInto(text, "Combos match exactly: Shift+Ctrl+{} skips the Shift row.", keyLabel));
 
     SetCursorScreenPos(p);
     Dummy(ImVec2(w, KeyMenuContentHeight(rows)));
@@ -169,30 +158,27 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, Profile& profile)
     SetNextWindowSize(ImVec2(panelW, 0.f));
     if (!UiBeginPopup(kPopupApps)) return;
 
-    static char s_search[64] = {};
-    static std::vector<RunningApp> s_running;
     const bool appearing = IsWindowAppearing();
     if (appearing) {
-        s_search[0] = '\0';
-        s_running = ListRunningApps();
+        _appsSearch[0] = '\0';
+        _appsRunning = ListRunningApps();
     }
 
     const float w = GetContentRegionAvail().x;
-    UiSearchField("##appsearch", s_search, sizeof(s_search), w, "search", appearing);
+    UiSearchField("##appsearch", _appsSearch, sizeof(_appsSearch), w, "search", appearing);
 
     SetNextWindowSizeConstraints(ImVec2(0.f, 0.f), ImVec2(FLT_MAX, 420.f));
     BeginChild("##applist", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeY);
 
     if (!profile.apps.empty()) {
         char caption[64];
-        snprintf(caption, sizeof(caption), "in %s", profile.name.c_str());
-        UiSectionLabel(caption);
+        UiSectionLabel(FormatInto(caption, "in {}", profile.name.c_str()));
         std::string deferredUnbind;
         for (const std::string& app : profile.apps) {
-            if (!MatchesFilter(app, s_search)) continue;
+            if (!MatchesFilter(app, _appsSearch)) continue;
             PushID(app.c_str());
             SetNextItemAllowOverlap();
-            UiListRow("##row", app.c_str(), nullptr, UiListRowFlags_Bold, UiCol.Signal);
+            UiDotListRow("##row", app.c_str(), UiCol.Signal);
             const ImVec2 rowMin = GetItemRectMin();
             const ImVec2 rowMax = GetItemRectMax();
             const ImVec2 cursor = GetCursorScreenPos();
@@ -208,43 +194,27 @@ void MainWindow::DrawAppsPopup(const ImVec2& o, Profile& profile)
 
     UiSectionLabel("running");
     bool anyShown = false;
-    for (const RunningApp& app : s_running) {
+    for (const RunningApp& app : _appsRunning) {
         if (profile.apps.contains(app.exeName)) continue;
-        if (!MatchesFilter(app.exeName, s_search) && !MatchesFilter(app.friendlyName, s_search)) continue;
-        const auto owner = sConfig.FindProfileByApp(app.exeName.c_str());
+        if (!MatchesFilter(app.exeName, _appsSearch) && !MatchesFilter(app.friendlyName, _appsSearch)) continue;
+        const auto owner = sConfig.FindProfileByApp(app.exeName);
         const bool elsewhere = owner && owner.get() != &profile;
-        char hint[64] = "click to add";
-        if (elsewhere) snprintf(hint, sizeof(hint), "in %s", owner->name.c_str());
+        char ownerHint[64];
+        const char* hint = elsewhere ? FormatInto(ownerHint, "in {}", owner->name.c_str()) : "click to add";
         PushID(app.exeName.c_str());
-        if (UiListRow("##row", app.exeName.c_str(), hint,
-                      elsewhere ? UiListRowFlags_HintAlways | UiListRowFlags_Disabled : UiListRowFlags_None))
-            sConfig.BindProfile(profile, app.exeName);
+        if (UiListRow("##row", app.exeName.c_str(), hint, !elsewhere)) sConfig.BindProfile(profile, app.exeName);
         PopID();
         anyShown = true;
     }
-    if (!anyShown) {
-        const ImVec2 pos = GetCursorScreenPos();
-        GetWindowDrawList()->AddText(UiFonts::Medium, 13.f, pos + ImVec2(0.f, 7.f), UiCol.Ink3,
-                                     s_search[0] ? "no matches" : "nothing running");
-        Dummy(ImVec2(1.f, 30.f));
-    }
+    if (!anyShown) UiListNote(_appsSearch[0] ? "no matches" : "nothing running");
     EndChild();
 
     UiDivider(w);
-    const bool browseOnceDrawn =
-        UiBrowseButton("##browse", GetCursorScreenPos(), ImVec2(w, 36.f), "Browse for an .exe file");
-    if (const char* rejection = _appsBrowseRejection.Visible(GetTickCount())) {
-        const ImVec2 pos = GetCursorScreenPos() + ImVec2(0.f, 6.f);
-        GetWindowDrawList()->AddText(UiFonts::Medium, 11.f, pos, UiCol.Block, rejection, nullptr, w);
-        Dummy(ImVec2(w, UiFonts::Medium->CalcTextSizeA(11.f, FLT_MAX, w, rejection).y + 6.f));
-    }
+    if (UiBrowseButton("##browse", GetCursorScreenPos(), ImVec2(w, 36.f), "Browse for an .exe file").clicked)
+        PostMessageW(Native(), WM_USER_BROWSE_APP, 0, 0);
 
     if (IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
     UiEndPopup();
-
-    if (browseOnceDrawn)
-        if (const auto path = BrowseForUnclaimedExe(&profile, _appsBrowseRejection))
-            sConfig.BindProfile(profile, Utf8FileName(*path));
 }
 
 void MainWindow::DrawSettingsPopup(const ImVec2& o)
@@ -253,8 +223,7 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     SetNextWindowSize(ImVec2(300.f, 0.f));
     if (!UiBeginPopup(kPopupSettings)) return;
 
-    static bool s_autoStart = false;
-    if (IsWindowAppearing()) s_autoStart = sApp.IsAutoStartEnabled();
+    if (IsWindowAppearing()) _autoStart = sApp.IsAutoStartEnabled();
 
     const float w = GetContentRegionAvail().x;
     auto stepEnum = [w](const char* id, const char* label, auto name, int count, auto& value) {
@@ -264,8 +233,7 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
     };
 
     UiSectionLabel("app");
-    if (UiToggleRow("##autostart", "Start with Windows", s_autoStart, w) && sApp.EnableAutoStart(!s_autoStart))
-        s_autoStart = !s_autoStart;
+    if (UiToggleRow("##autostart", kAutoStartLabel, _autoStart, w)) ToggleAutoStart();
     if (UiToggleRow("##sounds", "Sounds on pause", sConfig.soundsEnabled, w)) {
         sConfig.soundsEnabled = !sConfig.soundsEnabled;
         sConfig.MarkDirty();
@@ -299,18 +267,16 @@ void MainWindow::DrawSettingsPopup(const ImVec2& o)
 
 void MainWindow::DrawTabMenu(const ImVec2& o)
 {
-    static char s_name[kProfileNameMax + 1] = {};
-    static std::weak_ptr<Profile> s_renameTarget;
-    static bool s_renaming = false;
-    static bool s_focusName = false;
-    static bool s_renameFailed = false;
-    static bool s_armedRemove = false;
-
-    auto commitRename = [] {
-        s_renaming = false;
-        if (const auto target = s_renameTarget.lock()) sConfig.RenameProfile(target, s_name);
+    auto renameOrNotify = [this](const std::shared_ptr<Profile>& profile) {
+        const bool renamed = sConfig.RenameProfile(profile, _tabMenuName);
+        if (!renamed) Notify("name taken or empty");
+        return renamed;
     };
-    const bool menuClosedWhileRenaming = s_renaming && !IsPopupOpen(kPopupTabMenu);
+    auto commitRename = [&] {
+        _tabMenuRenaming = false;
+        if (const auto target = _tabMenuRenameTarget.lock()) renameOrNotify(target);
+    };
+    const bool menuClosedWhileRenaming = _tabMenuRenaming && !IsPopupOpen(kPopupTabMenu);
     if (menuClosedWhileRenaming) commitRename();
 
     const float panelW = 220.f;
@@ -318,9 +284,8 @@ void MainWindow::DrawTabMenu(const ImVec2& o)
     SetNextWindowSize(ImVec2(panelW, 0.f));
     if (!UiBeginPopup(kPopupTabMenu)) return;
     if (IsWindowAppearing()) {
-        if (s_renaming) commitRename();
-        s_renameFailed = false;
-        s_armedRemove = false;
+        if (_tabMenuRenaming) commitRename();
+        _tabMenuRemoveArmed = false;
     }
     if (!_tabMenuProfile || std::ranges::find(sConfig.profiles, _tabMenuProfile) == sConfig.profiles.end()) {
         CloseCurrentPopup();
@@ -332,38 +297,31 @@ void MainWindow::DrawTabMenu(const ImVec2& o)
     UiSectionLabel(_tabMenuProfile->name.c_str());
 
     bool escaped = false;
-    if (s_renaming) {
+    if (_tabMenuRenaming) {
         SetNextItemWidth(w);
-        if (std::exchange(s_focusName, false)) SetKeyboardFocusHere();
-        const bool enterPressed = InputText("##name", s_name, sizeof(s_name),
+        if (std::exchange(_tabMenuFocusesName, false)) UiFocusNextItem();
+        const bool enterPressed = InputText("##name", _tabMenuName, sizeof(_tabMenuName),
                                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
         const bool leftFieldWithoutEnter = IsItemDeactivated() && !enterPressed;
         if (IsKeyPressed(ImGuiKey_Escape)) {
-            s_renaming = false;
+            _tabMenuRenaming = false;
             escaped = true;
         } else if (enterPressed || leftFieldWithoutEnter) {
-            if (sConfig.RenameProfile(_tabMenuProfile, s_name)) {
-                s_renaming = false;
+            if (renameOrNotify(_tabMenuProfile)) {
+                _tabMenuRenaming = false;
                 if (enterPressed) CloseCurrentPopup();
             } else {
-                s_renameFailed = true;
-                s_focusName = !leftFieldWithoutEnter;
+                _tabMenuFocusesName = !leftFieldWithoutEnter;
             }
         }
-        if (s_renaming && s_renameFailed) {
-            const ImVec2 pos = GetCursorScreenPos();
-            GetWindowDrawList()->AddText(UiFonts::Medium, 10.5f, pos, UiCol.Block, "name taken or empty");
-            Dummy(ImVec2(w, 16.f));
-        }
-    } else if (MenuRow("##rename", "Rename", UiCol.Ink, w)) {
-        ImStrncpy(s_name, _tabMenuProfile->name.c_str(), sizeof(s_name));
-        s_renameTarget = _tabMenuProfile;
-        s_renaming = true;
-        s_focusName = true;
-        s_renameFailed = false;
+    } else if (UiMenuRow("##rename", "Rename", UiCol.Ink)) {
+        ImStrncpy(_tabMenuName, _tabMenuProfile->name.c_str(), sizeof(_tabMenuName));
+        _tabMenuRenameTarget = _tabMenuProfile;
+        _tabMenuRenaming = true;
+        _tabMenuFocusesName = true;
     }
 
-    if (MenuRow("##addapp", "Add an app\xE2\x80\xA6", UiCol.Ink, w)) {
+    if (UiMenuRow("##addapp", "Add an app\xE2\x80\xA6", UiCol.Ink)) {
         if (_screen != Screen_Editor) CloseAddGame();
         sConfig.SetEditingProfile(_tabMenuProfile);
         _appsPopupPos = _tabMenuPos;
@@ -372,10 +330,10 @@ void MainWindow::DrawTabMenu(const ImVec2& o)
     }
 
     UiDivider(w);
-    const char* removeLabel = s_armedRemove ? "Click again to remove" : "Remove game";
-    const ImU32 removeCol = s_armedRemove ? UiFlash(UiCol.Block, 1.f, .4f) : UiCol.Block;
-    if (MenuRow("##remove", removeLabel, removeCol, w)) {
-        if (s_armedRemove) {
+    const char* removeLabel = _tabMenuRemoveArmed ? "Click again to remove" : "Remove game";
+    const ImU32 removeCol = _tabMenuRemoveArmed ? UiFlash(UiCol.Block, 1.f, .4f) : UiCol.Block;
+    if (UiMenuRow("##remove", removeLabel, removeCol)) {
+        if (_tabMenuRemoveArmed) {
             const std::shared_ptr<Profile> profile = std::move(_tabMenuProfile);
             CloseCurrentPopup();
             sApp.DeleteProfile(profile);
@@ -385,11 +343,11 @@ void MainWindow::DrawTabMenu(const ImVec2& o)
                 _firstGamePauseKey = 0;
             }
         } else {
-            s_armedRemove = true;
+            _tabMenuRemoveArmed = true;
         }
     }
 
-    if (!escaped && !s_renaming && IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
+    if (!escaped && !_tabMenuRenaming && IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
     UiEndPopup();
 }
 
@@ -400,8 +358,7 @@ void MainWindow::DrawClosePopup(const ImVec2& o)
     SetNextWindowSize(ImVec2(contentW + kUiPopupPad * 2.f, 0.f));
     if (!UiBeginModal(kPopupClose)) return;
 
-    static bool s_remember = false;
-    if (IsWindowAppearing()) s_remember = false;
+    if (IsWindowAppearing()) _closeChoiceRemembered = false;
 
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 p = GetCursorScreenPos();
@@ -420,7 +377,8 @@ void MainWindow::DrawClosePopup(const ImVec2& o)
 
     AddDivider(dl, p + ImVec2(0.f, 148.f), w);
     dl->AddText(UiFonts::SemiBold, 13.f, p + ImVec2(0.f, 164.f), UiCol.Ink2, "Remember my choice");
-    if (UiToggle("##remember", p + ImVec2(w - kUiToggleSize.x, 160.f), s_remember)) s_remember = !s_remember;
+    if (UiToggle("##remember", p + ImVec2(w - kUiToggleSize.x, 160.f), _closeChoiceRemembered))
+        _closeChoiceRemembered = !_closeChoiceRemembered;
     SetCursorScreenPos(p);
     Dummy(ImVec2(w, 186.f));
 
@@ -430,7 +388,7 @@ void MainWindow::DrawClosePopup(const ImVec2& o)
     if (clickedOutside || IsKeyPressed(ImGuiKey_Escape)) CloseCurrentPopup();
 
     if (chosen != CloseAction_Ask) {
-        if (s_remember) SetSetting(sConfig.closeAction, chosen);
+        if (_closeChoiceRemembered) SetSetting(sConfig.closeAction, chosen);
         CloseCurrentPopup();
         if (chosen == CloseAction_Hide)
             Hide();

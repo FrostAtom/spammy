@@ -1,5 +1,6 @@
 #include "Window/Window.h"
-#include "ImGui.h"
+#include <imgui/imgui_impl_dx9.h>
+#include <imgui/imgui_impl_win32.h>
 
 static constexpr std::array<const char*, Window::ErrorCode_COUNT> kErrorCodeNames = {
     "OK", "Invalid call", "Windows error", "Renderer error", "ImGui error",
@@ -9,6 +10,37 @@ static constexpr float kSwipeDistance = 56.f;
 static constexpr float kSwipeInSec = 0.22f;
 static constexpr float kSwipeOutSec = 0.16f;
 static constexpr float kMaxSwipeStepSec = 1.f / 30.f;
+
+static constexpr float kLostDeviceRetrySec = 0.25f;
+static constexpr std::chrono::microseconds kShortestBlockingFlush(500);
+static constexpr int kUnpacedFramesBeforeThrottle = 2;
+static constexpr std::chrono::milliseconds kUnpacedFrameInterval(16);
+// sent by GetWindowText on our own window while it lists apps, by the shell and by accessibility tools
+static constexpr UINT kQueriesThatChangeNothing[] = {WM_GETTEXT, WM_GETTEXTLENGTH, WM_GETICON, WM_GETOBJECT};
+
+static DWORD CeilMs(std::chrono::steady_clock::duration duration)
+{
+    return (DWORD)ImMax(std::chrono::ceil<std::chrono::milliseconds>(duration).count(), 0ll);
+}
+
+static std::optional<float> Sooner(std::optional<float> a, std::optional<float> b)
+{
+    if (!a || !b) return a ? a : b;
+    return ImMin(*a, *b);
+}
+
+// InputText draws its cursor for the first 0.8 s of every 1.2 s of CursorAnim, and while CursorAnim is negative
+static std::optional<float> SecondsUntilTextCursorBlinks(const ImGuiContext& g)
+{
+    constexpr float kBlinkPeriodSec = 1.2f;
+    constexpr float kShownSec = 0.8f;
+    const ImGuiInputTextState& text = g.InputTextState;
+    const bool editing = text.ID != 0 && g.ActiveId == text.ID;
+    if (!editing || !g.IO.ConfigInputTextCursorBlink) return std::nullopt;
+    if (text.CursorAnim <= 0.f) return kShownSec - text.CursorAnim;
+    const float phaseSec = fmodf(text.CursorAnim, kBlinkPeriodSec);
+    return phaseSec <= kShownSec ? kShownSec - phaseSec : kBlinkPeriodSec - phaseSec;
+}
 
 static float EaseOutCubic(float t)
 {
@@ -21,19 +53,22 @@ static float EaseInQuad(float t)
     return t * t;
 }
 
-static void ConvertInputToLogicalUnits(ImGuiIO& io, ImVector<ImGuiInputEvent>& inputEvents, float scale)
+// done as events are queued: ImGui may leave some of them in the queue for the next frame
+static void ConvertMousePosQueuedSince(ImVector<ImGuiInputEvent>& queue, int firstNewEvent, float scale)
 {
-    io.DisplaySize /= scale;
-    for (ImGuiInputEvent& event : inputEvents)
+    for (int i = firstNewEvent; i < queue.Size; i++) {
+        ImGuiInputEvent& event = queue[i];
         if (event.Type == ImGuiInputEventType_MousePos && event.MousePos.PosX != -FLT_MAX) {
             event.MousePos.PosX /= scale;
             event.MousePos.PosY /= scale;
         }
+    }
 }
 
 static void ConvertDrawDataToPhysicalPixels(ImDrawData& drawData, float scale)
 {
-    drawData.DisplaySize *= scale;
+    // rounded: the division by scale isn't undone exactly, and the DX9 backend truncates its viewport size
+    drawData.DisplaySize = ImVec2(IM_ROUND(drawData.DisplaySize.x * scale), IM_ROUND(drawData.DisplaySize.y * scale));
     drawData.FramebufferScale = ImVec2(1.f, 1.f);
     for (ImDrawList* cmdList : drawData.CmdLists) {
         for (ImDrawVert& vertex : cmdList->VtxBuffer)
@@ -49,20 +84,18 @@ const char* Window::FormatError(ErrorCode code)
 }
 
 Window::Window(const wchar_t* className, const wchar_t* wndName)
+    : _d3dParams{
+          .BackBufferFormat = D3DFMT_UNKNOWN,
+          .SwapEffect = D3DSWAPEFFECT_DISCARD,
+          .Windowed = TRUE,
+          .EnableAutoDepthStencil = FALSE,
+          .PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE,
+      }
 {
     wcsncpy_s(_className, className, std::size(_className));
     if (!wndName) wndName = className;
     wcsncpy_s(_wndName, wndName, std::size(_wndName));
-    _u8wndName[0] = '\0';
-    WideCharToMultiByte(CP_UTF8, 0, wndName, -1, _u8wndName, (int)std::size(_u8wndName), nullptr, nullptr);
-
-    _d3dParams = {
-        .BackBufferFormat = D3DFMT_UNKNOWN,
-        .SwapEffect = D3DSWAPEFFECT_DISCARD,
-        .Windowed = TRUE,
-        .EnableAutoDepthStencil = FALSE,
-        .PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE,
-    };
+    _u8wndName = una::utf16to8(std::wstring_view(wndName));
 }
 
 Window::~Window()
@@ -87,10 +120,7 @@ Window::ErrorCode Window::Initialize()
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigWindowsResizeFromEdges = false;
-    io.ConfigInputTrickleEventQueue = false;
     io.IniFilename = nullptr;
-
-    ImGui::LoadUiFonts();
 
     if (_trayIcon) _trayIcon->Attach(_hwnd, TrayIconImage());
 
@@ -235,18 +265,31 @@ void Window::ApplySwipeFrame()
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// SetWindowPos would move a minimized window's stand-in, not the rect it restores to
+static void ShiftRestoredRect(HWND hwnd, int dx)
+{
+    WINDOWPLACEMENT placement = {sizeof(placement)};
+    if (!GetWindowPlacement(hwnd, &placement)) return;
+    OffsetRect(&placement.rcNormalPosition, dx, 0);
+    placement.showCmd = SW_SHOWMINNOACTIVE;
+    SetWindowPlacement(hwnd, &placement);
+}
+
 void Window::FinishSwipe()
 {
     // a WM_DPICHANGED sent from inside ApplySwipeFrame may have finished it already
     const Swipe finished = std::exchange(_swipe, Swipe_None);
     if (finished == Swipe_None) return;
+    if (finished == Swipe_Out && std::exchange(_quitAfterSwipe, false)) {
+        _mustQuit = true;
+        return;
+    }
+    const bool minimizedMidSwipe = IsIconic(_hwnd);
+    if (minimizedMidSwipe && !_dragging) ShiftRestoredRect(_hwnd, -(int)lroundf(_swipeOffset * _scale));
     if (finished == Swipe_Out) {
-        if (std::exchange(_quitAfterSwipe, false)) {
-            _mustQuit = true;
-            return;
-        }
         ShowWindow(_hwnd, SW_HIDE);
-        SetWindowPos(_hwnd, nullptr, _swipeRestX, _position.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!minimizedMidSwipe)
+            SetWindowPos(_hwnd, nullptr, _swipeRestX, _position.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
     SetLayered(false);
 }
@@ -337,28 +380,73 @@ void Window::ApplySizeAndScale(ScaleAnchor anchor)
 void Window::Update()
 {
     if (std::exchange(_sizeAndScalePending, false)) ApplySizeAndScale(ScaleAnchor_Center);
+    _timedFrame.reset();
     if (!IsReady()) return;
-    if (BeginFrame()) Draw();
+    const std::optional<float> drawAsksToRedrawInSec = BeginFrame() ? Draw() : std::nullopt;
     EndFrame();
     StepSwipe(ImMin(ImGui::GetIO().DeltaTime, kMaxSwipeStepSec));
+    ScheduleNextFrame(drawAsksToRedrawInSec);
+}
+
+void Window::ScheduleNextFrame(std::optional<float> drawAsksToRedrawInSec)
+{
+    std::optional<float> delaySec = Sooner(drawAsksToRedrawInSec, SecondsUntilTextCursorBlinks(*_imCtx));
+    if (_needsReset) delaySec = Sooner(delaySec, kLostDeviceRetrySec);
+    const bool inputLeftForNextFrame = !_imCtx->InputEventsQueue.empty();
+    if (_swipe != Swipe_None || _modalDimIsFading || _sizeAndScalePending || inputLeftForNextFrame) delaySec = 0.f;
+
+    if (!delaySec) return;
+    if (*delaySec <= 0.f)
+        _framesOwed = ImMax(_framesOwed, 1);
+    else
+        _timedFrame =
+            Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(*delaySec));
+}
+
+DWORD Window::RenderDueFrame()
+{
+    const bool noFrameWillStepTheSwipe = !IsOnScreen();
+    if (noFrameWillStepTheSwipe) {
+        FinishSwipe();
+        return INFINITE;
+    }
+    Clock::time_point now = Clock::now();
+    if (_timedFrame && now >= *_timedFrame) RequestFrame();
+    if (_framesOwed > 0) {
+        if (now < _nextFrameNotBefore) return CeilMs(_nextFrameNotBefore - now);
+        _framesOwed--;
+        _unpacedFramesInARow = ImMin(_unpacedFramesInARow + 1, kUnpacedFramesBeforeThrottle);
+        Update();
+        const Clock::time_point frameStart = std::exchange(now, Clock::now());
+        const bool compositorSetsThePace = _unpacedFramesInARow < kUnpacedFramesBeforeThrottle;
+        _nextFrameNotBefore = compositorSetsThePace ? now : frameStart + kUnpacedFrameInterval;
+        if (_framesOwed > 0) return CeilMs(_nextFrameNotBefore - now);
+    }
+    return _timedFrame ? CeilMs(*_timedFrame - now) : INFINITE;
 }
 
 bool Window::BeginFrame()
 {
     _inFrame = true;
     ImGui_ImplDX9_NewFrame();
+    ImVector<ImGuiInputEvent>& inputQueue = _imCtx->InputEventsQueue;
+    const int queuedBeforeBackend = inputQueue.Size;
     ImGui_ImplWin32_NewFrame();
+    ConvertMousePosQueuedSince(inputQueue, queuedBeforeBackend, _scale);
     ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize /= _scale;
     io.DisplayFramebufferScale = ImVec2(_scale, _scale);
-    if (_scale != 1.f) ConvertInputToLogicalUnits(io, _imCtx->InputEventsQueue, _scale);
+    // NewFrame steps the fade of the dimming behind a modal
+    const float modalDimBefore = _imCtx->DimBgRatio;
     ImGui::NewFrame();
+    _modalDimIsFading = _imCtx->DimBgRatio != modalDimBefore;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
                                        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus |
                                        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    const bool visible = ImGui::Begin(_u8wndName, nullptr, flags);
+    const bool visible = ImGui::Begin(_u8wndName.c_str(), nullptr, flags);
 
     if (_imCtx->CurrentWindow && _imCtx->MovingWindow == _imCtx->CurrentWindow)
         StartDrag();
@@ -431,10 +519,10 @@ bool Window::CreateDevice()
         D3DCREATE_SOFTWARE_VERTEXPROCESSING,
     };
     HRESULT hRes = E_FAIL;
-    for (const DWORD flags : kVertexProcessingFallbacks)
-        if (SUCCEEDED(
-                hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, flags, &_d3dParams, &_d3dDevice)))
-            break;
+    for (const DWORD flags : kVertexProcessingFallbacks) {
+        hRes = _d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, _hwnd, flags, &_d3dParams, &_d3dDevice);
+        if (SUCCEEDED(hRes)) break;
+    }
     if (FAILED(hRes)) {
         _lastError = hRes;
         return false;
@@ -481,6 +569,10 @@ void Window::Render()
         _d3dDevice->EndScene();
     }
     if (_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr) == D3DERR_DEVICELOST) _needsReset = true;
+    // blocks until the compositor's next pass, pacing frames to the refresh; returns at once while the display is off
+    const Clock::time_point beforeFlush = Clock::now();
+    DwmFlush();
+    if (Clock::now() - beforeFlush >= kShortestBlockingFlush) _unpacedFramesInARow = 0;
 }
 
 void Window::StartDrag()
@@ -511,7 +603,10 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result)
 {
     const bool ignoresInput = _swipe == Swipe_Out;
+    ImVector<ImGuiInputEvent>& inputQueue = _imCtx->InputEventsQueue;
+    const int queuedBeforeBackend = inputQueue.Size;
     *result = ignoresInput ? 0 : ImGui_ImplWin32_WndProcHandler(_hwnd, msg, wParam, lParam);
+    ConvertMousePosQueuedSince(inputQueue, queuedBeforeBackend, _scale);
     if (*result) return true;
     if (_trayIcon && _trayIcon->HandleMessage(msg, wParam, lParam)) return true;
 
@@ -525,7 +620,8 @@ bool Window::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* resu
         return true;
     case WM_MOVE: _position = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; return true;
     case WM_SIZE: {
-        const UINT width = LOWORD(lParam), height = HIWORD(lParam);
+        const UINT width = LOWORD(lParam);
+        const UINT height = HIWORD(lParam);
         const bool backBufferFits = width == _d3dParams.BackBufferWidth && height == _d3dParams.BackBufferHeight;
         if (wParam != SIZE_MINIMIZED && _d3dDevice && !backBufferFits) {
             _d3dParams.BackBufferWidth = width;
@@ -570,12 +666,14 @@ LRESULT WINAPI Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 {
     // the first message with the create params; HandleWndProc needs _hwnd before CreateWindowExW returns
     if (msg == WM_NCCREATE) {
-        Window* self = (Window*)((const CREATESTRUCTW*)lParam)->lpCreateParams;
+        auto* self = (Window*)((const CREATESTRUCTW*)lParam)->lpCreateParams;
         self->_hwnd = hwnd;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)self);
     }
-    Window* self = (Window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-    LRESULT result;
-    if (self && self->HandleWndProc(msg, wParam, lParam, &result)) return result;
+    auto* self = (Window*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    if (!self) return DefWindowProcW(hwnd, msg, wParam, lParam);
+    if (!std::ranges::contains(kQueriesThatChangeNothing, msg)) self->RequestFrame();
+    LRESULT result = 0;
+    if (self->HandleWndProc(msg, wParam, lParam, &result)) return result;
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }

@@ -11,8 +11,7 @@ bool IsEmulated(ULONG_PTR extraInfo) noexcept
     return (extraInfo & kEmulatedInputTag) != 0;
 }
 
-// MAPVK_VK_TO_VSC_EX prefixes extended keys (arrows, Ins/Del, RCtrl, ...) with 0xE0; sent or named without the
-// extended flag, they become their numpad twins
+// MAPVK_VK_TO_VSC_EX marks extended keys (arrows, Ins/Del, RCtrl) with 0xE0; without the flag they act as numpad keys
 bool IsExtendedScanCode(UINT scanCodeEx) noexcept
 {
     return (scanCodeEx & 0xE000) != 0;
@@ -59,47 +58,58 @@ void CreateMessageQueue()
     PeekMessageW(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 }
 
+struct VkName {
+    unsigned short vkCode;
+    const char* name;
+};
+constexpr VkName kNamesMissingFromKeyboardLayouts[] = {
+    {VK_LBUTTON, "Mouse Left"},
+    {VK_RBUTTON, "Mouse Right"},
+    {VK_MBUTTON, "Mouse Middle"},
+    {VK_XBUTTON1, "Mouse 4"},
+    {VK_XBUTTON2, "Mouse 5"},
+    {VK_SLEEP, "Sleep"},
+    {VK_VOLUME_MUTE, "Mute"},
+    {VK_VOLUME_DOWN, "Volume -"},
+    {VK_VOLUME_UP, "Volume +"},
+    {VK_MEDIA_PLAY_PAUSE, "Play"},
+    {VK_MEDIA_PREV_TRACK, "Prev Track"},
+    {VK_MEDIA_NEXT_TRACK, "Next Track"},
+    {VK_MEDIA_STOP, "Media Stop"},
+    {VK_LAUNCH_MEDIA_SELECT, "Media"},
+    {VK_LAUNCH_MAIL, "Mail"},
+    {VK_LAUNCH_APP1, "App 1"},
+    {VK_LAUNCH_APP2, "App 2"},
+    {VK_BROWSER_BACK, "Web Back"},
+    {VK_BROWSER_FORWARD, "Web Fwd"},
+    {VK_BROWSER_HOME, "Web Home"},
+    {VK_BROWSER_REFRESH, "Web Reload"},
+    {VK_BROWSER_STOP, "Web Stop"},
+    {VK_BROWSER_SEARCH, "Web Search"},
+    {VK_BROWSER_FAVORITES, "Web Fav"},
+};
+
 const char* NameMissingFromKeyboardLayouts(unsigned short vkCode)
 {
-    switch (vkCode) {
-    case VK_LBUTTON: return "Mouse Left";
-    case VK_RBUTTON: return "Mouse Right";
-    case VK_MBUTTON: return "Mouse Middle";
-    case VK_XBUTTON1: return "Mouse 4";
-    case VK_XBUTTON2: return "Mouse 5";
-    case VK_SLEEP: return "Sleep";
-    case VK_VOLUME_MUTE: return "Mute";
-    case VK_VOLUME_DOWN: return "Volume -";
-    case VK_VOLUME_UP: return "Volume +";
-    case VK_MEDIA_PLAY_PAUSE: return "Play";
-    case VK_MEDIA_PREV_TRACK: return "Prev Track";
-    case VK_MEDIA_NEXT_TRACK: return "Next Track";
-    case VK_MEDIA_STOP: return "Media Stop";
-    case VK_LAUNCH_MEDIA_SELECT: return "Media";
-    case VK_LAUNCH_MAIL: return "Mail";
-    case VK_LAUNCH_APP1: return "App 1";
-    case VK_LAUNCH_APP2: return "App 2";
-    case VK_BROWSER_BACK: return "Web Back";
-    case VK_BROWSER_FORWARD: return "Web Fwd";
-    case VK_BROWSER_HOME: return "Web Home";
-    case VK_BROWSER_REFRESH: return "Web Reload";
-    case VK_BROWSER_STOP: return "Web Stop";
-    case VK_BROWSER_SEARCH: return "Web Search";
-    case VK_BROWSER_FAVORITES: return "Web Fav";
-    }
-    return nullptr;
+    const auto* found = std::ranges::find(kNamesMissingFromKeyboardLayouts, vkCode, &VkName::vkCode);
+    return found != std::end(kNamesMissingFromKeyboardLayouts) ? found->name : nullptr;
 }
 
-const char* KeyboardLayoutKeyName(unsigned short vkCode)
+const char* KeyboardLayoutKeyName(unsigned short vkCode, Keyboard::KeyNameBuf& buf)
 {
     constexpr int kScanCodeShift = 16;
     constexpr LONG kExtendedKeyFlag = 1 << 24;
-    static char buf[64];
-    buf[0] = '\0';
-    const UINT scanCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC_EX);
-    LONG lParam = (LONG)((scanCode & 0xFF) << kScanCodeShift);
+    const UINT scanCode = MapVirtualKeyW(vkCode, MAPVK_VK_TO_VSC_EX);
+    LONG lParam = (LONG)(scanCode & 0xFF) << kScanCodeShift;
     if (IsExtendedScanCode(scanCode)) lParam |= kExtendedKeyFlag;
-    GetKeyNameTextA(lParam, buf, std::size(buf));
+
+    wchar_t wide[Keyboard::kMaxKeyNameChars];
+    const int wideLength = GetKeyNameTextW(lParam, wide, (int)std::size(wide));
+    std::byte stack[2 * sizeof(Keyboard::KeyNameBuf)];
+    std::pmr::monotonic_buffer_resource stackThenHeap(stack, sizeof(stack));
+    const std::pmr::string utf8 = una::utf16to8<wchar_t, char, std::pmr::polymorphic_allocator<char>>(
+        std::wstring_view(wide, (size_t)wideLength), &stackThenHeap);
+    *std::ranges::copy(utf8, buf).out = '\0';
     return buf;
 }
 
@@ -124,8 +134,9 @@ bool Keyboard::Attach(bool withMouse)
     _withMouse = withMouse;
     std::promise<bool> ready;
     std::future<bool> installed = ready.get_future();
-    _thread = std::jthread(
-        [this, ready = std::move(ready)](std::stop_token stop) mutable { ThreadProc(stop, std::move(ready)); });
+    _thread = std::jthread([this, ready = std::move(ready)](const std::stop_token& stop) mutable {
+        ThreadProc(stop, std::move(ready));
+    });
     return installed.get();
 }
 
@@ -135,6 +146,7 @@ void Keyboard::Detach()
     _thread.request_stop();
     _thread.join();
     ResetState();
+    _onHooksRemoved();
 }
 
 void Keyboard::ResetState()
@@ -148,14 +160,14 @@ void Keyboard::ResetState()
 
 void Keyboard::SyncState()
 {
-    for (unsigned short vkCode = 1; vkCode < _pressed.size(); ++vkCode) {
+    for (size_t vkCode = 1; vkCode < _pressed.size(); ++vkCode) {
         // LL hooks only deliver left/right modifier VKs, so a generic one marked here would never be released
         const bool isGenericModifier = vkCode == VK_SHIFT || vkCode == VK_CONTROL || vkCode == VK_MENU;
-        _pressed[vkCode] = !isGenericModifier && (GetAsyncKeyState(vkCode) & 0x8000);
+        _pressed[vkCode] = !isGenericModifier && (GetAsyncKeyState((int)vkCode) & 0x8000);
     }
 }
 
-void Keyboard::ThreadProc(std::stop_token stop, std::promise<bool> ready)
+void Keyboard::ThreadProc(const std::stop_token& stop, std::promise<bool> ready)
 {
     const DWORD threadId = GetCurrentThreadId();
     // the raw input thread blocks on every hook call
@@ -228,17 +240,17 @@ void Keyboard::KeyUp(unsigned short vkCode)
     SendInput(1, &in, sizeof(INPUT));
 }
 
-const char* Keyboard::GetKeyName(unsigned short vkCode)
+const char* Keyboard::GetKeyName(unsigned short vkCode, KeyNameBuf& buf)
 {
     if (const char* name = NameMissingFromKeyboardLayouts(vkCode)) return name;
-    return KeyboardLayoutKeyName(vkCode);
+    return KeyboardLayoutKeyName(vkCode, buf);
 }
 
 LRESULT CALLBACK Keyboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     Keyboard& self = Instance();
     if (nCode == HC_ACTION) {
-        const KBDLLHOOKSTRUCT* data = (const KBDLLHOOKSTRUCT*)lParam;
+        const auto* data = (const KBDLLHOOKSTRUCT*)lParam;
         const bool down = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
         const bool up = wParam == WM_KEYUP || wParam == WM_SYSKEYUP;
         const bool fitsKeyTables = data->vkCode < kKeyboardKeysCount;
@@ -253,7 +265,7 @@ LRESULT CALLBACK Keyboard::LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lP
 {
     Keyboard& self = Instance();
     if (nCode == HC_ACTION) {
-        const MSLLHOOKSTRUCT* data = (const MSLLHOOKSTRUCT*)lParam;
+        const auto* data = (const MSLLHOOKSTRUCT*)lParam;
         unsigned short vkCode = 0;
         bool down = false;
         switch (wParam) {
@@ -275,17 +287,24 @@ bool Keyboard::HandleKey(unsigned short vkCode, bool down)
 {
     const bool wasDown = _pressed[vkCode].exchange(down);
     const bool repeat = wasDown == down;
-    if (IsModifier(vkCode)) {
-        const bool isAlt = vkCode == VK_LMENU || vkCode == VK_RMENU;
-        if (!isAlt || !_altMasked) return false;
-        const bool lastAltReleased = !_pressed[VK_LMENU] && !_pressed[VK_RMENU];
-        if (lastAltReleased) _altMasked = false;
-        return true;
-    }
-    const Callback_t& callback = down ? _onPress : _onRelease;
-    const bool swallow = callback && callback(vkCode, repeat);
-    // swallow an up only if we swallowed its down: if win32k saw the down (key held before the hook went up),
-    // blocking the up leaves the key stuck system-wide
+    const bool swallow = IsModifier(vkCode) ? FilterModifier(vkCode) : FilterKey(vkCode, down, repeat);
+    if (!repeat) _onAnyKeyPressOrRelease();
+    return swallow;
+}
+
+bool Keyboard::FilterModifier(unsigned short vkCode)
+{
+    const bool isAlt = vkCode == VK_LMENU || vkCode == VK_RMENU;
+    if (!isAlt || !_altMasked) return false;
+    const bool lastAltReleased = !_pressed[VK_LMENU] && !_pressed[VK_RMENU];
+    if (lastAltReleased) _altMasked = false;
+    return true;
+}
+
+bool Keyboard::FilterKey(unsigned short vkCode, bool down, bool repeat)
+{
+    const bool swallow = _swallowsNonModifierKey(vkCode, down, repeat);
+    // an up whose down win32k saw (key held before the hook went up) must pass, or the key stays stuck system-wide
     if (down && !repeat) return _swallowedDown[vkCode] = swallow;
     return swallow && _swallowedDown[vkCode];
 }

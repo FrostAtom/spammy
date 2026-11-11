@@ -27,7 +27,7 @@ With Spammy you just hold the key, and it keeps pressing for you as fast as you 
 
 ## Building from source
 
-Needs CMake, clang-cl or MSVC (x86) and [vcpkg](https://vcpkg.io) with Boost:
+Needs CMake, clang-cl or MSVC (x86) and [vcpkg](https://vcpkg.io) with Boost, fmt and uni-algo:
 
 ```powershell
 cmake --preset release
@@ -37,7 +37,9 @@ cmake --build --preset release
 ## Credits
 
 - [nlohmann/json](https://github.com/nlohmann/json) ([MIT](https://github.com/nlohmann/json/blob/develop/LICENSE.MIT))
-- [Boost.Container](https://github.com/boostorg/container) ([BSL-1.0](https://www.boost.org/LICENSE_1_0.txt))
+- [Boost.Container](https://github.com/boostorg/container) and [Boost.Unordered](https://github.com/boostorg/unordered) ([BSL-1.0](https://www.boost.org/LICENSE_1_0.txt))
+- [{fmt}](https://github.com/fmtlib/fmt) ([MIT](https://github.com/fmtlib/fmt/blob/master/LICENSE))
+- [uni-algo](https://github.com/uni-algo/uni-algo) ([Public Domain / MIT](https://github.com/uni-algo/uni-algo/blob/main/LICENSE.md))
 - [Dear ImGui](https://github.com/ocornut/imgui) ([MIT](https://github.com/ocornut/imgui/blob/master/LICENSE.txt))
 - [Archivo](https://github.com/Omnibus-Type/Archivo) font ([OFL](https://openfontlicense.org))
 

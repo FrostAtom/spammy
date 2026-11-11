@@ -1,12 +1,10 @@
-#include "Utils.h"
+#include "Apps.h"
+#include "Text.h"
+#include <commdlg.h>
+#include <fmt/xchar.h>
+#include <shlobj_core.h>
 
 static constexpr size_t kWindowsMaxPathChars = 32767;
-
-bool CaseInsensitiveLess::operator()(std::string_view a, std::string_view b) const noexcept
-{
-    auto lower = [](unsigned char c) { return std::tolower(c); };
-    return std::ranges::lexicographical_compare(a, b, {}, lower, lower);
-}
 
 void LaunchUrl(const wchar_t* url)
 {
@@ -15,7 +13,9 @@ void LaunchUrl(const wchar_t* url)
 
 static uint32_t GrayscalePixel(uint32_t argb)
 {
-    const uint32_t b = argb & 0xFF, g = (argb >> 8) & 0xFF, r = (argb >> 16) & 0xFF;
+    const uint32_t b = argb & 0xFF;
+    const uint32_t g = (argb >> 8) & 0xFF;
+    const uint32_t r = (argb >> 16) & 0xFF;
     const uint32_t luma = (r * 77 + g * 150 + b * 29) >> 8;
     const uint32_t alpha = argb & 0xFF000000;
     return alpha | (luma << 16) | (luma << 8) | luma;
@@ -87,7 +87,7 @@ std::filesystem::path GetProcessPath(HWND hwnd)
 
     std::wstring buf(MAX_PATH, L'\0');
     for (;;) {
-        DWORD size = (DWORD)buf.size();
+        auto size = (DWORD)buf.size();
         if (QueryFullProcessImageNameW(process, 0, buf.data(), &size)) {
             buf.resize(size);
             break;
@@ -104,42 +104,9 @@ std::filesystem::path GetProcessPath(HWND hwnd)
 }
 
 // not path::u8string(): it throws on the lone surrogates NTFS allows in names
-static std::string PathToUtf8(const std::filesystem::path& path)
-{
-    return WideToUtf8(path.native());
-}
-
 std::string Utf8FileName(const std::filesystem::path& path)
 {
-    return PathToUtf8(path.filename());
-}
-
-std::string WideToUtf8(std::wstring_view text)
-{
-    if (text.empty()) return {};
-    const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), (int)text.size(), nullptr, 0, nullptr, nullptr);
-    if (size <= 0) return {};
-    std::string result(size, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.data(), (int)text.size(), result.data(), size, nullptr, nullptr);
-    return result;
-}
-
-std::wstring Utf8ToWide(std::string_view text)
-{
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), nullptr, 0);
-    if (size <= 0) return {};
-    std::wstring result(size, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), result.data(), size);
-    return result;
-}
-
-static std::wstring_view TrimWide(std::wstring_view text)
-{
-    constexpr std::wstring_view kSpaces = L" \t\r\n";
-    const size_t first = text.find_first_not_of(kSpaces);
-    if (first == std::wstring_view::npos) return {};
-    return text.substr(first, text.find_last_not_of(kSpaces) - first + 1);
+    return una::utf16to8(path.filename().native());
 }
 
 static std::wstring VersionString(const void* data, const wchar_t* field)
@@ -161,12 +128,15 @@ static std::wstring VersionString(const void* data, const wchar_t* field)
 
     for (const LangCodePage& block : blocks) {
         wchar_t subBlock[96];
-        swprintf_s(subBlock, std::size(subBlock), L"\\StringFileInfo\\%04x%04x\\%ls", block.lang, block.codePage,
-                   field);
+        const auto written =
+            fmt::format_to_n(subBlock, std::size(subBlock) - 1, L"\\StringFileInfo\\{:04x}{:04x}\\{}", block.lang,
+                             block.codePage, field);
+        *written.out = L'\0';
         wchar_t* value = nullptr;
         UINT lengthInChars = 0;
         if (!VerQueryValueW(data, subBlock, (void**)&value, &lengthInChars) || !value || !lengthInChars) continue;
-        if (std::wstring_view text = TrimWide({value, wcsnlen(value, lengthInChars)}); !text.empty())
+        if (const std::wstring_view text = TrimSpaces(std::wstring_view(value, wcsnlen(value, lengthInChars)));
+            !text.empty())
             return std::wstring(text);
     }
     return {};
@@ -179,10 +149,11 @@ std::string AppFriendlyName(const std::filesystem::path& exePath)
         std::vector<BYTE> data(size);
         if (GetFileVersionInfoW(exePath.c_str(), 0, size, data.data())) {
             for (const wchar_t* field : {L"FileDescription", L"ProductName"})
-                if (std::wstring name = VersionString(data.data(), field); !name.empty()) return WideToUtf8(name);
+                if (const std::wstring name = VersionString(data.data(), field); !name.empty())
+                    return una::utf16to8(name);
         }
     }
-    return PathToUtf8(exePath.stem());
+    return una::utf16to8(exePath.stem().native());
 }
 
 static std::optional<IconImage> IconToImage(HICON icon)
@@ -195,7 +166,8 @@ static std::optional<IconImage> IconToImage(HICON icon)
     if (info.hbmColor && GetObject(info.hbmColor, sizeof(bm), &bm)) {
         BITMAPINFO bi = TopDown32BitDib(bm.bmWidth, bm.bmHeight);
         const size_t pixelCount = (size_t)bm.bmWidth * bm.bmHeight;
-        std::vector<uint32_t> argb(pixelCount), mask(pixelCount);
+        std::vector<uint32_t> argb(pixelCount);
+        std::vector<uint32_t> mask(pixelCount);
         HDC dc = GetDC(nullptr);
         const bool read = GetDIBits(dc, info.hbmColor, 0, bm.bmHeight, argb.data(), &bi, DIB_RGB_COLORS) &&
                           GetDIBits(dc, info.hbmMask, 0, bm.bmHeight, mask.data(), &bi, DIB_RGB_COLORS);
@@ -246,14 +218,14 @@ static bool IsAppWindow(HWND hwnd)
 
 std::vector<RunningApp> ListRunningApps()
 {
-    static std::unordered_map<std::wstring, std::string> s_friendlyNameCache; // main thread only
+    static boost::unordered_flat_map<std::wstring, std::string> s_friendlyNameCache; // main thread only
 
     std::vector<RunningApp> apps;
-    std::set<std::string, CaseInsensitiveLess> seen;
+    boost::container::flat_set<std::string, CaseInsensitiveLess> seen;
     auto visit = [&](HWND hwnd) -> BOOL {
         if (!IsAppWindow(hwnd)) return TRUE;
 
-        const std::filesystem::path path = GetProcessPath(hwnd);
+        std::filesystem::path path = GetProcessPath(hwnd);
         if (path.empty() || path == GetModulePath()) return TRUE;
         std::string exe = Utf8FileName(path);
         if (!seen.insert(exe).second) return TRUE;
@@ -261,7 +233,7 @@ std::vector<RunningApp> ListRunningApps()
         auto it = s_friendlyNameCache.find(path.native());
         if (it == s_friendlyNameCache.end())
             it = s_friendlyNameCache.emplace(path.native(), AppFriendlyName(path)).first;
-        apps.push_back({std::move(exe), it->second, path});
+        apps.push_back({std::move(exe), it->second, std::move(path)});
         return TRUE;
     };
     using Visit = decltype(visit);
@@ -271,7 +243,7 @@ std::vector<RunningApp> ListRunningApps()
     EnumWindows(&Thunk::Call, (LPARAM)&visit);
 
     auto byNameThenExe = [](const RunningApp& a, const RunningApp& b) {
-        CaseInsensitiveLess less;
+        const CaseInsensitiveLess less{};
         if (less(a.friendlyName, b.friendlyName)) return true;
         if (less(b.friendlyName, a.friendlyName)) return false;
         return less(a.exeName, b.exeName);
@@ -280,7 +252,7 @@ std::vector<RunningApp> ListRunningApps()
     return apps;
 }
 
-bool BrowseForExe(HWND owner, std::filesystem::path& out)
+std::optional<std::filesystem::path> BrowseForExe(HWND owner)
 {
     std::wstring file(kWindowsMaxPathChars + 1, L'\0');
     OPENFILENAMEW ofn = {sizeof(ofn)};
@@ -290,7 +262,6 @@ bool BrowseForExe(HWND owner, std::filesystem::path& out)
     ofn.nMaxFile = (DWORD)file.size();
     // the config is opened relative to the current directory
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetOpenFileNameW(&ofn)) return false;
-    out = file.c_str();
-    return true;
+    if (!GetOpenFileNameW(&ofn)) return std::nullopt;
+    return file.c_str();
 }

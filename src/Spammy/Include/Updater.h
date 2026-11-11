@@ -17,8 +17,8 @@ class Updater {
 
 public:
     static Updater& Instance();
-    void CheckAsync();
-    bool IsUpdateAvailable() const { return _result->updateAvailable; }
-    const char* LatestDate() const { return _result->latestDate.c_str(); }
+    void CheckAsync(std::function<void()> onUpdateFound);
+    [[nodiscard]] bool IsUpdateAvailable() const { return _result->updateAvailable; }
+    [[nodiscard]] const char* LatestDate() const { return _result->latestDate.c_str(); }
     void OpenReleasePage();
 };

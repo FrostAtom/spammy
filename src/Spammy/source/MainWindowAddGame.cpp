@@ -1,7 +1,6 @@
 #include "App.h"
 #include "Config.h"
 #include "MainWindow.h"
-#include "Utils.h"
 #include "Win32/Keyboard.h"
 
 using namespace ImGui;
@@ -27,34 +26,18 @@ constexpr float kRowsHeight = RowsHeight(kVisibleRows);
 
 bool SameExe(std::string_view a, std::string_view b)
 {
-    const CaseInsensitiveLess less{};
-    return !less(a, b) && !less(b, a);
+    return una::caseless::compare_utf8(a, b) == 0;
 }
 
-std::string ToUpper(std::string_view text)
+UiUpperCased FirstLetter(const std::string& name)
 {
-    std::wstring wide = Utf8ToWide(text);
-    CharUpperBuffW(wide.data(), (DWORD)wide.size());
-    return WideToUtf8(wide);
-}
-
-std::string FirstLetter(const std::string& name)
-{
-    if (name.empty()) return "?";
+    if (name.empty()) return UiUpperCased("?");
     unsigned c = 0;
     const int len = ImTextCharFromUtf8(&c, name.data(), name.data() + name.size());
-    return ToUpper(std::string_view(name.data(), (size_t)len));
+    return UiUpperCased(std::string_view(name.data(), (size_t)len));
 }
 
-void AddTextCentered(ImDrawList* dl, ImFont* font, float size, const ImVec2& min, const ImVec2& max, ImU32 col,
-                     const char* text)
-{
-    const float w = UiTextWidth(font, size, text);
-    const float h = font->CalcTextSizeA(size, FLT_MAX, 0.f, text).y;
-    dl->AddText(font, size, ImFloor(ImVec2((min.x + max.x - w) * .5f, (min.y + max.y - h) * .5f)), col, text);
-}
-
-void DrawCartridge(ImDrawList* dl, const ImVec2& o, const std::string& name, const std::string& exe)
+void DrawCartridge(ImDrawList* dl, const ImVec2& o, std::string_view name, std::string_view exe)
 {
     constexpr float kCartridgeLip = 2.f * kUiCapLipDepth;
     const ImVec2 bodyMin = o + ImVec2(846.f, 96.f);
@@ -73,15 +56,17 @@ void DrawCartridge(ImDrawList* dl, const ImVec2& o, const std::string& name, con
     dl->AddRectFilled(o + ImVec2(874.f, 152.f), o + ImVec2(1138.f, 162.f), UiCol.Signal, 8.f,
                       ImDrawFlags_RoundCornersTop);
 
-    constexpr float kLabelW = 228.f, kTitleY = 212.f;
-    std::string title = ToUpper(name);
+    constexpr float kLabelW = 228.f;
+    constexpr float kTitleY = 212.f;
+    const UiUpperCased upperName(name);
     float size = 22.f;
-    while (size > 14.f && UiTextWidth(UiFonts::Heavy, size, title.c_str(), .5f) > kLabelW)
+    while (size > 14.f && UiTextWidth(UiFonts::Heavy, size, upperName.c_str(), .5f) > kLabelW)
         size -= 1.f;
-    title = FitText(UiFonts::Heavy, size, std::move(title), kLabelW, .5f);
+    const FittedText title = FitText(UiFonts::Heavy, size, upperName.c_str(), kLabelW, .5f);
     AddTrackedText(dl, UiFonts::Heavy, size, o + ImVec2(892.f, ImFloor(kTitleY + (22.f - size) * .5f)), UiCol.TapeInk,
                    title.c_str(), .5f);
-    const std::string file = FitText(UiFonts::Bold, 10.f, ToUpper(exe), kLabelW, 1.4f);
+    const UiUpperCased upperExe(exe);
+    const FittedText file = FitText(UiFonts::Bold, 10.f, upperExe.c_str(), kLabelW, 1.4f);
     AddTrackedText(dl, UiFonts::Bold, 10.f, o + ImVec2(892.f, kTitleY + 30.f), UiCol.TapeInk2, file.c_str(), 1.4f);
 }
 
@@ -103,22 +88,22 @@ void ApplyFirstGameDefaults(Profile& game, KeyBundle_t pauseKey)
 
 void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
 {
-    static bool s_autoStart = false;
-
     PushID("##addgame");
     const DWORD now = GetTickCount();
-    const bool refreshDue = !_addGame.refreshTicks || now - *_addGame.refreshTicks > kRefreshMs;
+    const bool refreshDue = !_addGame.refreshTicks || now - *_addGame.refreshTicks >= kRefreshMs;
     if (refreshDue) {
         _addGame.runningApps = ListRunningApps();
         _addGame.refreshTicks = now;
-        if (firstRun) s_autoStart = sApp.IsAutoStartEnabled(); // the settings popup can change it meanwhile
+        if (firstRun) _autoStart = sApp.IsAutoStartEnabled();
     }
+    const DWORD untilRefreshMs = kRefreshMs - (now - *_addGame.refreshTicks);
+    UiRequestFrameIn((float)untilRefreshMs / 1000.f);
 
-    std::vector<const RunningApp*> pickable;
+    boost::container::small_vector<const RunningApp*, 32> pickable;
     if (_addGame.browsed) pickable.push_back(&*_addGame.browsed);
     for (const RunningApp& app : _addGame.runningApps) {
         if (_addGame.browsed && SameExe(app.exeName, _addGame.browsed->exeName)) continue;
-        const bool belongsToAGame = sConfig.FindProfileByApp(app.exeName.c_str()) != nullptr;
+        const bool belongsToAGame = sConfig.FindProfileByApp(app.exeName) != nullptr;
         if (!belongsToAGame) pickable.push_back(&app);
     }
     const auto pick = std::ranges::find_if(
@@ -133,12 +118,12 @@ void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
     dl->AddText(UiFonts::Medium, 14.f, o + ImVec2(24.f, 136.f), UiCol.Ink2,
                 "Start the game, then pick it here. It gets its own keys, rate and locks.");
 
-    dl->AddRectFilled(o + ImVec2(24.f, 176.f), o + ImVec2(760.f, 624.f), UiCol.Well, 16.f);
-    dl->AddLine(o + ImVec2(40.f, 177.f), o + ImVec2(744.f, 177.f), UiCol.WellEdge, 2.f);
+    AddWell(dl, o + ImVec2(24.f, 176.f), o + ImVec2(760.f, 624.f));
     AddSilk(dl, o + ImVec2(44.f, 194.f), "running now");
 
     const RunningApp* clickedApp = nullptr;
-    float scrollY = 0.f, scrollMax = 0.f;
+    float scrollY = 0.f;
+    float scrollMax = 0.f;
     const float contentH = pickable.empty() ? 0.f : RowsHeight(pickable.size());
     SetCursorScreenPos(o + kRowsPos);
     SetNextWindowContentSize(ImVec2(kRowSize.x, contentH));
@@ -169,18 +154,18 @@ void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
                 hoverT = hit.hoverT;
             }
 
-            const ImVec2 iconMin = face + kAppIconOffset, iconMax = iconMin + kAppIconSize;
+            const ImVec2 iconMin = face + kAppIconOffset;
+            const ImVec2 iconMax = iconMin + kAppIconSize;
             if (const std::optional<ImTextureRef> icon = AppIcon(app.exePath, iconPx)) {
                 cdl->AddImage(*icon, iconMin, iconMax);
             } else {
                 cdl->AddRectFilled(iconMin, iconMax, isSelected ? UiCol.Signal : UiCol.Tap, 7.f);
-                const std::string letter = FirstLetter(app.friendlyName);
-                AddTextCentered(cdl, UiFonts::Heavy, 15.f, iconMin, iconMax,
-                                isSelected ? UiCol.White : UiCol.InkInverse, letter.c_str());
+                AddTextCentered(cdl, UiFonts::Heavy, 15.f, (iconMin + iconMax) * .5f,
+                                isSelected ? UiCol.White : UiCol.InkInverse, FirstLetter(app.friendlyName).c_str());
             }
 
-            const std::string name = FitText(UiFonts::Bold, 14.f, app.friendlyName, 520.f);
-            const std::string exe = FitText(UiFonts::Medium, 12.f, app.exeName, 520.f);
+            const FittedText name = FitText(UiFonts::Bold, 14.f, app.friendlyName.c_str(), 520.f);
+            const FittedText exe = FitText(UiFonts::Medium, 12.f, app.exeName.c_str(), 520.f);
             cdl->AddText(UiFonts::Bold, 14.f, face + ImVec2(58.f, 10.f), UiCol.Ink, name.c_str());
             cdl->AddText(UiFonts::Medium, 12.f, face + ImVec2(58.f, 30.f), UiCol.Ink3, exe.c_str());
 
@@ -194,10 +179,11 @@ void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
             }
             PopID();
         }
-        if (pickable.empty())
-            AddTextCentered(cdl, UiFonts::Medium, 13.f, scrolledOrigin,
-                            scrolledOrigin + ImVec2(kRowSize.x, kRowsHeight), UiCol.Ink3,
+        if (pickable.empty()) {
+            const ImVec2 listCenter = scrolledOrigin + ImVec2(kRowSize.x, kRowsHeight) * .5f;
+            AddTextCentered(cdl, UiFonts::Medium, 13.f, listCenter, UiCol.Ink3,
                             "Nothing running yet. Start the game, then it shows up here.");
+        }
         scrollY = GetScrollY();
         scrollMax = GetScrollMaxY();
     }
@@ -210,21 +196,20 @@ void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
                           2.f);
     }
 
-    const char* rejection = _addGame.browseRejection.Visible(now);
-    const bool browseOnceDrawn = UiBrowseButton(
-        "##browse", o + ImVec2(44.f, 548.f), ImVec2(kRowSize.x, 42.f), "Browse for the game\xE2\x80\x99s .exe file",
-        rejection ? rejection : "Not in the list?", rejection ? UiCol.Block : UiCol.Ink3);
+    const ImVec2 browseSize(kRowSize.x, 42.f);
+    const UiCapHit browse =
+        UiBrowseButton("##browse", o + ImVec2(44.f, 548.f), browseSize, "Browse for the game\xE2\x80\x99s .exe file");
+    AddBrowseHint(dl, browse.face, browseSize, "Not in the list?");
+    if (browse.clicked) PostMessageW(Native(), WM_USER_BROWSE_GAME, 0, 0);
 
-    DrawCartridge(dl, o, hasPick ? selected->friendlyName : "Pick a game",
-                  hasPick ? _addGame.selectedExe : "from the list");
+    DrawCartridge(dl, o, hasPick ? std::string_view(selected->friendlyName) : "Pick a game",
+                  hasPick ? std::string_view(_addGame.selectedExe) : "from the list");
 
     if (firstRun) {
         AddSilk(dl, o + ImVec2(822.f, 412.f), "setup");
-        if (UiToggle("##autostart", o + ImVec2(822.f, 432.f), s_autoStart) && sApp.EnableAutoStart(!s_autoStart))
-            s_autoStart = !s_autoStart;
-        dl->AddText(UiFonts::SemiBold, 13.f, o + ImVec2(882.f, 433.f), UiCol.Ink, "Start with Windows");
-        dl->AddText(UiFonts::Medium, 10.f, o + ImVec2(882.f, 449.f), UiCol.Ink3,
-                    s_autoStart ? "starts hidden in the tray" : "off until you turn it on");
+        if (UiToggle("##autostart", o + ImVec2(822.f, 432.f), _autoStart)) ToggleAutoStart();
+        AddLabelWithNote(dl, o + ImVec2(882.f, 433.f), UiCol.Ink, kAutoStartLabel,
+                         _autoStart ? "starts hidden in the tray" : "off until you turn it on");
 
         char keyBuf[64];
         const bool capturing = IsCapturingPauseKey();
@@ -237,33 +222,32 @@ void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
             keyName = "Set key";
         }
         const float keyNameW = ceilf(UiTextWidth(UiFonts::Bold, 12.f, keyName));
-        const float capW = ImMax(70.f, keyNameW + 20.f);
-        const UiCapHit hit =
-            UiCapFrame("##pausekey", o + ImVec2(822.f, 478.f), ImVec2(capW, 26.f), UiCapKind_Plain, 6.f);
+        const ImVec2 capSize(ImMax(70.f, keyNameW + 20.f), 26.f);
+        const UiCapHit hit = UiCapFrame("##pausekey", o + ImVec2(822.f, 478.f), capSize, UiCapKind_Plain, 6.f);
         if (hit.clicked)
             TogglePauseKeyCapture();
         else if (!capturing && IsItemClicked(ImGuiMouseButton_Right))
             _firstGamePauseKey = 0;
-        AddTextCentered(dl, UiFonts::Bold, 12.f, hit.face, hit.face + ImVec2(capW, 26.f), keyCol, keyName);
-        const float labelX = 822.f + capW + 16.f;
-        dl->AddText(UiFonts::SemiBold, 13.f, o + ImVec2(labelX, 479.f), UiCol.Ink, "Pause key");
-        dl->AddText(UiFonts::Medium, 10.f, o + ImVec2(labelX, 495.f), UiCol.Ink3,
-                    "click, then press any key to change");
+        AddTextCentered(dl, UiFonts::Bold, 12.f, hit.face + capSize * .5f, keyCol, keyName);
+        const float labelX = 822.f + capSize.x + 16.f;
+        AddLabelWithNote(dl, o + ImVec2(labelX, 479.f), UiCol.Ink, "Pause key", "click, then press any key to change");
     }
 
-    bool confirm = false, cancel = false;
-    constexpr float kButtonsUnderSetupY = 570.f, kButtonsUnderCartridgeY = 412.f;
+    bool confirm = false;
+    bool cancel = false;
+    constexpr float kButtonsUnderSetupY = 570.f;
+    constexpr float kButtonsUnderCartridgeY = 412.f;
     const float buttonsY = firstRun ? kButtonsUnderSetupY : kButtonsUnderCartridgeY;
-    const ImVec2 confirmPos = o + ImVec2(822.f, buttonsY), confirmSize(220.f, 44.f);
+    const ImVec2 confirmPos = o + ImVec2(822.f, buttonsY);
+    const ImVec2 confirmSize(220.f, 44.f);
     if (hasPick) {
-        const std::string label =
-            FitText(UiFonts::Bold, 13.f, std::string(firstRun ? "Start with " : "Add ") + selected->friendlyName,
-                    confirmSize.x - 24.f);
+        char wanted[160];
+        FormatInto(wanted, "{}{}", firstRun ? "Start with " : "Add ", selected->friendlyName);
+        const FittedText label = FitText(UiFonts::Bold, 13.f, wanted, confirmSize.x - 24.f);
         confirm = UiButton("##confirm", confirmPos, confirmSize, label.c_str(), UiButtonKind_Primary);
     } else {
         AddCap(dl, confirmPos, confirmSize, UiCapKind_Plain, 8.f);
-        AddTextCentered(dl, UiFonts::Bold, 13.f, confirmPos, confirmPos + confirmSize, UiCol.Ink3,
-                        "Pick a game first");
+        AddTextCentered(dl, UiFonts::Bold, 13.f, confirmPos + confirmSize * .5f, UiCol.Ink3, "Pick a game first");
     }
     if (!firstRun) {
         cancel =
@@ -283,15 +267,6 @@ void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
 
     if (clickedApp) _addGame.selectedExe = clickedApp->exeName;
 
-    if (browseOnceDrawn) {
-        const Profile* noGameMayOwnIt = nullptr;
-        if (const auto path = BrowseForUnclaimedExe(noGameMayOwnIt, _addGame.browseRejection)) {
-            RunningApp app{Utf8FileName(*path), AppFriendlyName(*path), *path};
-            _addGame.selectedExe = app.exeName;
-            _addGame.browsed = std::move(app);
-        }
-    }
-
     if (confirm) {
         if (firstRun) CancelPauseKeyCapture();
         const std::shared_ptr<Profile> game = sConfig.CreateGame(selected->friendlyName, selected->exeName);
@@ -305,7 +280,7 @@ void MainWindow::DrawAddGame(ImDrawList* dl, const ImVec2& o, bool firstRun)
 
 std::optional<ImTextureRef> MainWindow::AppIcon(const std::filesystem::path& exePath, int sizePx)
 {
-    const auto [it, firstAsked] = _appIcons.try_emplace({exePath.native(), sizePx});
+    const auto [it, firstAsked] = _appIconsBySizePx[sizePx].try_emplace(exePath.native());
     if (firstAsked)
         if (const std::optional<IconImage> icon = ExtractExeIcon(exePath, sizePx))
             it->second = CreateTexture(icon->width, icon->height, icon->pixels);

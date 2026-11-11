@@ -3,15 +3,36 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 
+#include <array>
 #include <boost/container/static_vector.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <memory_resource>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 
-// Positions are absolute screen coordinates. A control drawn at a given position leaves its hit box as the last item, so
-// IsItemHovered() and the like can be queried right after it.
+// Positions are absolute screen coordinates; a control leaves its hit box as the last item for IsItemHovered()
 namespace ImGui {
-void Tip(const char* fmt, ...);
+void Tip(const char* text);
+void UiToast(const ImVec2& bottomRight, const char* text, bool shown);
+
+void UiRequestFrameIn(float seconds);
+std::optional<float> UiTakeFrameRequest();
+void UiFocusNextItem();
 
 ImU32 UiFlash(ImU32 col, float periodSec, float minAlpha);
+
+class UiUpperCased {
+    std::array<std::byte, 256> _stack = {};
+    std::pmr::monotonic_buffer_resource _stackThenHeap{_stack.data(), _stack.size()};
+    std::pmr::string _text;
+
+public:
+    explicit UiUpperCased(std::string_view text);
+    [[nodiscard]] const char* c_str() const { return _text.c_str(); }
+};
 
 struct UiPalette {
     ImU32 Chassis, Line, Well, WellEdge, Recess, RecessStroke, RecessHover, Panel, PanelStroke, Divider, RowHover,
@@ -23,101 +44,7 @@ struct UiPalette {
     ImU32 Tape, TapeInk, TapeInk2, White, Shadow;
 };
 
-inline constexpr UiPalette kUiLightPalette = {
-    .Chassis = IM_COL32(0xE2, 0xDE, 0xD6, 0xFF),
-    .Line = IM_COL32(0xCD, 0xC8, 0xBE, 0xFF),
-    .Well = IM_COL32(0xD3, 0xCE, 0xC4, 0xFF),
-    .WellEdge = IM_COL32(0xBD, 0xB7, 0xAC, 0xFF),
-    .Recess = IM_COL32(0xD7, 0xD2, 0xC9, 0xFF),
-    .RecessStroke = IM_COL32(0xC7, 0xC1, 0xB6, 0xFF),
-    .RecessHover = IM_COL32(0xCF, 0xC9, 0xBF, 0xFF),
-    .Panel = IM_COL32(0xF4, 0xF2, 0xED, 0xFF),
-    .PanelStroke = IM_COL32(0xD9, 0xD5, 0xCC, 0xFF),
-    .Divider = IM_COL32(0xE0, 0xDC, 0xD3, 0xFF),
-    .RowHover = IM_COL32(0xEC, 0xE9, 0xE2, 0xFF),
-    .KnobRing = IM_COL32(0xE6, 0xE2, 0xDA, 0xFF),
-
-    .Cap = IM_COL32(0xF7, 0xF5, 0xF0, 0xFF),
-    .CapLip = IM_COL32(0xC2, 0xBC, 0xB1, 0xFF),
-    .CapStroke = IM_COL32(0xE3, 0xDF, 0xD7, 0xFF),
-    .CapLocked = IM_COL32(0xCB, 0xC6, 0xBC, 0xFF),
-
-    .Ink = IM_COL32(0x17, 0x16, 0x15, 0xFF),
-    .Ink2 = IM_COL32(0x5C, 0x59, 0x52, 0xFF),
-    .Ink3 = IM_COL32(0x8E, 0x8A, 0x82, 0xFF),
-    .InkInverse = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF),
-    .DotOff = IM_COL32(0xB3, 0xAD, 0xA2, 0xFF),
-
-    .Signal = IM_COL32(0xFF, 0x50, 0x00, 0xFF),
-    .SignalLip = IM_COL32(0xB0, 0x37, 0x00, 0xFF),
-    .Tap = IM_COL32(0x2B, 0x2A, 0x27, 0xFF),
-    .TapLip = IM_COL32(0x0E, 0x0E, 0x0D, 0xFF),
-    .Block = IM_COL32(0xD9, 0x3A, 0x2B, 0xFF),
-    .Same = IM_COL32(0xFC, 0xE3, 0xD4, 0xFF),
-    .SameLip = IM_COL32(0xE3, 0xB8, 0x9D, 0xFF),
-    .SameInk = IM_COL32(0xB0, 0x4A, 0x12, 0xFF),
-
-    .PausedAuto = IM_COL32(0xE9, 0xD2, 0xC3, 0xFF),
-    .PausedAutoLip = IM_COL32(0xCD, 0xB3, 0xA2, 0xFF),
-    .PausedAutoInk = IM_COL32(0x9C, 0x85, 0x76, 0xFF),
-    .PausedTap = IM_COL32(0xBD, 0xB8, 0xAE, 0xFF),
-    .PausedTapLip = IM_COL32(0xA3, 0x9E, 0x94, 0xFF),
-
-    .Tape = IM_COL32(0x1E, 0x1D, 0x1B, 0xFF),
-    .TapeInk = IM_COL32(0xF2, 0xEF, 0xE8, 0xFF),
-    .TapeInk2 = IM_COL32(0x9C, 0x98, 0x8F, 0xFF),
-    .White = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF),
-    .Shadow = IM_COL32(0x2A, 0x20, 0x16, 0x38),
-};
-
-inline constexpr UiPalette kUiDarkPalette = {
-    .Chassis = IM_COL32(0x1B, 0x1A, 0x18, 0xFF),
-    .Line = IM_COL32(0x32, 0x2F, 0x2B, 0xFF),
-    .Well = IM_COL32(0x13, 0x12, 0x11, 0xFF),
-    .WellEdge = IM_COL32(0x2B, 0x29, 0x26, 0xFF),
-    .Recess = IM_COL32(0x15, 0x14, 0x13, 0xFF),
-    .RecessStroke = IM_COL32(0x2D, 0x2B, 0x28, 0xFF),
-    .RecessHover = IM_COL32(0x1E, 0x1C, 0x1A, 0xFF),
-    .Panel = IM_COL32(0x25, 0x23, 0x21, 0xFF),
-    .PanelStroke = IM_COL32(0x36, 0x33, 0x2F, 0xFF),
-    .Divider = IM_COL32(0x2E, 0x2B, 0x28, 0xFF),
-    .RowHover = IM_COL32(0x2F, 0x2C, 0x29, 0xFF),
-    .KnobRing = IM_COL32(0x34, 0x31, 0x2D, 0xFF),
-
-    .Cap = IM_COL32(0x33, 0x31, 0x2D, 0xFF),
-    .CapLip = IM_COL32(0x20, 0x1E, 0x1B, 0xFF),
-    .CapStroke = IM_COL32(0x40, 0x3D, 0x38, 0xFF),
-    .CapLocked = IM_COL32(0x24, 0x22, 0x1F, 0xFF),
-
-    .Ink = IM_COL32(0xED, 0xE9, 0xE1, 0xFF),
-    .Ink2 = IM_COL32(0xA9, 0xA4, 0x9A, 0xFF),
-    .Ink3 = IM_COL32(0x77, 0x73, 0x6B, 0xFF),
-    .InkInverse = IM_COL32(0x1B, 0x1A, 0x18, 0xFF),
-    .DotOff = IM_COL32(0x46, 0x43, 0x3E, 0xFF),
-
-    .Signal = IM_COL32(0xFF, 0x50, 0x00, 0xFF),
-    .SignalLip = IM_COL32(0x8C, 0x2B, 0x00, 0xFF),
-    .Tap = IM_COL32(0xE3, 0xDF, 0xD7, 0xFF),
-    .TapLip = IM_COL32(0x8F, 0x8A, 0x80, 0xFF),
-    .Block = IM_COL32(0xF0, 0x50, 0x3E, 0xFF),
-    .Same = IM_COL32(0x4A, 0x2A, 0x19, 0xFF),
-    .SameLip = IM_COL32(0x2A, 0x17, 0x0D, 0xFF),
-    .SameInk = IM_COL32(0xFF, 0x9A, 0x63, 0xFF),
-
-    .PausedAuto = IM_COL32(0x3A, 0x2E, 0x27, 0xFF),
-    .PausedAutoLip = IM_COL32(0x21, 0x1A, 0x16, 0xFF),
-    .PausedAutoInk = IM_COL32(0x8E, 0x79, 0x6B, 0xFF),
-    .PausedTap = IM_COL32(0x6C, 0x68, 0x61, 0xFF),
-    .PausedTapLip = IM_COL32(0x4A, 0x47, 0x42, 0xFF),
-
-    .Tape = IM_COL32(0xE3, 0xDF, 0xD7, 0xFF),
-    .TapeInk = IM_COL32(0x1B, 0x1A, 0x18, 0xFF),
-    .TapeInk2 = IM_COL32(0x6E, 0x6A, 0x62, 0xFF),
-    .White = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF),
-    .Shadow = IM_COL32(0x00, 0x00, 0x00, 0x7A),
-};
-
-inline UiPalette UiCol = kUiLightPalette;
+extern UiPalette UiCol;
 
 struct UiFonts {
     static ImFont* Light;
@@ -127,7 +54,7 @@ struct UiFonts {
     static ImFont* Heavy;
 };
 
-enum UiGlyph {
+enum UiGlyph : std::uint8_t {
     UiGlyph_Gear,
     UiGlyph_Minimize,
     UiGlyph_Close,
@@ -138,9 +65,10 @@ enum UiGlyph {
     UiGlyph_Power,
     UiGlyph_Padlock,
     UiGlyph_Folder,
+    UiGlyph_COUNT,
 };
 
-enum UiCapKind {
+enum UiCapKind : std::uint8_t {
     UiCapKind_Plain,
     UiCapKind_Signal,
     UiCapKind_Tap,
@@ -148,9 +76,10 @@ enum UiCapKind {
     UiCapKind_Locked,
     UiCapKind_PausedAuto,
     UiCapKind_PausedTap,
+    UiCapKind_COUNT,
 };
 
-enum UiKeyKind {
+enum UiKeyKind : std::uint8_t {
     UiKeyKind_Normal,
     UiKeyKind_Auto,
     UiKeyKind_Tap,
@@ -161,13 +90,16 @@ enum UiKeyKind {
     UiKeyKind_Fixed,
 };
 
-enum UiCorner {
+enum UiCorner : std::uint8_t {
     UiCorner_TopLeft,
     UiCorner_TopRight,
     UiCorner_BottomRight,
     UiCorner_BottomLeft,
     UiCorner_COUNT,
 };
+
+inline constexpr float kUiKeyRadii[UiCorner_COUNT] = {7.f, 7.f, 7.f, 7.f};
+inline constexpr float kUiSmallKeyRadii[UiCorner_COUNT] = {5.f, 5.f, 5.f, 5.f};
 
 struct UiKeyDesc {
     const char* label;
@@ -176,7 +108,7 @@ struct UiKeyDesc {
     bool paused;
     bool centered;
     boost::container::static_vector<char, 3> marks;
-    float radii[UiCorner_COUNT] = {};
+    float radii[UiCorner_COUNT];
 };
 
 void LoadUiFonts();
@@ -185,7 +117,7 @@ void LoadUiStyle(bool dark);
 ImU32 UiMixColor(ImU32 a, ImU32 b, float t);
 constexpr ImU32 UiWithAlpha(ImU32 col, float alpha)
 {
-    const ImU32 a = (ImU32)(((col >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
+    const auto a = (ImU32)(((col >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
     return (col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
 }
 
@@ -197,13 +129,16 @@ void UiEndPopup();
 float UiTextWidth(ImFont* font, float size, const char* text, float tracking = 0.f);
 void AddTrackedText(ImDrawList* dl, ImFont* font, float size, const ImVec2& pos, ImU32 col, const char* text,
                     float tracking);
+void AddTextCentered(ImDrawList* dl, ImFont* font, float size, const ImVec2& center, ImU32 col, const char* text,
+                     float tracking = 0.f);
 void AddSilk(ImDrawList* dl, const ImVec2& topLeft, const char* text, ImU32 col = UiCol.Ink3);
 float SilkWidth(const char* text);
+void AddLabelWithNote(ImDrawList* dl, const ImVec2& pos, ImU32 labelCol, const char* label, const char* note);
+void AddDivider(ImDrawList* dl, const ImVec2& pos, float width);
+void AddWell(ImDrawList* dl, const ImVec2& min, const ImVec2& max);
 
 inline constexpr float kUiCapLipDepth = 4.f;
-inline constexpr float kUiCapPressDepth = 3.f;
 inline constexpr ImVec2 kUiToggleSize(46.f, 26.f);
-// returns the face's top-left, lowered by the press
 ImVec2 AddCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, UiCapKind kind, float rounding, float pressT = 0.f,
               float hoverT = 0.f);
 ImVec2 AddCap(ImDrawList* dl, const ImVec2& min, const ImVec2& size, UiCapKind kind, const float radii[UiCorner_COUNT],
@@ -217,38 +152,37 @@ void AddTape(ImDrawList* dl, const ImVec2& pos, const char* text);
 struct UiCapHit {
     bool clicked = false;
     ImVec2 face;
-    float hoverT = 0.f, pressT = 0.f;
+    float hoverT = 0.f;
 };
 UiCapHit UiCapFrame(const char* id, const ImVec2& pos, const ImVec2& size, UiCapKind kind, float rounding);
 
-enum UiButtonKind {
+enum UiButtonKind : std::uint8_t {
     UiButtonKind_Primary,
     UiButtonKind_Secondary,
     UiButtonKind_Danger,
+    UiButtonKind_COUNT,
 };
 bool UiButton(const char* id, const ImVec2& pos, const ImVec2& size, const char* label, UiButtonKind kind);
 bool UiCapIconButton(const char* id, const ImVec2& pos, float size, UiGlyph glyph);
 bool UiIconButton(const char* id, const ImVec2& pos, float size, UiGlyph glyph);
 bool UiOutlineButton(const char* id, const ImVec2& pos, const char* label);
-bool UiBrowseButton(const char* id, const ImVec2& pos, const ImVec2& size, const char* label,
-                    const char* hint = nullptr, ImU32 hintCol = UiCol.Ink3);
+UiCapHit UiBrowseButton(const char* id, const ImVec2& pos, const ImVec2& size, const char* label);
+void AddBrowseHint(ImDrawList* dl, const ImVec2& buttonFace, const ImVec2& buttonSize, const char* hint);
 bool UiToggle(const char* id, const ImVec2& pos, bool on);
 float TabWidth(const char* label);
-bool UiTab(const char* id, const ImVec2& pos, const char* label, bool selected, bool lit, bool dim);
-enum UiLabelCase {
-    UiLabelCase_AsIs,
-    UiLabelCase_Upper,
+bool UiTab(const char* id, const ImVec2& pos, const char* label, bool selected, ImU32 dotCol);
+struct UiSegment {
+    const char* label;
+    UiCapKind chosenKind;
 };
-bool UiSegmented(const char* id, const ImVec2& pos, const ImVec2& size, std::span<const char* const> labels, int& index,
-                 UiLabelCase labelCase = UiLabelCase_AsIs, std::span<const UiCapKind> chosenKinds = {});
+bool UiSegmented(const char* id, const ImVec2& pos, const ImVec2& size, std::span<const UiSegment> segments,
+                 int& index);
 struct UiFlagSegment {
     const char* label;
     unsigned flag;
 };
 bool UiSegmentedFlags(const char* id, const ImVec2& pos, const ImVec2& size, const char* noFlagsLabel,
-                      std::span<const UiFlagSegment> flagSegments, unsigned& flags,
-                      UiLabelCase labelCase = UiLabelCase_AsIs);
-bool UiStepper(const char* id, const ImVec2& pos, const ImVec2& size, const char* value, int& index, int count);
+                      std::span<const UiFlagSegment> flagSegments, unsigned& flags);
 bool UiPowerButton(const char* id, const ImVec2& center, bool on);
 bool UiKnob(const char* id, const ImVec2& center, float& t, const char* minLabel, const char* maxLabel, bool dim);
 bool UiKey(const char* id, const ImVec2& pos, const ImVec2& size, const UiKeyDesc& desc);
@@ -256,15 +190,10 @@ void AddKeySwatch(ImDrawList* dl, const ImVec2& pos, UiKeyKind kind);
 
 bool UiToggleRow(const char* id, const char* label, bool on, float width);
 bool UiStepperRow(const char* id, const char* label, const char* value, int& index, int count, float width);
-enum UiListRowFlags_ {
-    UiListRowFlags_None = 0,
-    UiListRowFlags_HintAlways = 1 << 0,
-    UiListRowFlags_Disabled = 1 << 1,
-    UiListRowFlags_Bold = 1 << 2,
-};
-using UiListRowFlags = int;
-bool UiListRow(const char* id, const char* label, const char* hint, UiListRowFlags rowFlags = UiListRowFlags_None,
-               ImU32 dotCol = 0);
+bool UiListRow(const char* id, const char* label, const char* hint, bool enabled);
+bool UiMenuRow(const char* id, const char* label, ImU32 labelCol);
+void UiListNote(const char* text);
+void UiDotListRow(const char* id, const char* label, ImU32 dotCol);
 void UiSectionLabel(const char* text);
 void UiDivider(float width);
 bool UiSearchField(const char* id, char* buf, size_t bufSize, float width, const char* hint, bool focus);

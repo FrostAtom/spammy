@@ -4,23 +4,21 @@
 #include "Profile.h"
 #define sConfig Config::Instance()
 
-inline constexpr const char* CONFIG_FILE = "Spammy.json";
-
-enum UiSize {
+enum UiSize : std::uint8_t {
     UiSize_Small,
     UiSize_Medium,
     UiSize_Large,
     UiSize_Count,
 };
 
-enum UiTheme {
+enum UiTheme : std::uint8_t {
     UiTheme_System,
     UiTheme_Light,
     UiTheme_Dark,
     UiTheme_Count,
 };
 
-enum CloseAction {
+enum CloseAction : std::uint8_t {
     CloseAction_Ask,
     CloseAction_Hide,
     CloseAction_Exit,
@@ -51,9 +49,9 @@ struct Config {
     bool Load();
     void Save();
     void MarkDirty();
-    void SaveIfDirty();
+    DWORD MsUntilSaveDue() const;
 
-    std::shared_ptr<Profile> FindProfileByApp(const char* app) const;
+    std::shared_ptr<Profile> FindProfileByApp(std::string_view app) const;
     std::shared_ptr<Profile> CreateGame(std::string_view name, std::string_view app);
     bool RenameProfile(const std::shared_ptr<Profile>& profile, std::string_view name);
     void SetEditingProfile(const std::shared_ptr<Profile>& profile);
@@ -62,8 +60,7 @@ struct Config {
     void UnbindProfile(Profile& profile, const std::string& app);
 
 private:
-    std::shared_ptr<Profile> FindProfile(const char* name) const;
-    std::string UniqueProfileName(std::string_view base) const;
+    std::shared_ptr<Profile> FindProfile(std::string_view name) const;
 
     std::atomic<bool> _dirty = false;
     DWORD _lastSaveAttemptTicks = 0;

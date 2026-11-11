@@ -1,8 +1,9 @@
 #pragma once
 #include "Headers.h"
+#include <future>
 #define sKeyboard Keyboard::Instance()
 
-enum KeyMod {
+enum KeyMod : std::uint8_t {
     KeyMod_None = 0,
     KeyMod_Shift = (1 << 0),
     KeyMod_Alt = (1 << 1),
@@ -14,10 +15,8 @@ inline constexpr size_t kKeyboardKeyModCount = (KeyMod_Shift | KeyMod_Alt | KeyM
 
 class Keyboard {
 public:
-    // called on the hook thread: return at once, short uncontended locks at most — blocking there (SendInput, I/O)
-    // stalls global input
-    // and Windows silently drops the hook
-    using Callback_t = std::function<bool(UINT vkCode, bool repeat)>;
+    using KeyCallback_t = std::function<bool(unsigned short vkCode, bool down, bool repeat)>;
+    using StateCallback_t = std::function<void()>;
 
 private:
     static constexpr unsigned kLeftAltBit = 1u << 0;
@@ -29,7 +28,9 @@ private:
     std::jthread _thread;
     std::array<std::atomic<bool>, kKeyboardKeysCount> _pressed; // written by the hook thread
     std::atomic<unsigned> _altsToRelease = 0;
-    Callback_t _onPress, _onRelease;
+    KeyCallback_t _swallowsNonModifierKey = [](unsigned short, bool, bool) { return false; };
+    StateCallback_t _onAnyKeyPressOrRelease = [] {};
+    StateCallback_t _onHooksRemoved = [] {};
     // hook thread only
     std::array<bool, kKeyboardKeysCount> _swallowedDown = {};
     bool _altMasked = false;
@@ -40,7 +41,7 @@ public:
     ~Keyboard();
     static Keyboard& Instance();
     // the mouse hook sees every mouse move: only ask for it when buttons matter
-    bool Attach(bool withMouse);
+    [[nodiscard]] bool Attach(bool withMouse);
     void Detach();
 
     unsigned TestModifiers() const noexcept;
@@ -52,17 +53,28 @@ public:
     void MaskAlt();
     void KeyDownWithoutAlt(unsigned short vkCode);
     void KeyUp(unsigned short vkCode);
-    void OnPress(Callback_t&& func) { _onPress = std::move(func); }
-    void OnRelease(Callback_t&& func) { _onRelease = std::move(func); }
-    static const char* GetKeyName(unsigned short vkCode);
+    // the first two run on the hook thread, which Windows drops if it blocks; the last on the detaching thread
+    void Listen(KeyCallback_t swallowsNonModifierKey, StateCallback_t onAnyKeyPressOrRelease,
+                StateCallback_t onHooksRemoved)
+    {
+        _swallowsNonModifierKey = std::move(swallowsNonModifierKey);
+        _onAnyKeyPressOrRelease = std::move(onAnyKeyPressOrRelease);
+        _onHooksRemoved = std::move(onHooksRemoved);
+    }
+    static constexpr size_t kMaxKeyNameChars = 64;
+    static constexpr size_t kMaxUtf8BytesPerUtf16Unit = 3;
+    using KeyNameBuf = char[kMaxKeyNameChars * kMaxUtf8BytesPerUtf16Unit];
+    static const char* GetKeyName(unsigned short vkCode, KeyNameBuf& buf);
 
 private:
     static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam);
-    void ThreadProc(std::stop_token stop, std::promise<bool> ready);
+    void ThreadProc(const std::stop_token& stop, std::promise<bool> ready);
     void SyncState();
     void ResetState();
     bool HandleKey(unsigned short vkCode, bool down);
+    bool FilterModifier(unsigned short vkCode);
+    bool FilterKey(unsigned short vkCode, bool down, bool repeat);
 };
 
 constexpr bool Keyboard::IsModifier(unsigned short vkCode) noexcept

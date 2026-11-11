@@ -49,7 +49,7 @@ public:
     void SetMenu(MenuCallback_t&& func);
 
 private:
-    bool IsAttached() const { return _data.hWnd != nullptr; }
+    [[nodiscard]] bool IsAttached() const { return _data.hWnd != nullptr; }
     void Attach(HWND hwnd, HICON icon);
     void TryAddToTray();
     static UINT TaskbarCreatedMsg();

@@ -2,7 +2,9 @@ include(${CMAKE_SOURCE_DIR}/cmake/FetchFilesInFolder.cmake)
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO")
 
-find_package(Boost CONFIG REQUIRED COMPONENTS container)
+find_package(Boost CONFIG REQUIRED COMPONENTS container unordered)
+find_package(fmt CONFIG REQUIRED)
+find_package(uni-algo CONFIG REQUIRED)
 
 FetchFilesInFolder(HDRS "Include")
 FetchFilesInFolder(SRCS "Source")
@@ -32,6 +34,15 @@ target_link_libraries(
 	${PROJECT_NAME} PRIVATE
 		imgui
 		Boost::container
+		Boost::unordered
+		fmt::fmt
+		uni-algo::uni-algo
+		comdlg32
+		d3d9
+		dwmapi
+		version
+		winhttp
+		winmm
 )
 
 target_include_directories(

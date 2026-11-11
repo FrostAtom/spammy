@@ -14,8 +14,7 @@ TrayIconMenu::~TrayIconMenu()
 
 void TrayIconMenu::Track(int x, int y)
 {
-    // KB135788: the menu closes on an outside click only while its owner is foreground,
-    // and the posted WM_NULL lets the next one dismiss properly
+    // KB135788: the menu closes on an outside click only if its owner is foreground; WM_NULL lets the next one close
     SetForegroundWindow(_hwnd);
     const UINT flags = (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | TPM_BOTTOMALIGN |
                        TPM_RETURNCMD | TPM_NONOTIFY;

@@ -1,10 +1,11 @@
 #pragma once
 #include "Headers.h"
 #include "Window/TrayIcon.h"
+#include <d3d9.h>
 
 class Window {
 public:
-    enum ErrorCode {
+    enum ErrorCode : std::uint8_t {
         ErrorCode_OK = 0,
         ErrorCode_InvalidCall,
         ErrorCode_WinError,
@@ -18,8 +19,9 @@ public:
     };
 
 private:
-    wchar_t _wndName[64], _className[64];
-    char _u8wndName[64 * 4];
+    wchar_t _wndName[64] = {};
+    wchar_t _className[64] = {};
+    std::string _u8wndName;
     HICON _icon = nullptr;
     HICON _trayIconOverride = nullptr;
     ATOM _atom = NULL;
@@ -33,7 +35,7 @@ private:
     bool _dragging = false;
     Vec2i _dragOffset;
 
-    enum Swipe {
+    enum Swipe : std::uint8_t {
         Swipe_None,
         Swipe_In,
         Swipe_Out
@@ -51,6 +53,15 @@ private:
     bool _sizeAndScalePending = false;
     bool _inFrame = false;
 
+    using Clock = std::chrono::steady_clock;
+    // ImGui shows a new popup or tooltip and applies a scroll one frame after the frame that asked for it
+    static constexpr int kFramesToSettle = 3;
+    int _framesOwed = 0;
+    std::optional<Clock::time_point> _timedFrame;
+    Clock::time_point _nextFrameNotBefore;
+    int _unpacedFramesInARow = 0;
+    bool _modalDimIsFading = false;
+
     LPDIRECT3D9 _d3d = nullptr;
     LPDIRECT3DDEVICE9 _d3dDevice = nullptr;
     D3DPRESENT_PARAMETERS _d3dParams; // CreateDevice fills in the back buffer size
@@ -65,18 +76,19 @@ public:
 
     ErrorCode Initialize();
     void SetTrayIcon(std::unique_ptr<TrayIcon> icon);
-    HWND Native() const { return _hwnd; }
+    [[nodiscard]] HWND Native() const { return _hwnd; }
     void Update();
+    void RequestFrame() { _framesOwed = kFramesToSettle; }
+    DWORD RenderDueFrame();
 
     void Close();
-    void Cleanup();
-    bool MustQuit() const { return _mustQuit; }
+    [[nodiscard]] bool MustQuit() const { return _mustQuit; }
     bool WantQuit() { return std::exchange(_wantQuit, false); }
 
-    bool IsOnScreen() const;
+    [[nodiscard]] bool IsOnScreen() const;
     void Show();
     void Hide();
-    bool IsHiddenOrHiding() const;
+    [[nodiscard]] bool IsHiddenOrHiding() const;
     void Focus();
 
     void SetIcon(HICON icon);
@@ -87,18 +99,20 @@ public:
     void CenterOnWorkArea();
 
     static const char* FormatError(ErrorCode code);
-    HRESULT LastInitError() const { return _lastError; }
+    [[nodiscard]] HRESULT LastInitError() const { return _lastError; }
 
 protected:
-    virtual void Draw() = 0;
+    virtual std::optional<float> Draw() = 0;
     virtual bool HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* result);
 
     ImTextureRef CreateTexture(int width, int height, std::span<const ImU32> pixels);
 
 private:
-    bool IsReady() const { return _hwnd && _d3dDevice; }
+    void Cleanup();
+    [[nodiscard]] bool IsReady() const { return _hwnd && _d3dDevice; }
     bool BeginFrame();
     void EndFrame();
+    void ScheduleNextFrame(std::optional<float> drawAsksToRedrawInSec);
 
     bool CreateWnd();
     void CleanupWnd();
@@ -119,16 +133,16 @@ private:
     void JumpSwipeToEnd();
     void SetLayered(bool layered);
 
-    enum ScaleAnchor {
+    enum ScaleAnchor : std::uint8_t {
         ScaleAnchor_Center,
         ScaleAnchor_StoredPosition
     };
-    float DpiScale() const { return _scaleFactor * (float)_dpi / 96.f; }
+    [[nodiscard]] float DpiScale() const { return _scaleFactor * (float)_dpi / 96.f; }
     void RequestSizeAndScale();
     void ApplySizeAndScale(ScaleAnchor anchor);
-    Vec2i ScaledSize() const;
+    [[nodiscard]] Vec2i ScaledSize() const;
 
-    HICON TrayIconImage() const { return _trayIconOverride ? _trayIconOverride : _icon; }
+    [[nodiscard]] HICON TrayIconImage() const { return _trayIconOverride ? _trayIconOverride : _icon; }
     void ApplyWndIcon();
     void MoveToStoredRect();
 

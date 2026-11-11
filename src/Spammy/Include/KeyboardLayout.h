@@ -2,12 +2,12 @@
 #include "Headers.h"
 
 struct KeyboardKey {
-    const char* name;
-    UINT vkCode;
-    float x, y, w = 1.f, h = 1.f;
+    const char* name = nullptr;
+    UINT vkCode = 0;
+    float x = 0.f, y = 0.f, w = 1.f, h = 1.f;
 };
 
-enum KeyboardForm {
+enum KeyboardForm : std::uint8_t {
     KeyboardForm_60,
     KeyboardForm_65,
     KeyboardForm_75,
@@ -17,14 +17,14 @@ enum KeyboardForm {
     KeyboardForm_Count,
 };
 
-enum KeyboardVariant {
+enum KeyboardVariant : std::uint8_t {
     KeyboardVariant_Ansi,
     KeyboardVariant_Iso,
     KeyboardVariant_Jis,
     KeyboardVariant_Count,
 };
 
-enum MouseForm {
+enum MouseForm : std::uint8_t {
     MouseForm_Off,
     MouseForm_3,
     MouseForm_5,

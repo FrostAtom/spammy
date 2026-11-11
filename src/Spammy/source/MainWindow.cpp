@@ -4,18 +4,46 @@
 #include "KeyboardLayout.h"
 #include "Modes.h"
 #include "Resources.h"
+#include "Text.h"
 #include "Updater.h"
-#include "Utils.h"
+#include <cctype>
+#include <fmt/ranges.h>
 
 using namespace ImGui;
 using namespace MainWindowUtil;
 
 namespace {
-constexpr UINT WM_USER_FOCUS = WM_APP + 0x20;
+template <class WidthOf>
+FittedText ElideToFit(const char* text, float maxW, WidthOf&& widthOf)
+{
+    static constexpr char kEllipsis[] = "\xE2\x80\xA6";
+    FittedText fitted;
+    if (widthOf(text) <= maxW) {
+        fitted.fitting = text;
+        return fitted;
+    }
+    auto& elided = fitted.elided;
+    size_t kept = strlen(text);
+    elided.reserve(kept + std::size(kEllipsis));
+    elided.assign(text, text + kept);
+    while (kept) {
+        kept--;
+        while (kept && IsUtf8ContinuationByte(elided[kept]))
+            kept--;
+        while (kept && elided[kept - 1] == ' ')
+            kept--;
+        elided.resize(kept);
+        elided.insert(elided.end(), std::begin(kEllipsis), std::end(kEllipsis));
+        if (widthOf(elided.data()) <= maxW) return fitted;
+    }
+    elided.assign(std::begin(kEllipsis), std::end(kEllipsis));
+    return fitted;
+}
 
 bool SystemAppsUseDarkTheme()
 {
-    DWORD appsUseLightTheme = 1, size = sizeof(appsUseLightTheme);
+    DWORD appsUseLightTheme = 1;
+    DWORD size = sizeof(appsUseLightTheme);
     RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
                  L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &appsUseLightTheme, &size);
     return appsUseLightTheme == 0;
@@ -73,24 +101,37 @@ constexpr float kMouseBodyRadii[UiCorner_COUNT] = {6.f, 6.f, 40.f, 40.f};
 
 struct PressBadge {
     ImVec2 anchor;
-    unsigned rate;
-    DWORD age;
+    unsigned rate = 0;
+    DWORD age = 0;
 };
 using PressBadges = boost::container::small_vector<PressBadge, 32>;
 
+struct ActionKeyKinds {
+    Action action;
+    UiKeyKind own, inherited;
+};
+constexpr ActionKeyKinds kActionKeyKinds[] = {
+    {Action_Spammy, UiKeyKind_Auto, UiKeyKind_SameAuto},
+    {Action_Speedy, UiKeyKind_Tap, UiKeyKind_SameTap},
+    {Action_Disabled, UiKeyKind_Block, UiKeyKind_Normal},
+};
+constexpr ActionKeyKinds kUnboundKeyKinds = {Action_None, UiKeyKind_Normal, UiKeyKind_Normal};
+
+const ActionKeyKinds& KeyKindsOf(Action action)
+{
+    const auto* kinds = std::ranges::find(kActionKeyKinds, action, &ActionKeyKinds::action);
+    return kinds != std::end(kActionKeyKinds) ? *kinds : kUnboundKeyKinds;
+}
+
 UiKeyKind KeyKindOnLayer(const Profile& profile, unsigned vkCode, unsigned mods)
 {
-    if (vkCode == VK_LWIN || vkCode == VK_RWIN) return profile.disableWin ? UiKeyKind_Locked : UiKeyKind_Fixed;
-    if (Keyboard::IsModifier((unsigned short)vkCode)) return UiKeyKind_Fixed;
+    const bool winKey = vkCode == VK_LWIN || vkCode == VK_RWIN;
+    if (winKey && profile.disableWin) return UiKeyKind_Locked;
+    if (!IsBindableKey(vkCode)) return UiKeyKind_Fixed;
     const Profile::KeyModList_t& slots = profile.keys[vkCode];
     const Action ownAction = slots[mods].action;
-    if (mods == KeyMod_None || ownAction != Action_None) return KeyKindOf(ownAction);
-    const Action inheritedAction = slots[KeyMod_None].action;
-    switch (inheritedAction) {
-    case Action_Spammy: return UiKeyKind_SameAuto;
-    case Action_Speedy: return UiKeyKind_SameTap;
-    default: return UiKeyKind_Normal;
-    }
+    if (mods == KeyMod_None || ownAction != Action_None) return KeyKindsOf(ownAction).own;
+    return KeyKindsOf(slots[KeyMod_None].action).inherited;
 }
 
 Action NextKeyAction(Action action, unsigned mods)
@@ -104,43 +145,34 @@ Action NextKeyAction(Action action, unsigned mods)
     }
 }
 
-const char* KeyCapLabel(const char* upperCaseName, char* buf, size_t bufSize)
-{
-    if (!strcmp(upperCaseName, "PGUP")) return "PgUp";
-    if (!strcmp(upperCaseName, "PGDN")) return "PgDn";
-    size_t n = 0;
-    for (; upperCaseName[n] && n + 1 < bufSize; n++) {
-        const char c = upperCaseName[n];
-        const bool afterLetter = n && isalpha((unsigned char)upperCaseName[n - 1]);
-        buf[n] = afterLetter ? (char)tolower((unsigned char)c) : c;
-    }
-    buf[n] = '\0';
-    return buf;
-}
+struct MouseButtonLabelOf {
+    unsigned short vkCode;
+    const char* label;
+};
+constexpr MouseButtonLabelOf kMouseButtonLabels[] = {
+    {VK_LBUTTON, "LMB"},
+    {VK_RBUTTON, "RMB"},
+    {VK_MBUTTON, "M3"},
+    {VK_XBUTTON1, "M4"},
+    {VK_XBUTTON2, "M5"},
+};
 
 const char* MouseButtonLabel(unsigned short vkCode)
 {
-    switch (vkCode) {
-    case VK_LBUTTON: return "LMB";
-    case VK_RBUTTON: return "RMB";
-    case VK_MBUTTON: return "M3";
-    case VK_XBUTTON1: return "M4";
-    case VK_XBUTTON2: return "M5";
-    }
-    return nullptr;
+    const auto* button = std::ranges::find(kMouseButtonLabels, vkCode, &MouseButtonLabelOf::vkCode);
+    return button != std::end(kMouseButtonLabels) ? button->label : nullptr;
 }
+
+using TabWidths = boost::container::small_vector<float, 16>;
 
 float TabWidthCap(std::span<const float> widths, float tabsMaxX)
 {
     constexpr float kNoCap = FLT_MAX;
     float avail = tabsMaxX - kTabsX - kAddTabSize - kTabGap * (float)widths.size();
-    float total = 0.f;
-    for (const float w : widths)
-        total += w;
-    if (total <= avail) return kNoCap;
+    if (std::ranges::fold_left(widths, 0.f, std::plus()) <= avail) return kNoCap;
 
-    boost::container::small_vector<float, 8> narrowestFirst(widths.begin(), widths.end());
-    std::sort(narrowestFirst.begin(), narrowestFirst.end());
+    TabWidths narrowestFirst(widths.begin(), widths.end());
+    std::ranges::sort(narrowestFirst);
     for (size_t i = 0; i < narrowestFirst.size(); i++) {
         const float evenShareOfRest = avail / (float)(narrowestFirst.size() - i);
         if (narrowestFirst[i] > evenShareOfRest) return ImMax(evenShareOfRest, 0.f);
@@ -151,12 +183,13 @@ float TabWidthCap(std::span<const float> widths, float tabsMaxX)
 
 void DrawPressBadges(ImDrawList* dl, const PressBadges& badges)
 {
+    const bool badgesPopAndFadeWithAge = !badges.empty();
+    if (badgesPopAndFadeWithAge) UiRequestFrameIn(0.f);
     for (const PressBadge& badge : badges) {
         char buf[16];
-        snprintf(buf, sizeof(buf), "%u/s", badge.rate);
         const float pop = badge.age < 120 ? 1.3f - .3f * (badge.age / 120.f) : 1.f;
         const float alpha = badge.age > 700 ? ImMax(0.f, 1.f - (badge.age - 700) / 300.f) : 1.f;
-        AddRateBadge(dl, badge.anchor, buf, alpha, pop);
+        AddRateBadge(dl, badge.anchor, FormatInto(buf, "{}/s", badge.rate), alpha, pop);
     }
 }
 
@@ -174,12 +207,8 @@ bool WheelBar(ImDrawList* dl, const char* id, const ImVec2& pos, const ImVec2& s
 // __DATE__ space-pads one-digit days: "Oct  1 2026"
 void SqueezeSpaces(char* text)
 {
-    char* out = text;
-    for (const char* c = text; *c; c++) {
-        if (*c == ' ' && out > text && out[-1] == ' ') continue;
-        *out++ = *c;
-    }
-    *out = '\0';
+    const auto bothSpaces = [](char a, char b) { return a == ' ' && b == ' '; };
+    *std::unique(text, text + strlen(text), bothSpaces) = '\0';
 }
 
 // the test ImGui's BeginPopupContextItem uses
@@ -205,19 +234,20 @@ MainWindow::~MainWindow()
     if (_pausedIcon) DestroyIcon(_pausedIcon);
 }
 
-bool MainWindow::Initialize()
+bool MainWindow::Setup()
 {
     if (HWND running = FindWindowW(L"" APP_NAME, L"" APP_NAME)) {
         PostMessageW(running, WM_USER_FOCUS, NULL, NULL);
         return false;
     }
 
-    if (const ErrorCode ec = Window::Initialize(); ec != ErrorCode_OK) {
+    if (const ErrorCode ec = Initialize(); ec != ErrorCode_OK) {
         char msg[256];
-        snprintf(msg, std::size(msg), "%s (0x%08lX)", FormatError(ec), (unsigned long)LastInitError());
+        FormatInto(msg, "{} (0x{:08X})", FormatError(ec), (unsigned long)LastInitError());
         MessageBoxA(nullptr, msg, APP_NAME, MB_ICONERROR | MB_OK);
         return false;
     }
+    LoadUiFonts();
 
     HICON icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_ICON1));
     SetIcon(icon);
@@ -232,6 +262,7 @@ bool MainWindow::Initialize()
     trayIcon->SetOnClick(std::bind_front(&MainWindow::OnTrayClick, this));
     trayIcon->SetMenu(std::bind_front(&MainWindow::OnTrayMenu, this));
     SetTrayIcon(std::move(trayIcon));
+    SyncTrayIcon();
 
     ApplyTheme();
     return true;
@@ -297,8 +328,11 @@ void MainWindow::LogKeyPress(unsigned short vkCode, DWORD ticks)
 unsigned MainWindow::PressRate(unsigned short vkCode, DWORD nowTicks) const
 {
     constexpr unsigned kMinPressesForRate = 3;
+    const bool lastPressLeftRateWindow = nowTicks - _lastPressTick[vkCode] > kRateWindowMs;
+    if (lastPressLeftRateWindow) return 0;
     unsigned presses = 0;
-    DWORD newestAgeMs = kRateWindowMs, oldestAgeMs = 0;
+    DWORD newestAgeMs = kRateWindowMs;
+    DWORD oldestAgeMs = 0;
     for (const DWORD tick : _pressLog[vkCode]) {
         const DWORD ageMs = nowTicks - tick;
         if (!tick || ageMs > kRateWindowMs) continue;
@@ -315,16 +349,20 @@ unsigned MainWindow::PressRate(unsigned short vkCode, DWORD nowTicks) const
 // autofire runs on the input worker; the UI replays its presses from the profile's interval
 void MainWindow::ReplayAutofirePresses(unsigned short vkCode, DWORD nowTicks, unsigned intervalMs, bool autofiring)
 {
-    DWORD& tick = _autofireReplayTick[vkCode];
+    std::optional<DWORD>& lastReplayedTick = _autofireReplayTick[vkCode];
     if (!autofiring) {
-        tick = nowTicks;
+        lastReplayedTick.reset();
         return;
     }
+    DWORD tick = lastReplayedTick.value_or(nowTicks);
     if (nowTicks - tick > kRateWindowMs) tick = nowTicks - kRateWindowMs;
     while (nowTicks - tick >= intervalMs) {
         tick += intervalMs;
         LogKeyPress(vkCode, tick);
     }
+    lastReplayedTick = tick;
+    const DWORD untilNextPressMs = intervalMs - (nowTicks - tick);
+    UiRequestFrameIn((float)untilNextPressMs / 1000.f);
 }
 
 void MainWindow::TogglePauseKeyCapture()
@@ -333,7 +371,10 @@ void MainWindow::TogglePauseKeyCapture()
         CancelPauseKeyCapture();
         return;
     }
-    sKeyboard.Attach(true);
+    if (!sKeyboard.Attach(true)) {
+        NotifyKeyboardHookFailed();
+        return;
+    }
     KeyBundle_t idle = kPauseCaptureIdle;
     _pauseKeyCapture.compare_exchange_strong(idle, kPauseCaptureArmed);
 }
@@ -349,19 +390,46 @@ void MainWindow::CloseAddGame()
     _screen = Screen_Editor;
 }
 
-std::optional<std::filesystem::path> MainWindow::BrowseForUnclaimedExe(const Profile* allowedOwner,
-                                                                       TimedNote& rejection)
+std::optional<std::filesystem::path> MainWindow::BrowseForUnclaimedExe(const Profile* allowedOwner)
 {
-    std::filesystem::path path;
-    if (!BrowseForExe(Native(), path)) return std::nullopt;
-    const std::string exe = Utf8FileName(path);
-    const std::shared_ptr<Profile> owner = sConfig.FindProfileByApp(exe.c_str());
+    std::optional<std::filesystem::path> path = BrowseForExe(Native());
+    if (!path) return std::nullopt;
+    const std::string exe = Utf8FileName(*path);
+    const std::shared_ptr<Profile> owner = sConfig.FindProfileByApp(exe);
     if (owner && owner.get() != allowedOwner) {
-        rejection.Show(exe + " already belongs to " + owner->name);
+        Notify(fmt::format("{} already belongs to {}", exe, owner->name));
         return std::nullopt;
     }
-    rejection.text.clear();
     return path;
+}
+
+void MainWindow::Notify(std::string notice)
+{
+    _notice = std::move(notice);
+    _noticeShownTicks = GetTickCount();
+}
+
+void MainWindow::NotifyKeyboardHookFailed()
+{
+    Notify("can't hook the keyboard");
+}
+
+void MainWindow::ToggleAutoStart()
+{
+    if (sApp.EnableAutoStart(!_autoStart))
+        _autoStart = !_autoStart;
+    else
+        Notify(fmt::format("can't change \"{}\"", kAutoStartLabel));
+}
+
+void MainWindow::DrawNotice(const ImVec2& o)
+{
+    constexpr DWORD kShowMs = 4000;
+    constexpr ImVec2 kGapToWindowCorner(16.f, 16.f);
+    const DWORD shownMs = GetTickCount() - _noticeShownTicks;
+    const bool shown = !_notice.empty() && shownMs < kShowMs;
+    if (shown) UiRequestFrameIn((float)(kShowMs - shownMs) / 1000.f);
+    UiToast(o + WindowSize() - kGapToWindowCorner, _notice.c_str(), shown);
 }
 
 void MainWindow::OnTrayClick()
@@ -393,7 +461,7 @@ void MainWindow::FitWindowToKeyboard()
     SetSize({(int)WindowSize().x, (int)WindowSize().y});
 }
 
-void MainWindow::Draw()
+std::optional<float> MainWindow::Draw()
 {
     // a palette swapped inside a popup would be undone by its PopStyleColor
     if (_themeStale) ApplyTheme();
@@ -401,25 +469,30 @@ void MainWindow::Draw()
     FitWindowToKeyboard();
     const bool noGames = sConfig.profiles.empty();
     if (!noGames && !sConfig.editingProfile) sConfig.SetEditingProfile(sConfig.profiles.front());
-    const std::shared_ptr<Profile> profile = sConfig.editingProfile; // popups can delete the game mid-frame
+    const std::shared_ptr<Profile> profileKeptThroughFrame = sConfig.editingProfile;
     ImDrawList* dl = GetWindowDrawList();
     const ImVec2 o = GetWindowPos();
 
     DrawTitleBar(dl, o);
     if (noGames || _screen == Screen_AddGame)
         DrawAddGame(dl, o + ImFloor(_keyboardGrowth * .5f), noGames);
-    else if (profile)
-        DrawEditor(dl, o, *profile);
+    else if (profileKeptThroughFrame)
+        DrawEditor(dl, o, *profileKeptThroughFrame);
 
     if (std::exchange(_closePromptRequested, false)) RequestPopup(kPopupClose);
     if (_pendingPopup) OpenPopup(std::exchange(_pendingPopup, nullptr));
-    if (profile) {
-        DrawKeyMenu(o, *profile);
-        DrawAppsPopup(o, *profile);
+    if (profileKeptThroughFrame) {
+        DrawKeyMenu(o, *profileKeptThroughFrame);
+        DrawAppsPopup(o, *profileKeptThroughFrame);
     }
     DrawSettingsPopup(o);
     DrawTabMenu(o);
     DrawClosePopup(o);
+    DrawNotice(o);
+
+    const bool leftWorkForNextFrame = _pendingPopup || _closePromptRequested || _themeStale;
+    if (leftWorkForNextFrame) UiRequestFrameIn(0.f);
+    return UiTakeFrameRequest();
 }
 
 void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
@@ -432,22 +505,24 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     dl->AddText(UiFonts::Heavy, 20.f, o + ImVec2(46.f, 14.f), UiCol.Ink, "spammy");
 
     const auto lit = sApp.LastActiveProfile();
-    boost::container::small_vector<float, 8> widths;
+    TabWidths widths;
     for (const std::shared_ptr<Profile>& item : sConfig.profiles)
         widths.push_back(TabWidth(item->name.c_str()));
     const float growX = _keyboardGrowth.x;
     const float widthCap = TabWidthCap(std::span<const float>(widths.data(), widths.size()), kTabsMaxX + growX);
 
+    const ImU32 litDot = enabled ? UiCol.Signal : UiCol.Ink3;
     float x = kTabsX;
     for (size_t i = 0; i < sConfig.profiles.size(); i++) {
         const std::shared_ptr<Profile>& item = sConfig.profiles[i];
+        const char* name = item->name.c_str();
         const bool elided = widths[i] > widthCap;
-        const std::string label = elided ? FitText(item->name, widthCap, TabWidth) : std::string();
-        const char* shown = elided ? label.c_str() : item->name.c_str();
+        const FittedText label = elided ? ElideToFit(name, widthCap, TabWidth) : FittedText{name};
+        const char* shown = label.c_str();
 
         PushID(item.get());
         const bool selected = onEditor && item == sConfig.editingProfile;
-        if (UiTab("##tab", o + ImVec2(x, kTabY), shown, selected, item == lit, !enabled)) {
+        if (UiTab("##tab", o + ImVec2(x, kTabY), shown, selected, item == lit ? litDot : UiCol.DotOff)) {
             sConfig.SetEditingProfile(item);
             CloseAddGame();
         }
@@ -456,7 +531,7 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
             _tabMenuPos = ImVec2(GetItemRectMin().x, GetItemRectMax().y + 6.f);
             RequestPopup(kPopupTabMenu);
         }
-        if (elided) Tip("%s", item->name.c_str());
+        if (elided) Tip(name);
         PopID();
         x += (elided ? TabWidth(shown) : widths[i]) + kTabGap;
     }
@@ -464,11 +539,10 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
     const bool addTabSelected = !noGames && _screen == Screen_AddGame;
     const ImVec2 addPos = o + ImVec2(x, kTabY);
     const ImVec2 addSize(kAddTabSize, kAddTabSize);
-    bool addClicked;
+    bool addClicked = false;
     if (addTabSelected) {
         const UiCapHit hit = UiCapFrame("##addgame", addPos, addSize, UiCapKind_Plain, 8.f);
         AddGlyph(dl, hit.face + addSize * .5f, 14.f, UiGlyph_Plus, UiCol.Ink2);
-        addClicked = false;
     } else {
         AddRecess(dl, addPos, addPos + addSize, 8.f);
         SetCursorScreenPos(addPos);
@@ -480,8 +554,7 @@ void MainWindow::DrawTitleBar(ImDrawList* dl, const ImVec2& o)
 
     if (sUpdater.IsUpdateAvailable()) {
         char update[48];
-        snprintf(update, sizeof(update), "new build %s", sUpdater.LatestDate());
-        SqueezeSpaces(update);
+        FormatInto(update, "new build {}", sUpdater.LatestDate());
         const float textW = SilkWidth(update);
         const float glyphSize = 9.f;
         const float totalW = textW + 4.f + glyphSize;
@@ -515,7 +588,10 @@ void MainWindow::DrawStrip(ImDrawList* dl, const ImVec2& o, Profile& profile)
     AddSilk(dl, o + ImVec2(24.f, 81.f), "runs in");
 
     const ImVec2 right = o + ImVec2(_keyboardGrowth.x, 0.f);
-    const float tapesX = 82.f, tapesMaxX = 560.f + _keyboardGrowth.x, tapeGap = 6.f, tapeY = 74.f;
+    const float tapesX = 82.f;
+    const float tapesMaxX = 560.f + _keyboardGrowth.x;
+    const float tapeGap = 6.f;
+    const float tapeY = 74.f;
     const size_t appCount = profile.apps.size();
     boost::container::small_vector<float, 8> xAfterTapes = {tapesX};
     for (const std::string& app : profile.apps) {
@@ -526,7 +602,7 @@ void MainWindow::DrawStrip(ImDrawList* dl, const ImVec2& o, Profile& profile)
     size_t shown = xAfterTapes.size() - 1;
     char overflowTape[16] = "";
     while (shown < appCount) {
-        snprintf(overflowTape, sizeof(overflowTape), "+%d", (int)(appCount - shown));
+        FormatInto(overflowTape, "+{}", appCount - shown);
         const bool overflowTapeFits = xAfterTapes[shown] + TapeWidth(overflowTape) <= tapesMaxX;
         if (overflowTapeFits || !shown) break;
         shown--;
@@ -542,14 +618,8 @@ void MainWindow::DrawStrip(ImDrawList* dl, const ImVec2& o, Profile& profile)
         AddTape(dl, pos, overflowTape);
         SetCursorScreenPos(pos);
         openApps |= InvisibleButton("##moreapps", ImVec2(w, 24.f));
-        if (IsItemHovered()) {
-            std::string hidden;
-            for (size_t i = shown; i < appCount; i++) {
-                if (!hidden.empty()) hidden += '\n';
-                hidden += *profile.apps.nth(i);
-            }
-            Tip("%s", hidden.c_str());
-        }
+        if (IsItemHovered())
+            Tip(fmt::format("{}", fmt::join(profile.apps.nth(shown), profile.apps.end(), "\n")).c_str());
         x += w + tapeGap;
     }
     openApps |= UiOutlineButton("##addapp", o + ImVec2(x, tapeY), "+ App");
@@ -558,37 +628,39 @@ void MainWindow::DrawStrip(ImDrawList* dl, const ImVec2& o, Profile& profile)
         RequestPopup(kPopupApps);
     }
 
-    char statusNote[128] = "";
+    static constexpr const char* kLocksKeptByWinThenAltF4[2][2] = {
+        {"", " Alt+F4 stays blocked."},
+        {" Win key stays blocked.", " Win key and Alt+F4 stay blocked."},
+    };
+    char formattedNote[128];
+    const char* statusNote = nullptr;
     ImU32 statusCol = UiCol.Ink2;
     if (profile.apps.empty()) {
-        ImStrncpy(statusNote, "Not tied to a game yet \xE2\x80\x93 add its .exe", sizeof(statusNote));
+        statusNote = "Not tied to a game yet \xE2\x80\x93 add its .exe";
         statusCol = UiCol.Signal;
     } else if (!sApp.IsEnabled()) {
-        const char* locks = profile.disableWin && profile.disableAltF4 ? " Win key and Alt+F4 stay blocked."
-                            : profile.disableWin                       ? " Win key stays blocked."
-                            : profile.disableAltF4                     ? " Alt+F4 stays blocked."
-                                                                       : "";
-        snprintf(statusNote, sizeof(statusNote), "Paused: every key acts normally.%s", locks);
+        const bool winLocked = profile.disableWin;
+        const bool altF4Locked = profile.disableAltF4;
+        statusNote = FormatInto(formattedNote, "Paused: every key acts normally.{}",
+                                kLocksKeptByWinThenAltF4[winLocked][altF4Locked]);
     } else if (_editMods != KeyMod_None) {
-        snprintf(statusNote, sizeof(statusNote), "What keys do while %s is held", ModsName(_editMods));
+        statusNote = FormatInto(formattedNote, "What keys do while {} is held", ModsName(_editMods));
     }
-    if (statusNote[0]) {
+    if (statusNote) {
         const float w = UiTextWidth(UiFonts::SemiBold, 11.f, statusNote);
         dl->AddText(UiFonts::SemiBold, 11.f, right + ImVec2(906.f - w, 80.f), statusCol, statusNote);
     }
 
     AddSilk(dl, right + ImVec2(918.f, 81.f), "modifiers");
     UiSegmentedFlags("##layer", right + ImVec2(996.f, 70.f), ImVec2(260.f, 32.f), "NoMod", kModifierSegments,
-                     _editMods, UiLabelCase_Upper);
+                     _editMods);
 }
 
 void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, Profile& profile)
 {
     const MouseForm mouseForm = sConfig.mouse;
     const KeyboardBox box = KeyboardBoxAt(o, _keyboardGrowth, mouseForm != MouseForm_Off);
-    dl->AddRectFilled(box.wellMin, box.wellMax, UiCol.Well, 16.f);
-    dl->AddLine(ImVec2(box.wellMin.x + 16.f, box.wellMin.y + 1.f), ImVec2(box.wellMax.x - 16.f, box.wellMin.y + 1.f),
-                UiCol.WellEdge, 2.f);
+    AddWell(dl, box.wellMin, box.wellMax);
 
     const ImVec2 area = box.areaMax - box.areaMin;
     const std::span<const KeyboardKey> layout = GetKeyboardLayout(sConfig.form, sConfig.variant);
@@ -598,9 +670,8 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, Profile& profile)
     const ImVec2 board = grid * unit - kEmptyAfterLastKey;
     const ImVec2 origin = ImFloor(box.areaMin + ImMax(area - board, ImVec2(0.f, 0.f)) * .5f);
 
-    static bool s_leftPressClosedPopup = false;
     if (IsMouseClicked(ImGuiMouseButton_Left))
-        s_leftPressClosedPopup = IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        _leftPressClosedPopup = IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 
     KeyFrame frame = {
         .profile = &profile,
@@ -609,38 +680,34 @@ void MainWindow::DrawKeyboard(ImDrawList* dl, const ImVec2& o, Profile& profile)
         .nowTicks = GetTickCount(),
         .wndFocused = GetForegroundWindow() == Native(),
         .paused = !sApp.IsEnabled(),
-        .clickClosesPopup = s_leftPressClosedPopup,
+        .clickClosesPopup = _leftPressClosedPopup,
     };
 
     for (size_t i = 0; i < layout.size(); i++) {
         const KeyboardKey& key = layout[i];
         const ImVec2 min = ImFloor(origin + ImVec2(key.x, key.y) * unit);
         const ImVec2 max = ImFloor(origin + ImVec2(key.x + key.w, key.y + key.h) * unit);
-        char label[16];
         PushID((int)i);
-        DrawKey(frame, "##key", KeyCapLabel(key.name, label, sizeof(label)), key.vkCode, min, max - min - kKeyGap);
+        DrawKey(frame, "##key", key.name, key.vkCode, min, max - min - kKeyGap, kUiKeyRadii);
         PopID();
     }
 
     if (mouseForm != MouseForm_Off) DrawMouse(dl, frame, box.mouseOrigin, mouseForm == MouseForm_5);
     DrawPressBadges(dl, frame.badges);
 
-    char hint[160];
+    char formattedHint[160];
+    const char* hint = "Click a key to toggle autofire.  Right-click for one tap, block and modifier combos.  "
+                       "Hold a key to test it.";
     if (frame.paused) {
         char keyName[48];
         if (const char* key = PauseKeyName(profile.pauseKey, keyName, sizeof(keyName)))
-            snprintf(hint, sizeof(hint), "Changes still save while paused.  Press %s or the power button to resume.",
-                     key);
+            hint = FormatInto(formattedHint,
+                              "Changes still save while paused.  Press {} or the power button to resume.", key);
         else
-            ImStrncpy(hint, "Changes still save while paused.  Press the power button to resume.", sizeof(hint));
+            hint = "Changes still save while paused.  Press the power button to resume.";
     } else if (_editMods != KeyMod_None) {
-        snprintf(hint, sizeof(hint), "Pale keys act as with no modifier.  Click one to give it its own %s setting.",
-                 ModsName(_editMods));
-    } else {
-        ImStrncpy(hint,
-                  "Click a key to toggle autofire.  Right-click for one tap, block and modifier combos.  "
-                  "Hold a key to test it.",
-                  sizeof(hint));
+        hint = FormatInto(formattedHint, "Pale keys act as with no modifier.  Click one to give it its own {} setting.",
+                          ModsName(_editMods));
     }
     dl->AddText(UiFonts::Medium, 11.f, ImVec2(box.areaMin.x, box.areaMax.y + 4.f), UiCol.Ink3, hint);
 }
@@ -650,7 +717,7 @@ void MainWindow::DrawKey(KeyFrame& frame, const char* id, const char* label, UIN
 {
     IM_ASSERT(vkCode < kKeyboardKeysCount);
     Profile& profile = *frame.profile;
-    const unsigned short vk = (unsigned short)vkCode;
+    const auto vk = (unsigned short)vkCode;
     Profile::KeyModList_t& slots = profile.keys[vk];
 
     UiKeyDesc desc = {};
@@ -659,7 +726,7 @@ void MainWindow::DrawKey(KeyFrame& frame, const char* id, const char* label, UIN
     desc.pressed = sKeyboard.IsPressed(vk);
     desc.paused = frame.paused;
     desc.centered = Keyboard::IsMouseButton(vk);
-    if (radii) std::copy_n(radii, UiCorner_COUNT, desc.radii);
+    std::copy_n(radii, UiCorner_COUNT, desc.radii);
     const bool editable = desc.kind != UiKeyKind_Fixed && desc.kind != UiKeyKind_Locked;
 
     if (frame.layerMods == KeyMod_None && editable) {
@@ -690,7 +757,7 @@ void MainWindow::DrawKey(KeyFrame& frame, const char* id, const char* label, UIN
 
     if (!editable) return;
     if (clicked && !frame.clickClosesPopup) {
-        Action& action = slots[frame.layerMods].action;
+        std::atomic<Action>& action = slots[frame.layerMods].action;
         SetSetting(action, NextKeyAction(action, frame.layerMods));
     }
     if (IsItemContextClicked()) {
@@ -709,16 +776,16 @@ void MainWindow::DrawMouse(ImDrawList* dl, KeyFrame& frame, const ImVec2& origin
     DrawKey(frame, "##mbL", MouseButtonLabel(VK_LBUTTON), VK_LBUTTON, origin, ImVec2(62.f, 96.f), kMouseLeftRadii);
     DrawKey(frame, "##mbR", MouseButtonLabel(VK_RBUTTON), VK_RBUTTON, origin + ImVec2(74.f, 0.f), ImVec2(62.f, 96.f),
             kMouseRightRadii);
-    DrawKey(frame, "##mbM", "", VK_MBUTTON, origin + ImVec2(63.f, 26.f), ImVec2(10.f, 30.f));
+    DrawKey(frame, "##mbM", "", VK_MBUTTON, origin + ImVec2(63.f, 26.f), ImVec2(10.f, 30.f), kUiSmallKeyRadii);
     const char* labelUnderWheel = MouseButtonLabel(VK_MBUTTON);
     const float labelW = UiTextWidth(UiFonts::Medium, 9.f, labelUnderWheel);
     dl->AddText(UiFonts::Medium, 9.f, origin + ImVec2(68.f - labelW * .5f, 62.f), UiCol.Ink3, labelUnderWheel);
 
     if (sideButtons) {
         DrawKey(frame, "##mb5", MouseButtonLabel(VK_XBUTTON2), VK_XBUTTON2, origin + ImVec2(10.f, 116.f),
-                ImVec2(26.f, 30.f));
+                ImVec2(26.f, 30.f), kUiSmallKeyRadii);
         DrawKey(frame, "##mb4", MouseButtonLabel(VK_XBUTTON1), VK_XBUTTON1, origin + ImVec2(10.f, 154.f),
-                ImVec2(26.f, 30.f));
+                ImVec2(26.f, 30.f), kUiSmallKeyRadii);
     }
 }
 
@@ -737,14 +804,15 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
     dl->AddText(UiFonts::Heavy, 30.f, o + ImVec2(118.f, 584.f), enabled ? UiCol.Ink : UiCol.Ink2,
                 enabled ? "ON" : "PAUSED");
 
-    char keyName[48], pauseLine[64];
+    char keyName[48];
+    char pauseLine[64];
     const char* pauseText = pauseLine;
     ImU32 pauseCol = UiCol.Ink2;
     if (IsCapturingPauseKey()) {
         pauseText = "Press a key...";
         pauseCol = UiFlash(UiCol.Signal, 1.2f, .35f);
     } else if (const char* key = PauseKeyName(profile.pauseKey, keyName, sizeof(keyName))) {
-        snprintf(pauseLine, sizeof(pauseLine), "%s %s", key, enabled ? "pauses" : "resumes");
+        FormatInto(pauseLine, "{} {}", key, enabled ? "pauses" : "resumes");
     } else {
         pauseText = "Set a pause key";
         pauseCol = UiCol.Signal;
@@ -762,30 +830,27 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
     dl->AddText(UiFonts::Medium, 12.f, pausePos, pauseCol, pauseText);
 
     char silk[96];
-    snprintf(silk, sizeof(silk), "autofire rate \xC2\xB7 %s", profile.name.c_str());
-    AddSilk(dl, o + ImVec2(288.f, 552.f), silk);
+    AddSilk(dl, o + ImVec2(288.f, 552.f), FormatInto(silk, "autofire rate \xC2\xB7 {}", profile.name.c_str()));
 
     const unsigned rate = IntervalToRate(profile.intervalMs);
     const float rateAsKnobT = (float)(rate - kProfileRateMin) / (float)(kProfileRateMax - kProfileRateMin);
-    static float s_unroundedKnobT = 0.f;
-    static bool s_knobHeld = false;
-    float knobT = s_knobHeld ? s_unroundedKnobT : rateAsKnobT;
+    float knobT = _rateKnobHeld ? _rateKnobT : rateAsKnobT;
     if (UiKnob("##rate", o + ImVec2(344.f, 614.f), knobT, "5", "100", !enabled)) {
         const float picked = (float)kProfileRateMin + ImSaturate(knobT) * (float)(kProfileRateMax - kProfileRateMin);
         SetSetting(profile.intervalMs, RateToInterval((unsigned)lroundf(picked)));
     }
-    s_knobHeld = IsItemActive();
-    s_unroundedKnobT = knobT;
+    _rateKnobHeld = IsItemActive();
+    _rateKnobT = knobT;
 
     char number[8];
-    snprintf(number, sizeof(number), "%u", IntervalToRate(profile.intervalMs));
+    FormatInto(number, "{}", IntervalToRate(profile.intervalMs));
     const ImVec2 numberPos = o + ImVec2(420.f, 566.f);
     dl->AddText(UiFonts::Light, 72.f, numberPos, enabled ? UiCol.Ink : UiCol.Ink3, number);
     const float slashX = numberPos.x + UiTextWidth(UiFonts::Light, 72.f, number) + 5.f;
     dl->AddText(UiFonts::Medium, 22.f, ImVec2(slashX, o.y + 612.f), UiCol.Ink2, "/s");
 
     char caption[48];
-    snprintf(caption, sizeof(caption), "one press every %u ms", profile.intervalMs);
+    FormatInto(caption, "one press every {} ms", profile.intervalMs.load());
     const float captionDefaultX = o.x + 548.f;
     const float afterRateUnitX = slashX + UiTextWidth(UiFonts::Medium, 22.f, "/s") + 14.f;
     const float captionX = ImMax(captionDefaultX, afterRateUnitX);
@@ -804,14 +869,14 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
     if (UiCapIconButton("##slower", o + ImVec2(688.f, 580.f), 30.f, UiGlyph_Minus)) stepToNextShownRate(-1);
     if (UiCapIconButton("##faster", o + ImVec2(726.f, 580.f), 30.f, UiGlyph_Plus)) stepToNextShownRate(1);
 
-    snprintf(silk, sizeof(silk), "locks \xC2\xB7 %s", profile.name.c_str());
-    AddSilk(dl, locksO + ImVec2(800.f, 552.f), silk);
-    auto lockRow = [&](const char* id, float y, bool& flag, const char* label, const char* onNote,
+    AddSilk(dl, locksO + ImVec2(800.f, 552.f), FormatInto(silk, "locks \xC2\xB7 {}", profile.name.c_str()));
+    auto lockRow = [&](const char* id, float y, std::atomic<bool>& lock, const char* label, const char* onNote,
                        const char* offNote) {
-        if (UiToggle(id, locksO + ImVec2(800.f, y), flag)) SetSetting(flag, !flag);
-        dl->AddText(UiFonts::SemiBold, 13.f, locksO + ImVec2(860.f, y + 1.f), flag ? UiCol.Ink : UiCol.Ink2, label);
-        const char* note = !flag ? offNote : enabled ? onNote : "still blocked while paused";
-        dl->AddText(UiFonts::Medium, 10.f, locksO + ImVec2(860.f, y + 17.f), UiCol.Ink3, note);
+        if (UiToggle(id, locksO + ImVec2(800.f, y), lock)) SetSetting(lock, !lock);
+        const bool flag = lock;
+        const char* noteWhenOn = enabled ? onNote : "still blocked while paused";
+        AddLabelWithNote(dl, locksO + ImVec2(860.f, y + 1.f), flag ? UiCol.Ink : UiCol.Ink2, label,
+                         flag ? noteWhenOn : offNote);
     };
     lockRow("##lockwin", 578.f, profile.disableWin, "Block Win key", "Start menu stays shut",
             "when on, Start menu stays shut");
@@ -823,18 +888,17 @@ void MainWindow::DrawRail(ImDrawList* dl, const ImVec2& windowPos, Profile& prof
         UiKeyKind kind;
         const char* text;
     };
-    char ownText[48], blockedText[48];
+    char ownText[48];
+    char blockedText[48];
     LegendRow rows[3] = {
         {UiKeyKind_Auto, "Autofire while held"},
         {UiKeyKind_Tap, "One tap, release ignored"},
         {UiKeyKind_Block, "Blocked (combo layers)"},
     };
     if (_editMods != KeyMod_None) {
-        snprintf(ownText, sizeof(ownText), "Own %s setting", ModsName(_editMods));
-        snprintf(blockedText, sizeof(blockedText), "Blocked with %s", ModsName(_editMods));
         rows[0] = {UiKeyKind_SameAuto, "Same as NoMod"};
-        rows[1] = {UiKeyKind_Auto, ownText};
-        rows[2] = {UiKeyKind_Block, blockedText};
+        rows[1] = {UiKeyKind_Auto, FormatInto(ownText, "Own {} setting", ModsName(_editMods))};
+        rows[2] = {UiKeyKind_Block, FormatInto(blockedText, "Blocked with {}", ModsName(_editMods))};
     }
     for (int i = 0; i < 3; i++) {
         const float y = 574.f + 28.f * i;
@@ -851,6 +915,20 @@ bool MainWindow::HandleWndProc(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT* 
         if (IsHiddenOrHiding()) Show();
         Focus();
         return true;
+    case WM_USER_BROWSE_APP:
+        if (const std::shared_ptr<Profile> profile = sConfig.editingProfile)
+            if (const auto path = BrowseForUnclaimedExe(profile.get()))
+                sConfig.BindProfile(*profile, Utf8FileName(*path));
+        return true;
+    case WM_USER_BROWSE_GAME: {
+        const Profile* noGameMayOwnIt = nullptr;
+        if (const auto path = BrowseForUnclaimedExe(noGameMayOwnIt)) {
+            RunningApp app{Utf8FileName(*path), AppFriendlyName(*path), *path};
+            _addGame.selectedExe = app.exeName;
+            _addGame.browsed = std::move(app);
+        }
+        return true;
+    }
     case WM_SHOWWINDOW:
         if (wParam) _editMods = KeyMod_None;
         break;
@@ -866,12 +944,13 @@ const char* MainWindowUtil::PauseKeyName(KeyBundle_t pauseKey, char* buf, size_t
 {
     if (!pauseKey || !bufSize) return nullptr;
     const unsigned mods = KeyBundleMods(pauseKey);
-    const char* name = Keyboard::GetKeyName((unsigned short)KeyBundleVk(pauseKey));
+    Keyboard::KeyNameBuf nameBuf;
+    const char* name = Keyboard::GetKeyName((unsigned short)KeyBundleVk(pauseKey), nameBuf);
     if (!name[0]) name = "Unknown";
 
-    const int prefix = snprintf(buf, bufSize, "%s%s%s", (mods & KeyMod_Ctrl) ? "Ctrl+" : "",
-                                (mods & KeyMod_Alt) ? "Alt+" : "", (mods & KeyMod_Shift) ? "Shift+" : "");
-    size_t n = (size_t)ImClamp(prefix, 0, (int)bufSize - 1);
+    const auto prefix = fmt::format_to_n(buf, bufSize - 1, "{}{}{}", (mods & KeyMod_Ctrl) ? "Ctrl+" : "",
+                                         (mods & KeyMod_Alt) ? "Alt+" : "", (mods & KeyMod_Shift) ? "Shift+" : "");
+    auto n = (size_t)(prefix.out - buf);
     for (const char* c = name; *c && n + 1 < bufSize; c++) {
         const bool spaceBeforeWord = *c == ' ' && !isdigit((unsigned char)c[1]);
         if (!spaceBeforeWord) buf[n++] = *c;
@@ -880,20 +959,19 @@ const char* MainWindowUtil::PauseKeyName(KeyBundle_t pauseKey, char* buf, size_t
     return buf;
 }
 
-const char* MainWindowUtil::KeyLabel(unsigned short vkCode, char* buf, size_t bufSize)
+const char* MainWindowUtil::KeyLabel(unsigned short vkCode, Keyboard::KeyNameBuf& buf)
 {
     if (const char* mouse = MouseButtonLabel(vkCode)) return mouse;
     for (const KeyboardKey& key : GetKeyboardLayout(sConfig.form, sConfig.variant))
-        if (key.vkCode == vkCode && key.name[0]) return KeyCapLabel(key.name, buf, bufSize);
-    const char* name = Keyboard::GetKeyName(vkCode);
+        if (key.vkCode == vkCode) return key.name;
+    const char* name = Keyboard::GetKeyName(vkCode, buf);
     return name[0] ? name : "?";
 }
 
 const char* MainWindowUtil::BuildLabel()
 {
     static const std::string s_label = [] {
-        char label[32];
-        snprintf(label, sizeof(label), "build %s", __DATE__);
+        char label[] = "build " __DATE__;
         SqueezeSpaces(label);
         return std::string(label);
     }();
@@ -912,16 +990,10 @@ const char* MainWindowUtil::ModsName(unsigned mods)
 
 UiKeyKind MainWindowUtil::KeyKindOf(Action action)
 {
-    switch (action) {
-    case Action_Spammy: return UiKeyKind_Auto;
-    case Action_Speedy: return UiKeyKind_Tap;
-    case Action_Disabled: return UiKeyKind_Block;
-    default: return UiKeyKind_Normal;
-    }
+    return KeyKindsOf(action).own;
 }
 
-std::string MainWindowUtil::FitText(ImFont* font, float size, std::string text, float maxW, float tracking)
+FittedText MainWindowUtil::FitText(ImFont* font, float size, const char* text, float maxW, float tracking)
 {
-    return FitText(std::move(text), maxW,
-                   [&](const char* candidate) { return UiTextWidth(font, size, candidate, tracking); });
+    return ElideToFit(text, maxW, [&](const char* candidate) { return UiTextWidth(font, size, candidate, tracking); });
 }

@@ -3,52 +3,42 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <bit>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <cwchar>
 #include <filesystem>
-#include <fstream>
 #include <functional>
-#include <future>
-#include <map>
 #include <memory>
-#include <mutex>
+#include <memory_resource>
 #include <optional>
-#include <ranges>
-#include <set>
 #include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
 #include <thread>
-#include <unordered_map>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #define NOMINMAX
 #include <Windows.h>
 #include <Windowsx.h>
-#include <commdlg.h>
-#include <d3d9.h>
 #include <dwmapi.h>
-#include <mmsystem.h>
 #include <shellapi.h>
-#include <shlobj_core.h>
-#include <winhttp.h>
 
 #include <boost/container/flat_set.hpp>
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
+#include <boost/unordered/unordered_flat_map.hpp>
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
+#include <uni_algo/case.h>
+#include <uni_algo/conv.h>
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui/imgui.h>
-#include <imgui/imgui_impl_dx9.h>
-#include <imgui/imgui_impl_win32.h>
 #include <imgui/imgui_internal.h>
-
-#pragma comment(lib, "comdlg32")
-#pragma comment(lib, "d3d9")
-#pragma comment(lib, "dwmapi")
-#pragma comment(lib, "version")
-#pragma comment(lib, "winhttp")
-#pragma comment(lib, "winmm")

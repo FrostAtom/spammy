@@ -1,5 +1,7 @@
 #include "Updater.h"
-#include "Utils.h"
+#include "Apps.h"
+#include <cstdio>
+#include <winhttp.h>
 
 static constexpr const wchar_t* UPDATER_API_HOST = L"api.github.com";
 static constexpr const wchar_t* UPDATER_API_PATH = L"/repos/FrostAtom/spammy/releases/latest";
@@ -25,7 +27,8 @@ static std::optional<std::chrono::sys_days> MakeDate(int year, int month, int da
 static std::optional<std::chrono::sys_days> ParseBuildDate()
 {
     char month[4] = {0};
-    int day = 0, year = 0;
+    int day = 0;
+    int year = 0;
     if (sscanf_s(__DATE__, "%3s %d %d", month, (unsigned)sizeof(month), &day, &year) != 3) return std::nullopt;
     const char* found = strstr(s_months, month);
     if (!found) return std::nullopt;
@@ -70,38 +73,37 @@ static std::string HttpGet(const wchar_t* host, const wchar_t* path)
     return result;
 }
 
-void Updater::CheckAsync()
+void Updater::CheckAsync(std::function<void()> onUpdateFound)
 {
     if (std::exchange(_started, true)) return;
-    std::thread([result = _result] {
-        auto build = ParseBuildDate();
+    std::thread([result = _result, onUpdateFound = std::move(onUpdateFound)] {
+        const auto build = ParseBuildDate();
         if (!build) return;
-        std::string body = HttpGet(UPDATER_API_HOST, UPDATER_API_PATH);
+        const std::string body = HttpGet(UPDATER_API_HOST, UPDATER_API_PATH);
         if (body.empty()) return;
-        try {
-            const nlohmann::json json = nlohmann::json::parse(body);
-            auto publishedAt = json.find("published_at");
-            if (publishedAt == json.end() || !publishedAt->is_string()) return;
-            int year = 0, month = 0, day = 0;
-            if (sscanf_s(publishedAt->get_ref<const std::string&>().c_str(), "%d-%d-%d", &year, &month, &day) != 3)
-                return;
-            auto release = MakeDate(year, month, day);
-            if (!release) return;
-            const bool releaseIsThisBuildOrOlder = *release - *build < UPDATER_BUILD_TO_PUBLISH_LAG;
-            if (releaseIsThisBuildOrOlder) return;
+        constexpr bool kThrowOnMalformedJson = false;
+        const nlohmann::json json = nlohmann::json::parse(body, nullptr, kThrowOnMalformedJson);
+        const auto publishedAt = json.find("published_at");
+        if (publishedAt == json.end() || !publishedAt->is_string()) return;
+        int year = 0;
+        int month = 0;
+        int day = 0;
+        if (sscanf_s(publishedAt->get_ref<const std::string&>().c_str(), "%d-%d-%d", &year, &month, &day) != 3) return;
+        const auto release = MakeDate(year, month, day);
+        if (!release) return;
+        const bool releaseIsThisBuildOrOlder = *release - *build < UPDATER_BUILD_TO_PUBLISH_LAG;
+        if (releaseIsThisBuildOrOlder) return;
 
-            char date[16];
-            snprintf(date, sizeof(date), "%.3s %2d %d", s_months + (month - 1) * 3, day, year);
-            result->latestDate = date;
-            if (auto url = json.find("html_url"); url != json.end() && url->is_string()) {
-                const std::string& u = url->get_ref<const std::string&>();
-                result->releaseUrl.assign(u.begin(), u.end());
-            } else {
-                result->releaseUrl = UPDATER_FALLBACK_URL;
-            }
-            result->updateAvailable = true;
-        } catch (nlohmann::json::exception&) {
+        const std::string_view monthName = std::string_view(s_months).substr((size_t)(month - 1) * 3, 3);
+        result->latestDate = fmt::format("{} {} {}", monthName, day, year);
+        if (const auto url = json.find("html_url"); url != json.end() && url->is_string()) {
+            const auto& u = url->get_ref<const std::string&>();
+            result->releaseUrl.assign(u.begin(), u.end());
+        } else {
+            result->releaseUrl = UPDATER_FALLBACK_URL;
         }
+        result->updateAvailable = true;
+        onUpdateFound();
     }).detach();
 }
 

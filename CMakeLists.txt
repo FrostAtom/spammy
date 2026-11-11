@@ -8,7 +8,7 @@ set(CMAKE_SUPPRESS_REGENERATION ON)
 # before project() — the runtime library is picked during compiler/language init.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-# vcpkg toolchain (Boost). VCPKG_ROOT env wins, C:/vcpkg is the fallback.
+# vcpkg toolchain (Boost, fmt, uni-algo). VCPKG_ROOT env wins, C:/vcpkg is the fallback.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
 	if(DEFINED ENV{VCPKG_ROOT})
 		set(VCPKG_ROOT "$ENV{VCPKG_ROOT}")
